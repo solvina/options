@@ -11,9 +11,10 @@ data class IbkrConnectionConfig(
     val enabled: Boolean = false,
     val autoReconnect: Boolean = true,
     val reconnectIntervalMs: Long = 10_000,
+    val requestTimeoutMs: Long = 30_000,
 ) {
     override fun toString(): String =
         "IbkrConnectionConfig(host='$host', port=$port, clientId=$clientId, " +
             "useSSL=$useSSL, enabled=$enabled, autoReconnect=$autoReconnect, " +
-            "reconnectIntervalMs=$reconnectIntervalMs)"
+            "reconnectIntervalMs=$reconnectIntervalMs, requestTimeoutMs=$requestTimeoutMs)"
 }

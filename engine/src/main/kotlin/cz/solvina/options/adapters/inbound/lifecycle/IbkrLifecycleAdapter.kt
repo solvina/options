@@ -21,12 +21,16 @@ class IbkrLifecycleAdapter(
         if (config.enabled) {
             logger.info { "IBKR connection enabled, connecting..." }
             runBlocking {
-                val connected = connectionPort.connect()
-                if (connected) {
-                    logger.info { "Successfully connected to IBKR" }
-                } else {
-                    logger.warn { "Failed to connect to IBKR, application continues" }
-                }
+                runCatching { connectionPort.connect() }
+                    .onSuccess { connected ->
+                        if (connected) {
+                            logger.info { "Successfully connected to IBKR" }
+                        } else {
+                            logger.warn { "Could not connect to IBKR at startup — watchdog will keep retrying" }
+                        }
+                    }.onFailure { e ->
+                        logger.warn(e) { "Error during IBKR startup connect — watchdog will keep retrying" }
+                    }
             }
         } else {
             logger.info { "IBKR connection disabled, skipping startup connect" }

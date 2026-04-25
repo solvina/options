@@ -24,13 +24,16 @@ import com.ib.client.SoftDollarTier
 import com.ib.client.TickAttrib
 import com.ib.client.TickAttribBidAsk
 import com.ib.client.TickAttribLast
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrRequestRegistry
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.stereotype.Component
 
 private val logger = KotlinLogging.logger {}
 
 @Component
-class IbkrEWrapper : EWrapper {
+class IbkrEWrapper(
+    private val registry: IbkrRequestRegistry,
+) : EWrapper {
     override fun tickPrice(
         tickerId: Int,
         field: Int,
@@ -38,6 +41,7 @@ class IbkrEWrapper : EWrapper {
         attrib: TickAttrib,
     ) {
         logger.trace { "tickPrice: tickerId=$tickerId, field=$field, price=$price" }
+        registry.onTickPrice(tickerId, field, price)
     }
 
     override fun tickSize(
@@ -61,7 +65,8 @@ class IbkrEWrapper : EWrapper {
         theta: Double,
         undPrice: Double,
     ) {
-        logger.trace { "tickOptionComputation: tickerId=$tickerId" }
+        logger.trace { "tickOptionComputation: tickerId=$tickerId, field=$field, delta=$delta" }
+        registry.onTickOptionComputation(tickerId, field, impliedVol, delta, gamma, vega, theta)
     }
 
     override fun tickGeneric(
@@ -107,7 +112,8 @@ class IbkrEWrapper : EWrapper {
         whyHeld: String,
         mktCapPrice: Double,
     ) {
-        logger.debug { "orderStatus: orderId=$orderId, status=$status" }
+        logger.debug { "orderStatus: orderId=$orderId, status=$status, filled=$filled" }
+        registry.onOrderStatus(orderId, status)
     }
 
     override fun openOrder(
@@ -155,13 +161,15 @@ class IbkrEWrapper : EWrapper {
 
     override fun nextValidId(orderId: Int) {
         logger.info { "nextValidId: $orderId" }
+        registry.seedOrderId(orderId)
     }
 
     override fun contractDetails(
         reqId: Int,
         contractDetails: ContractDetails,
     ) {
-        logger.debug { "contractDetails: reqId=$reqId" }
+        logger.debug { "contractDetails: reqId=$reqId, symbol=${contractDetails.contract().symbol()}" }
+        registry.onContractDetails(reqId, contractDetails)
     }
 
     override fun bondContractDetails(
@@ -173,6 +181,7 @@ class IbkrEWrapper : EWrapper {
 
     override fun contractDetailsEnd(reqId: Int) {
         logger.debug { "contractDetailsEnd: reqId=$reqId" }
+        registry.onContractDetailsEnd(reqId)
     }
 
     override fun execDetails(
@@ -235,7 +244,8 @@ class IbkrEWrapper : EWrapper {
         reqId: Int,
         bar: Bar,
     ) {
-        logger.trace { "historicalData: reqId=$reqId" }
+        logger.trace { "historicalData: reqId=$reqId, time=${bar.time()}" }
+        registry.onHistoricalBar(reqId, bar)
     }
 
     override fun scannerParameters(xml: String) {
@@ -292,6 +302,7 @@ class IbkrEWrapper : EWrapper {
 
     override fun tickSnapshotEnd(reqId: Int) {
         logger.trace { "tickSnapshotEnd: reqId=$reqId" }
+        registry.onTickSnapshotEnd(reqId)
     }
 
     override fun marketDataType(
@@ -326,10 +337,12 @@ class IbkrEWrapper : EWrapper {
         currency: String,
     ) {
         logger.trace { "accountSummary: account=$account, tag=$tag, value=$value" }
+        registry.onAccountSummary(reqId, tag, value)
     }
 
     override fun accountSummaryEnd(reqId: Int) {
         logger.debug { "accountSummaryEnd: reqId=$reqId" }
+        registry.onAccountSummaryEnd(reqId)
     }
 
     override fun verifyMessageAPI(apiData: String) {
@@ -383,12 +396,13 @@ class IbkrEWrapper : EWrapper {
         id: Int,
         errorCode: Int,
         errorMsg: String,
-        advancedOrderRejectJson: String,
+        advancedOrderRejectJson: String?,
     ) {
         if (errorCode in listOf(2104, 2106, 2158)) {
             logger.info { "IBKR info [id=$id, code=$errorCode]: $errorMsg" }
         } else {
             logger.error { "IBKR error [id=$id, code=$errorCode]: $errorMsg" }
+            if (id > 0) registry.onError(id, errorCode, errorMsg)
         }
     }
 
@@ -439,11 +453,15 @@ class IbkrEWrapper : EWrapper {
         expirations: MutableSet<String>,
         strikes: MutableSet<Double>,
     ) {
-        logger.debug { "securityDefinitionOptionalParameter: reqId=$reqId, exchange=$exchange" }
+        logger.debug {
+            "securityDefinitionOptionalParameter: reqId=$reqId, exchange=$exchange, expirations=${expirations.size}, strikes=${strikes.size}"
+        }
+        registry.onSecurityDefinitionOptionalParameter(reqId, expirations, strikes)
     }
 
     override fun securityDefinitionOptionalParameterEnd(reqId: Int) {
         logger.debug { "securityDefinitionOptionalParameterEnd: reqId=$reqId" }
+        registry.onSecurityDefinitionOptionalParameterEnd(reqId)
     }
 
     override fun softDollarTiers(
@@ -469,7 +487,8 @@ class IbkrEWrapper : EWrapper {
         startDateStr: String,
         endDateStr: String,
     ) {
-        logger.debug { "historicalDataEnd: reqId=$reqId" }
+        logger.debug { "historicalDataEnd: reqId=$reqId, start=$startDateStr, end=$endDateStr" }
+        registry.onHistoricalDataEnd(reqId)
     }
 
     override fun mktDepthExchanges(depthMktDataDescriptions: Array<out DepthMktDataDescription>) {
