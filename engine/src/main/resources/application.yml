@@ -1,0 +1,37 @@
+spring:
+  application:
+    name: options
+  datasource:
+    url: jdbc:postgresql://localhost:5433/options
+    username: options_user
+    password: options_password
+    driver-class-name: org.postgresql.Driver
+  liquibase:
+    change-log: classpath:db/changelog/db.changelog-master.yaml
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+ibkr:
+  connection:
+    host: localhost
+    port: 7497
+    client-id: 1
+    use-ssl: false
+    enabled: true
+    auto-reconnect: true
+    reconnect-interval-ms: 10000
+
+server:
+  port: 8081
+  servlet:
+    context-path: /options
+
+springdoc:
+  packagesToScan: cz.solvina.options
+  swagger-ui:
+    path: /swagger-ui.html
+  use-management-port: false

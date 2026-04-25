@@ -1,0 +1,11 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: options_user
+      POSTGRES_PASSWORD: options_password
+      POSTGRES_DB: options
+    volumes:
+      - ./data/postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"

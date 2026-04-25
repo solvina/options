@@ -1,0 +1,713 @@
+package cz.solvina.options.adapters.outbound.ibkr
+
+import com.ib.client.Bar
+import com.ib.client.CommissionReport
+import com.ib.client.Contract
+import com.ib.client.ContractDescription
+import com.ib.client.ContractDetails
+import com.ib.client.Decimal
+import com.ib.client.DeltaNeutralContract
+import com.ib.client.DepthMktDataDescription
+import com.ib.client.EWrapper
+import com.ib.client.Execution
+import com.ib.client.FamilyCode
+import com.ib.client.HistogramEntry
+import com.ib.client.HistoricalSession
+import com.ib.client.HistoricalTick
+import com.ib.client.HistoricalTickBidAsk
+import com.ib.client.HistoricalTickLast
+import com.ib.client.NewsProvider
+import com.ib.client.Order
+import com.ib.client.OrderState
+import com.ib.client.PriceIncrement
+import com.ib.client.SoftDollarTier
+import com.ib.client.TickAttrib
+import com.ib.client.TickAttribBidAsk
+import com.ib.client.TickAttribLast
+import io.github.oshai.kotlinlogging.KotlinLogging
+import org.springframework.stereotype.Component
+
+private val logger = KotlinLogging.logger {}
+
+@Component
+class IbkrEWrapper : EWrapper {
+    override fun tickPrice(
+        tickerId: Int,
+        field: Int,
+        price: Double,
+        attrib: TickAttrib,
+    ) {
+        logger.trace { "tickPrice: tickerId=$tickerId, field=$field, price=$price" }
+    }
+
+    override fun tickSize(
+        tickerId: Int,
+        field: Int,
+        size: Decimal,
+    ) {
+        logger.trace { "tickSize: tickerId=$tickerId, field=$field, size=$size" }
+    }
+
+    override fun tickOptionComputation(
+        tickerId: Int,
+        field: Int,
+        tickAttrib: Int,
+        impliedVol: Double,
+        delta: Double,
+        optPrice: Double,
+        pvDividend: Double,
+        gamma: Double,
+        vega: Double,
+        theta: Double,
+        undPrice: Double,
+    ) {
+        logger.trace { "tickOptionComputation: tickerId=$tickerId" }
+    }
+
+    override fun tickGeneric(
+        tickerId: Int,
+        tickType: Int,
+        value: Double,
+    ) {
+        logger.trace { "tickGeneric: tickerId=$tickerId, tickType=$tickType, value=$value" }
+    }
+
+    override fun tickString(
+        tickerId: Int,
+        tickType: Int,
+        value: String,
+    ) {
+        logger.trace { "tickString: tickerId=$tickerId, tickType=$tickType" }
+    }
+
+    override fun tickEFP(
+        tickerId: Int,
+        tickType: Int,
+        basisPoints: Double,
+        formattedBasisPoints: String,
+        impliedFuture: Double,
+        holdDays: Int,
+        futureLastTradeDate: String,
+        dividendImpact: Double,
+        dividendsToLastTradeDate: Double,
+    ) {
+        logger.trace { "tickEFP: tickerId=$tickerId" }
+    }
+
+    override fun orderStatus(
+        orderId: Int,
+        status: String,
+        filled: Decimal,
+        remaining: Decimal,
+        avgFillPrice: Double,
+        permId: Int,
+        parentId: Int,
+        lastFillPrice: Double,
+        clientId: Int,
+        whyHeld: String,
+        mktCapPrice: Double,
+    ) {
+        logger.debug { "orderStatus: orderId=$orderId, status=$status" }
+    }
+
+    override fun openOrder(
+        orderId: Int,
+        contract: Contract,
+        order: Order,
+        orderState: OrderState,
+    ) {
+        logger.debug { "openOrder: orderId=$orderId, symbol=${contract.symbol()}" }
+    }
+
+    override fun openOrderEnd() {
+        logger.debug { "openOrderEnd" }
+    }
+
+    override fun updateAccountValue(
+        key: String,
+        value: String,
+        currency: String,
+        accountName: String,
+    ) {
+        logger.trace { "updateAccountValue: key=$key, value=$value, currency=$currency" }
+    }
+
+    override fun updatePortfolio(
+        contract: Contract,
+        position: Decimal,
+        marketPrice: Double,
+        marketValue: Double,
+        averageCost: Double,
+        unrealizedPNL: Double,
+        realizedPNL: Double,
+        accountName: String,
+    ) {
+        logger.trace { "updatePortfolio: symbol=${contract.symbol()}, position=$position" }
+    }
+
+    override fun updateAccountTime(timeStamp: String) {
+        logger.trace { "updateAccountTime: $timeStamp" }
+    }
+
+    override fun accountDownloadEnd(accountName: String) {
+        logger.debug { "accountDownloadEnd: $accountName" }
+    }
+
+    override fun nextValidId(orderId: Int) {
+        logger.info { "nextValidId: $orderId" }
+    }
+
+    override fun contractDetails(
+        reqId: Int,
+        contractDetails: ContractDetails,
+    ) {
+        logger.debug { "contractDetails: reqId=$reqId" }
+    }
+
+    override fun bondContractDetails(
+        reqId: Int,
+        contractDetails: ContractDetails,
+    ) {
+        logger.debug { "bondContractDetails: reqId=$reqId" }
+    }
+
+    override fun contractDetailsEnd(reqId: Int) {
+        logger.debug { "contractDetailsEnd: reqId=$reqId" }
+    }
+
+    override fun execDetails(
+        reqId: Int,
+        contract: Contract,
+        execution: Execution,
+    ) {
+        logger.debug { "execDetails: reqId=$reqId" }
+    }
+
+    override fun execDetailsEnd(reqId: Int) {
+        logger.debug { "execDetailsEnd: reqId=$reqId" }
+    }
+
+    override fun updateMktDepth(
+        tickerId: Int,
+        position: Int,
+        operation: Int,
+        side: Int,
+        price: Double,
+        size: Decimal,
+    ) {
+        logger.trace { "updateMktDepth: tickerId=$tickerId" }
+    }
+
+    override fun updateMktDepthL2(
+        tickerId: Int,
+        position: Int,
+        marketMaker: String,
+        operation: Int,
+        side: Int,
+        price: Double,
+        size: Decimal,
+        isSmartDepth: Boolean,
+    ) {
+        logger.trace { "updateMktDepthL2: tickerId=$tickerId" }
+    }
+
+    override fun updateNewsBulletin(
+        msgId: Int,
+        msgType: Int,
+        message: String,
+        origExchange: String,
+    ) {
+        logger.debug { "updateNewsBulletin: msgId=$msgId" }
+    }
+
+    override fun managedAccounts(accountsList: String) {
+        logger.info { "managedAccounts: $accountsList" }
+    }
+
+    override fun receiveFA(
+        faDataType: Int,
+        xml: String,
+    ) {
+        logger.debug { "receiveFA: faDataType=$faDataType" }
+    }
+
+    override fun historicalData(
+        reqId: Int,
+        bar: Bar,
+    ) {
+        logger.trace { "historicalData: reqId=$reqId" }
+    }
+
+    override fun scannerParameters(xml: String) {
+        logger.debug { "scannerParameters received" }
+    }
+
+    override fun scannerData(
+        reqId: Int,
+        rank: Int,
+        contractDetails: ContractDetails,
+        distance: String,
+        benchmark: String,
+        projection: String,
+        legsStr: String,
+    ) {
+        logger.debug { "scannerData: reqId=$reqId, rank=$rank" }
+    }
+
+    override fun scannerDataEnd(reqId: Int) {
+        logger.debug { "scannerDataEnd: reqId=$reqId" }
+    }
+
+    override fun realtimeBar(
+        reqId: Int,
+        time: Long,
+        open: Double,
+        high: Double,
+        low: Double,
+        close: Double,
+        volume: Decimal,
+        wap: Decimal,
+        count: Int,
+    ) {
+        logger.trace { "realtimeBar: reqId=$reqId" }
+    }
+
+    override fun currentTime(time: Long) {
+        logger.debug { "currentTime: $time" }
+    }
+
+    override fun fundamentalData(
+        reqId: Int,
+        data: String,
+    ) {
+        logger.debug { "fundamentalData: reqId=$reqId" }
+    }
+
+    override fun deltaNeutralValidation(
+        reqId: Int,
+        deltaNeutralContract: DeltaNeutralContract,
+    ) {
+        logger.debug { "deltaNeutralValidation: reqId=$reqId" }
+    }
+
+    override fun tickSnapshotEnd(reqId: Int) {
+        logger.trace { "tickSnapshotEnd: reqId=$reqId" }
+    }
+
+    override fun marketDataType(
+        reqId: Int,
+        marketDataType: Int,
+    ) {
+        logger.debug { "marketDataType: reqId=$reqId, type=$marketDataType" }
+    }
+
+    override fun commissionReport(commissionReport: CommissionReport) {
+        logger.debug { "commissionReport: ${commissionReport.execId()}" }
+    }
+
+    override fun position(
+        account: String,
+        contract: Contract,
+        pos: Decimal,
+        avgCost: Double,
+    ) {
+        logger.debug { "position: account=$account, symbol=${contract.symbol()}, pos=$pos" }
+    }
+
+    override fun positionEnd() {
+        logger.debug { "positionEnd" }
+    }
+
+    override fun accountSummary(
+        reqId: Int,
+        account: String,
+        tag: String,
+        value: String,
+        currency: String,
+    ) {
+        logger.trace { "accountSummary: account=$account, tag=$tag, value=$value" }
+    }
+
+    override fun accountSummaryEnd(reqId: Int) {
+        logger.debug { "accountSummaryEnd: reqId=$reqId" }
+    }
+
+    override fun verifyMessageAPI(apiData: String) {
+        logger.debug { "verifyMessageAPI" }
+    }
+
+    override fun verifyCompleted(
+        isSuccessful: Boolean,
+        errorText: String,
+    ) {
+        logger.debug { "verifyCompleted: success=$isSuccessful" }
+    }
+
+    override fun verifyAndAuthMessageAPI(
+        apiData: String,
+        xyzChallenge: String,
+    ) {
+        logger.debug { "verifyAndAuthMessageAPI" }
+    }
+
+    override fun verifyAndAuthCompleted(
+        isSuccessful: Boolean,
+        errorText: String,
+    ) {
+        logger.debug { "verifyAndAuthCompleted: success=$isSuccessful" }
+    }
+
+    override fun displayGroupList(
+        reqId: Int,
+        groups: String,
+    ) {
+        logger.debug { "displayGroupList: reqId=$reqId" }
+    }
+
+    override fun displayGroupUpdated(
+        reqId: Int,
+        contractInfo: String,
+    ) {
+        logger.debug { "displayGroupUpdated: reqId=$reqId" }
+    }
+
+    override fun error(e: Exception) {
+        logger.error(e) { "IBKR error: ${e.message}" }
+    }
+
+    override fun error(str: String) {
+        logger.error { "IBKR error: $str" }
+    }
+
+    override fun error(
+        id: Int,
+        errorCode: Int,
+        errorMsg: String,
+        advancedOrderRejectJson: String,
+    ) {
+        if (errorCode in listOf(2104, 2106, 2158)) {
+            logger.info { "IBKR info [id=$id, code=$errorCode]: $errorMsg" }
+        } else {
+            logger.error { "IBKR error [id=$id, code=$errorCode]: $errorMsg" }
+        }
+    }
+
+    override fun connectionClosed() {
+        logger.warn { "IBKR connection closed" }
+    }
+
+    override fun connectAck() {
+        logger.info { "IBKR connection acknowledged" }
+    }
+
+    override fun positionMulti(
+        reqId: Int,
+        account: String,
+        modelCode: String,
+        contract: Contract,
+        pos: Decimal,
+        avgCost: Double,
+    ) {
+        logger.debug { "positionMulti: reqId=$reqId" }
+    }
+
+    override fun positionMultiEnd(reqId: Int) {
+        logger.debug { "positionMultiEnd: reqId=$reqId" }
+    }
+
+    override fun accountUpdateMulti(
+        reqId: Int,
+        account: String,
+        modelCode: String,
+        key: String,
+        value: String,
+        currency: String,
+    ) {
+        logger.trace { "accountUpdateMulti: reqId=$reqId, key=$key" }
+    }
+
+    override fun accountUpdateMultiEnd(reqId: Int) {
+        logger.debug { "accountUpdateMultiEnd: reqId=$reqId" }
+    }
+
+    override fun securityDefinitionOptionalParameter(
+        reqId: Int,
+        exchange: String,
+        underlyingConId: Int,
+        tradingClass: String,
+        multiplier: String,
+        expirations: MutableSet<String>,
+        strikes: MutableSet<Double>,
+    ) {
+        logger.debug { "securityDefinitionOptionalParameter: reqId=$reqId, exchange=$exchange" }
+    }
+
+    override fun securityDefinitionOptionalParameterEnd(reqId: Int) {
+        logger.debug { "securityDefinitionOptionalParameterEnd: reqId=$reqId" }
+    }
+
+    override fun softDollarTiers(
+        reqId: Int,
+        tiers: Array<out SoftDollarTier>,
+    ) {
+        logger.debug { "softDollarTiers: reqId=$reqId" }
+    }
+
+    override fun familyCodes(familyCodes: Array<out FamilyCode>) {
+        logger.debug { "familyCodes: ${familyCodes.size} codes" }
+    }
+
+    override fun symbolSamples(
+        reqId: Int,
+        contractDescriptions: Array<out ContractDescription>,
+    ) {
+        logger.debug { "symbolSamples: reqId=$reqId, count=${contractDescriptions.size}" }
+    }
+
+    override fun historicalDataEnd(
+        reqId: Int,
+        startDateStr: String,
+        endDateStr: String,
+    ) {
+        logger.debug { "historicalDataEnd: reqId=$reqId" }
+    }
+
+    override fun mktDepthExchanges(depthMktDataDescriptions: Array<out DepthMktDataDescription>) {
+        logger.debug { "mktDepthExchanges: ${depthMktDataDescriptions.size} exchanges" }
+    }
+
+    override fun tickNews(
+        tickerId: Int,
+        timeStamp: Long,
+        providerCode: String,
+        articleId: String,
+        headline: String,
+        extraData: String,
+    ) {
+        logger.debug { "tickNews: tickerId=$tickerId" }
+    }
+
+    override fun smartComponents(
+        reqId: Int,
+        theMap: MutableMap<Int, MutableMap.MutableEntry<String, Char>>,
+    ) {
+        logger.debug { "smartComponents: reqId=$reqId" }
+    }
+
+    override fun tickReqParams(
+        tickerId: Int,
+        minTick: Double,
+        bboExchange: String,
+        snapshotPermissions: Int,
+    ) {
+        logger.trace { "tickReqParams: tickerId=$tickerId" }
+    }
+
+    override fun newsProviders(newsProviders: Array<out NewsProvider>) {
+        logger.debug { "newsProviders: ${newsProviders.size} providers" }
+    }
+
+    override fun newsArticle(
+        requestId: Int,
+        articleType: Int,
+        articleText: String,
+    ) {
+        logger.debug { "newsArticle: requestId=$requestId" }
+    }
+
+    override fun historicalNews(
+        requestId: Int,
+        time: String,
+        providerCode: String,
+        articleId: String,
+        headline: String,
+    ) {
+        logger.debug { "historicalNews: requestId=$requestId" }
+    }
+
+    override fun historicalNewsEnd(
+        requestId: Int,
+        hasMore: Boolean,
+    ) {
+        logger.debug { "historicalNewsEnd: requestId=$requestId" }
+    }
+
+    override fun headTimestamp(
+        reqId: Int,
+        headTimestamp: String,
+    ) {
+        logger.debug { "headTimestamp: reqId=$reqId, timestamp=$headTimestamp" }
+    }
+
+    override fun histogramData(
+        reqId: Int,
+        items: MutableList<HistogramEntry>,
+    ) {
+        logger.debug { "histogramData: reqId=$reqId, items=${items.size}" }
+    }
+
+    override fun historicalDataUpdate(
+        reqId: Int,
+        bar: Bar,
+    ) {
+        logger.trace { "historicalDataUpdate: reqId=$reqId" }
+    }
+
+    override fun rerouteMktDataReq(
+        reqId: Int,
+        conId: Int,
+        exchange: String,
+    ) {
+        logger.debug { "rerouteMktDataReq: reqId=$reqId" }
+    }
+
+    override fun rerouteMktDepthReq(
+        reqId: Int,
+        conId: Int,
+        exchange: String,
+    ) {
+        logger.debug { "rerouteMktDepthReq: reqId=$reqId" }
+    }
+
+    override fun marketRule(
+        marketRuleId: Int,
+        priceIncrements: Array<out PriceIncrement>,
+    ) {
+        logger.debug { "marketRule: marketRuleId=$marketRuleId" }
+    }
+
+    override fun pnl(
+        reqId: Int,
+        dailyPnL: Double,
+        unrealizedPnL: Double,
+        realizedPnL: Double,
+    ) {
+        logger.debug { "pnl: reqId=$reqId, daily=$dailyPnL" }
+    }
+
+    override fun pnlSingle(
+        reqId: Int,
+        pos: Decimal,
+        dailyPnL: Double,
+        unrealizedPnL: Double,
+        realizedPnL: Double,
+        value: Double,
+    ) {
+        logger.debug { "pnlSingle: reqId=$reqId" }
+    }
+
+    override fun historicalTicks(
+        reqId: Int,
+        ticks: MutableList<HistoricalTick>,
+        done: Boolean,
+    ) {
+        logger.debug { "historicalTicks: reqId=$reqId, count=${ticks.size}, done=$done" }
+    }
+
+    override fun historicalTicksBidAsk(
+        reqId: Int,
+        ticks: MutableList<HistoricalTickBidAsk>,
+        done: Boolean,
+    ) {
+        logger.debug { "historicalTicksBidAsk: reqId=$reqId, count=${ticks.size}, done=$done" }
+    }
+
+    override fun historicalTicksLast(
+        reqId: Int,
+        ticks: MutableList<HistoricalTickLast>,
+        done: Boolean,
+    ) {
+        logger.debug { "historicalTicksLast: reqId=$reqId, count=${ticks.size}, done=$done" }
+    }
+
+    override fun tickByTickAllLast(
+        reqId: Int,
+        tickType: Int,
+        time: Long,
+        price: Double,
+        size: Decimal,
+        tickAttribLast: TickAttribLast,
+        exchange: String,
+        specialConditions: String,
+    ) {
+        logger.trace { "tickByTickAllLast: reqId=$reqId, price=$price" }
+    }
+
+    override fun tickByTickBidAsk(
+        reqId: Int,
+        time: Long,
+        bidPrice: Double,
+        askPrice: Double,
+        bidSize: Decimal,
+        askSize: Decimal,
+        tickAttribBidAsk: TickAttribBidAsk,
+    ) {
+        logger.trace { "tickByTickBidAsk: reqId=$reqId, bid=$bidPrice, ask=$askPrice" }
+    }
+
+    override fun tickByTickMidPoint(
+        reqId: Int,
+        time: Long,
+        midPoint: Double,
+    ) {
+        logger.trace { "tickByTickMidPoint: reqId=$reqId, midPoint=$midPoint" }
+    }
+
+    override fun orderBound(
+        orderId: Long,
+        apiClientId: Int,
+        apiOrderId: Int,
+    ) {
+        logger.debug { "orderBound: orderId=$orderId" }
+    }
+
+    override fun completedOrder(
+        contract: Contract,
+        order: Order,
+        orderState: OrderState,
+    ) {
+        logger.debug { "completedOrder: symbol=${contract.symbol()}" }
+    }
+
+    override fun completedOrdersEnd() {
+        logger.debug { "completedOrdersEnd" }
+    }
+
+    override fun replaceFAEnd(
+        reqId: Int,
+        text: String,
+    ) {
+        logger.debug { "replaceFAEnd: reqId=$reqId" }
+    }
+
+    override fun wshMetaData(
+        reqId: Int,
+        dataJson: String,
+    ) {
+        logger.debug { "wshMetaData: reqId=$reqId" }
+    }
+
+    override fun wshEventData(
+        reqId: Int,
+        dataJson: String,
+    ) {
+        logger.debug { "wshEventData: reqId=$reqId" }
+    }
+
+    override fun historicalSchedule(
+        reqId: Int,
+        startDateTime: String,
+        endDateTime: String,
+        timeZone: String,
+        sessions: MutableList<HistoricalSession>,
+    ) {
+        logger.debug { "historicalSchedule: reqId=$reqId" }
+    }
+
+    override fun userInfo(
+        reqId: Int,
+        whiteBrandingId: String,
+    ) {
+        logger.debug { "userInfo: reqId=$reqId" }
+    }
+}

@@ -1,0 +1,43 @@
+openapi: 3.0.3
+info:
+  title: Options Engine - Health API
+  description: Health and connection status endpoints
+  version: 1.0.0
+
+paths:
+  /health/ibkr:
+    get:
+      tags:
+        - Health
+      summary: Get IBKR connection status
+      operationId: getIbkrConnectionStatus
+      responses:
+        '200':
+          description: Connection status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IbkrConnectionStatus'
+
+components:
+  schemas:
+    IbkrConnectionStatus:
+      type: object
+      required:
+        - connected
+        - autoReconnectEnabled
+        - autoReconnectThreadActive
+        - connectionInitialized
+      properties:
+        connected:
+          type: boolean
+          description: Whether the IBKR connection is currently active
+        autoReconnectEnabled:
+          type: boolean
+          description: Whether auto-reconnect is configured
+        autoReconnectThreadActive:
+          type: boolean
+          description: Whether the auto-reconnect thread is currently running
+        connectionInitialized:
+          type: boolean
+          description: Whether the connection has been initialized at least once

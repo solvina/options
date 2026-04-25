@@ -1,0 +1,30 @@
+# Gradle
+engine/.gradle/
+engine/build/
+engine/gradle/wrapper/gradle-wrapper.jar
+
+# IDE
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+
+# Kotlin
+*.class
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node / Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Docker data
+data/
+
+# Environment
+.env
+.env.local
