@@ -25,6 +25,17 @@ class IbkrHistoricalDataAdapter(
     override fun fetchDailyBars(
         symbol: Symbol,
         days: Int,
+    ): Flow<HistoricalBar> = fetchBars(symbol, days, "OPTION_IMPLIED_VOLATILITY")
+
+    fun fetchDailyPriceBars(
+        symbol: Symbol,
+        days: Int,
+    ): Flow<HistoricalBar> = fetchBars(symbol, days, "TRADES")
+
+    private fun fetchBars(
+        symbol: Symbol,
+        days: Int,
+        whatToShow: String,
     ): Flow<HistoricalBar> =
         callbackFlow {
             val reqId = registry.nextDataReqId()
@@ -44,14 +55,14 @@ class IbkrHistoricalDataAdapter(
                     exchange("SMART")
                 }
 
-            logger.debug { "[$symbol] Requesting $days days of IV history (reqId=$reqId)" }
+            logger.debug { "[$symbol] Requesting $days days of $whatToShow history (reqId=$reqId)" }
             client.reqHistoricalData(
                 reqId,
                 contract,
                 "",
                 "$days D",
                 "1 day",
-                "OPTION_IMPLIED_VOLATILITY",
+                whatToShow,
                 1,
                 1,
                 false,

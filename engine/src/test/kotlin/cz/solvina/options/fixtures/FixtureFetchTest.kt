@@ -183,6 +183,40 @@ class FixtureFetchTest {
         }
 
     // ---------------------------------------------------------------------------
+    // Price history  →  src/test/resources/fixtures/prices/{SYMBOL}.csv
+    // ---------------------------------------------------------------------------
+
+    /**
+     * Fetches 365 days of daily closing prices (TRADES) for every symbol
+     * in the watchlist and writes them as CSV files.
+     *
+     * CSV columns: date,close
+     *   date  — ISO-8601 (yyyy-MM-dd)
+     *   close — closing price in USD, e.g. 476.58
+     */
+    @Test
+    fun `fetch price history and save to CSV`() =
+        runBlocking {
+            val dir = File("src/test/resources/fixtures/prices").also { it.mkdirs() }
+
+            for (symbolStr in scannerConfig.watchlist) {
+                val symbol = Symbol(symbolStr)
+                logger.info { "[$symbol] Requesting ${scannerConfig.ivHistoryDays} days of price history…" }
+
+                val bars = historicalAdapter.fetchDailyPriceBars(symbol, scannerConfig.ivHistoryDays).toList()
+
+                val file = File(dir, "$symbolStr.csv")
+                file.bufferedWriter().use { w ->
+                    w.appendLine("date,close")
+                    bars.forEach { bar -> w.appendLine("${bar.date},${bar.close}") }
+                }
+                logger.info { "[$symbol] Wrote ${bars.size} price bars → ${file.path}" }
+
+                Thread.sleep(500)
+            }
+        }
+
+    // ---------------------------------------------------------------------------
     // Option chains  →  src/test/resources/fixtures/chain/{SYMBOL}.json
     // ---------------------------------------------------------------------------
 
