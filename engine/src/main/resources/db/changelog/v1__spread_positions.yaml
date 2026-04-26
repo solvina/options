@@ -1,0 +1,82 @@
+databaseChangeLog:
+  - changeSet:
+      id: v1__spread_positions
+      author: vseliga
+      changes:
+        - createTable:
+            tableName: spread_positions
+            columns:
+              - column:
+                  name: id
+                  type: UUID
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+                  defaultValueComputed: gen_random_uuid()
+              - column:
+                  name: symbol
+                  type: VARCHAR(10)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: status
+                  type: VARCHAR(30)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: sold_strike
+                  type: NUMERIC(10, 2)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: bought_strike
+                  type: NUMERIC(10, 2)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: expiry_date
+                  type: DATE
+                  constraints:
+                    nullable: false
+              - column:
+                  name: credit_per_share
+                  type: NUMERIC(10, 4)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: max_risk_per_share
+                  type: NUMERIC(10, 4)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: quantity
+                  type: INT
+                  defaultValueNumeric: 1
+                  constraints:
+                    nullable: false
+              - column:
+                  name: sold_order_id
+                  type: INT
+              - column:
+                  name: bought_order_id
+                  type: INT
+              - column:
+                  name: iv_rank_at_entry
+                  type: NUMERIC(5, 2)
+              - column:
+                  name: underlying_price_at_entry
+                  type: NUMERIC(10, 2)
+              - column:
+                  name: opened_at
+                  type: TIMESTAMP WITH TIME ZONE
+                  constraints:
+                    nullable: false
+              - column:
+                  name: closed_at
+                  type: TIMESTAMP WITH TIME ZONE
+              - column:
+                  name: close_reason
+                  type: VARCHAR(50)
+              - column:
+                  name: close_price_per_share
+                  type: NUMERIC(10, 4)

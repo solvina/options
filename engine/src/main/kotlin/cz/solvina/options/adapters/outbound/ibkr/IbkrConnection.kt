@@ -4,6 +4,13 @@ import com.ib.client.EClientSocket
 import com.ib.client.EReader
 import com.ib.client.EReaderSignal
 import io.github.oshai.kotlinlogging.KotlinLogging
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import org.springframework.stereotype.Component
 
 private val logger = KotlinLogging.logger {}
@@ -14,7 +21,8 @@ class IbkrConnection(
     private val eReaderSignal: EReaderSignal,
     private val client: EClientSocket,
 ) {
-    private var readerThread: Thread? = null
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var readerJob: Job? = null
 
     fun connect() {
         if (client.isConnected) {
@@ -33,43 +41,51 @@ class IbkrConnection(
     }
 
     private fun startMessageReader() {
-        if (readerThread?.isAlive == true) {
-            logger.debug { "Message reader thread already running" }
+        if (readerJob?.isActive == true) {
+            logger.debug { "Message reader job already running" }
             return
         }
 
         val reader = EReader(client, eReaderSignal)
         reader.start()
 
-        readerThread =
-            Thread {
-                while (client.isConnected) {
-                    eReaderSignal.waitForSignal()
-                    try {
-                        reader.processMsgs()
-                    } catch (e: Exception) {
-                        logger.error(e) { "Error processing IBKR messages: ${e.message}" }
+        readerJob =
+            scope.launch {
+                try {
+                    while (isActive && client.isConnected) {
+                        eReaderSignal.waitForSignal()
+                        if (!isActive || !client.isConnected) {
+                            break
+                        }
+
+                        try {
+                            reader.processMsgs()
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            logger.error(e) { "Error processing IBKR messages: ${e.message}" }
+                        }
                     }
+                } catch (e: CancellationException) {
+                    throw e
+                } finally {
+                    logger.info { "Message reader job exiting" }
                 }
-                logger.info { "Message reader thread exiting" }
-            }.apply {
-                name = "IBKR-Message-Reader"
-                isDaemon = true
-                start()
             }
     }
 
     fun isConnected(): Boolean = client.isConnected
 
     fun disconnect() {
+        readerJob?.cancel()
+        eReaderSignal.issueSignal()
+        readerJob = null
+
         if (client.isConnected) {
             client.eDisconnect()
             logger.info { "Disconnected from IBKR" }
         } else {
             logger.warn { "Not connected to IBKR" }
         }
-
-        readerThread?.interrupt()
-        readerThread = null
     }
 }

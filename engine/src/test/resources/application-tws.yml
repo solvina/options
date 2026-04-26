@@ -1,0 +1,19 @@
+ibkr:
+  connection:
+    enabled: false      # prevent auto-connect in IbkrLifecycleAdapter; test connects manually
+    host: localhost
+    port: 7497
+    client-id: 2        # separate client-id to avoid conflict with a running production instance
+    account: DU1234567  # paper-trading account for fixture tests
+
+scanner:
+  watchlist: [SPY, QQQ, AAPL, MSFT, AMZN]
+  candidate-strike-count: 20  # wider than production to get richer fixture data
+  iv-history-days: 365
+  min-dte: 30
+  max-dte: 50
+  preferred-dte: 45
+  target-delta: 0.15
+  delta-min: 0.10
+  delta-max: 0.20
+  strike-band-percent: 0.20

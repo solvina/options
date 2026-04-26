@@ -20,10 +20,38 @@ ibkr:
     host: localhost
     port: 7497
     client-id: 1
+    account: "DU7875979"           # set to your IBKR account code, e.g. U1234567
     use-ssl: false
     enabled: true
     auto-reconnect: true
     reconnect-interval-ms: 10000
+
+scanner:
+  watchlist: [SPY, QQQ, AAPL, MSFT, AMZN]
+  iv-rank-threshold: 30
+  min-dte: 30
+  max-dte: 50
+  preferred-dte: 45
+  target-delta: 0.15
+  delta-min: 0.10
+  delta-max: 0.20
+  strike-band-percent: 0.20
+  candidate-strike-count: 7
+  spread-width-usd: 5.0
+  min-credit-per-share: 0.30
+  max-risk-percent: 0.025
+  max-open-spreads: 5
+  take-profit-percent: 0.50
+  stop-loss-percent: 0.50
+  time-profit-dte: 14
+  order-chase-timeout-minutes: 5
+  order-chase-max-retries: 3
+  order-chase-price-step: 0.03
+  cron: "0 */15 10-15 * * MON-FRI"
+  monitor-delay-ms: 60000
+  iv-history-days: 365
+  iv-cache-ttl-minutes: 60
+  option-params-cache-ttl-hours: 24
 
 server:
   port: 8081

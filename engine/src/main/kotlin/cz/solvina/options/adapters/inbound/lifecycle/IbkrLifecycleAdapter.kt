@@ -1,6 +1,8 @@
 package cz.solvina.options.adapters.inbound.lifecycle
 
 import cz.solvina.options.adapters.outbound.ibkr.IbkrConnectionConfig
+import cz.solvina.options.adapters.outbound.ibkr.account.IbkrAccountAdapter
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrRequestRegistry
 import cz.solvina.options.domain.features.connection.ConnectionPort
 import io.github.oshai.kotlinlogging.KotlinLogging
 import jakarta.annotation.PreDestroy
@@ -15,6 +17,8 @@ private val logger = KotlinLogging.logger {}
 class IbkrLifecycleAdapter(
     private val config: IbkrConnectionConfig,
     private val connectionPort: ConnectionPort,
+    private val accountAdapter: IbkrAccountAdapter,
+    private val registry: IbkrRequestRegistry,
 ) {
     @EventListener(ApplicationReadyEvent::class)
     fun onApplicationReady() {
@@ -40,6 +44,8 @@ class IbkrLifecycleAdapter(
     @PreDestroy
     fun onShutdown() {
         logger.info { "Disconnecting from IBKR..." }
+        registry.cancelAllPending()
+        accountAdapter.onDisconnect()
         connectionPort.disconnect()
     }
 }

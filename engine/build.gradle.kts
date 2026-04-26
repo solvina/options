@@ -57,6 +57,7 @@ dependencies {
     // Testing
     testImplementation("org.testcontainers:junit-jupiter")
     testImplementation("org.testcontainers:postgresql")
+    testImplementation("org.springframework.boot:spring-boot-testcontainers")
 
     // Interactive Brokers TWS API
     implementation(files("lib/TwsApi_debug.jar"))
@@ -132,5 +133,14 @@ ktlint {
 }
 
 tasks.withType<Test> {
-    useJUnitPlatform()
+    useJUnitPlatform {
+        excludeTags("tws")
+    }
+}
+
+tasks.register<Test>("twsTest") {
+    useJUnitPlatform {
+        includeTags("tws")
+    }
+    systemProperty("tests.tags", "tws")
 }

@@ -1,0 +1,149 @@
+openapi: 3.0.3
+info:
+  title: Options Engine - Spreads API
+  description: Bull Put Spread positions and scanner management
+  version: 1.0.0
+
+paths:
+  /spreads:
+    get:
+      tags:
+        - Spreads
+      summary: List spread positions
+      operationId: listSpreads
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [OPEN, CLOSED_PROFIT, CLOSED_STOP, CLOSED_TIME, CLOSED_MANUAL]
+      responses:
+        '200':
+          description: List of spread positions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SpreadDto'
+
+  /spreads/{id}:
+    get:
+      tags:
+        - Spreads
+      summary: Get a spread position by ID
+      operationId: getSpreadById
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Spread position
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpreadDto'
+        '404':
+          description: Not found
+
+  /scanner/run:
+    post:
+      tags:
+        - Scanner
+      summary: Trigger a manual scanner run
+      operationId: triggerScan
+      responses:
+        '202':
+          description: Scan accepted and running asynchronously
+
+  /scanner/status:
+    get:
+      tags:
+        - Scanner
+      summary: Get scanner status
+      operationId: getScannerStatus
+      responses:
+        '200':
+          description: Scanner status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScannerStatusDto'
+
+components:
+  schemas:
+    SpreadDto:
+      type: object
+      required:
+        - symbol
+        - status
+        - soldStrike
+        - boughtStrike
+        - expiryDate
+        - creditPerShare
+        - maxRiskPerShare
+        - quantity
+        - openedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        symbol:
+          type: string
+        status:
+          type: string
+        soldStrike:
+          type: number
+        boughtStrike:
+          type: number
+        expiryDate:
+          type: string
+          format: date
+        creditPerShare:
+          type: number
+        maxRiskPerShare:
+          type: number
+        quantity:
+          type: integer
+        ivRankAtEntry:
+          type: number
+          nullable: true
+        underlyingPriceAtEntry:
+          type: number
+          nullable: true
+        openedAt:
+          type: string
+          format: date-time
+        closedAt:
+          type: string
+          format: date-time
+          nullable: true
+        closeReason:
+          type: string
+          nullable: true
+        closePricePerShare:
+          type: number
+          nullable: true
+
+    ScannerStatusDto:
+      type: object
+      required:
+        - openSpreadCount
+        - ivRanks
+      properties:
+        lastRunAt:
+          type: string
+          format: date-time
+          nullable: true
+        openSpreadCount:
+          type: integer
+          format: int64
+        ivRanks:
+          type: object
+          additionalProperties:
+            type: number

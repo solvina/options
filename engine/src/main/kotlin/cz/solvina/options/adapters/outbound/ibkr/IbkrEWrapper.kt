@@ -132,10 +132,11 @@ class IbkrEWrapper(
     override fun updateAccountValue(
         key: String,
         value: String,
-        currency: String,
+        currency: String?,
         accountName: String,
     ) {
         logger.trace { "updateAccountValue: key=$key, value=$value, currency=$currency" }
+        registry.onAccountValue(key, value, accountName)
     }
 
     override fun updatePortfolio(
@@ -231,6 +232,7 @@ class IbkrEWrapper(
 
     override fun managedAccounts(accountsList: String) {
         logger.info { "managedAccounts: $accountsList" }
+        registry.onManagedAccounts(accountsList)
     }
 
     override fun receiveFA(
@@ -337,12 +339,10 @@ class IbkrEWrapper(
         currency: String,
     ) {
         logger.trace { "accountSummary: account=$account, tag=$tag, value=$value" }
-        registry.onAccountSummary(reqId, tag, value)
     }
 
     override fun accountSummaryEnd(reqId: Int) {
         logger.debug { "accountSummaryEnd: reqId=$reqId" }
-        registry.onAccountSummaryEnd(reqId)
     }
 
     override fun verifyMessageAPI(apiData: String) {
@@ -408,6 +408,7 @@ class IbkrEWrapper(
 
     override fun connectionClosed() {
         logger.warn { "IBKR connection closed" }
+        registry.cancelAllPending()
     }
 
     override fun connectAck() {

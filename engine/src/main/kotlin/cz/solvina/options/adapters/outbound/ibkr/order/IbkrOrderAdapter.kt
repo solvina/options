@@ -1,0 +1,94 @@
+package cz.solvina.options.adapters.outbound.ibkr.order
+
+import com.ib.client.Contract
+import com.ib.client.Decimal
+import com.ib.client.EClientSocket
+import com.ib.client.Order
+import com.ib.client.OrderCancel
+import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
+import cz.solvina.options.adapters.outbound.ibkr.cache.OptionContractKey
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrRequestRegistry
+import cz.solvina.options.domain.features.order.LegAction
+import cz.solvina.options.domain.features.order.LegOrder
+import cz.solvina.options.domain.features.order.OrderPort
+import cz.solvina.options.domain.features.order.OrderStatus
+import cz.solvina.options.domain.models.Money
+import cz.solvina.options.domain.models.OptionContract
+import io.github.oshai.kotlinlogging.KotlinLogging
+import kotlinx.coroutines.CompletableDeferred
+import org.springframework.stereotype.Component
+import java.time.format.DateTimeFormatter
+
+private val logger = KotlinLogging.logger {}
+
+@Component
+class IbkrOrderAdapter(
+    private val registry: IbkrRequestRegistry,
+    private val client: EClientSocket,
+    private val contractCache: IbkrContractCache,
+    private val chaseService: OrderChaseService,
+) : OrderPort {
+    override suspend fun placeAndAwaitFill(
+        contract: OptionContract,
+        action: LegAction,
+        limitPrice: Money,
+        qty: Int,
+    ): LegOrder {
+        val conId =
+            runCatching {
+                contractCache.getOrFetchOptionConId(
+                    OptionContractKey(contract.symbol, contract.expiry, contract.strike, contract.type),
+                )
+            }.getOrNull()
+
+        val ibkrContract = buildIbkrContract(contract, conId)
+
+        val orderId = registry.nextOrderId()
+        val deferred = CompletableDeferred<OrderStatus>()
+        registry.pendingOrderStatus[orderId] = deferred
+
+        val ibkrOrder =
+            Order().apply {
+                action(action.name)
+                orderType("LMT")
+                lmtPrice(limitPrice.amount.toDouble())
+                totalQuantity(Decimal.get(qty.toLong()))
+                tif("DAY")
+            }
+
+        logger.info {
+            "Placing ${action.name} ${contract.symbol} ${contract.strike}P ${contract.expiry} " +
+                "@ \$${limitPrice.amount} orderId=$orderId"
+        }
+        client.placeOrder(orderId, ibkrContract, ibkrOrder)
+
+        return chaseService.waitForFillOrChase(
+            initialOrderId = orderId,
+            contract = ibkrContract,
+            action = action.name,
+            initialPrice = limitPrice.amount,
+            qty = qty,
+        )
+    }
+
+    override suspend fun cancelOrder(orderId: Int) {
+        logger.info { "Cancelling order $orderId" }
+        client.cancelOrder(orderId, OrderCancel())
+    }
+
+    private fun buildIbkrContract(
+        contract: OptionContract,
+        conId: Int?,
+    ): Contract =
+        Contract().apply {
+            if (conId != null) conid(conId)
+            symbol(contract.symbol.value)
+            secType("OPT")
+            currency("USD")
+            exchange("SMART")
+            lastTradeDateOrContractMonth(contract.expiry.format(DateTimeFormatter.ofPattern("yyyyMMdd")))
+            strike(contract.strike.toDouble())
+            right(contract.type.ibkrCode)
+            multiplier("100")
+        }
+}
