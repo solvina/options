@@ -11,6 +11,7 @@ import cz.solvina.options.domain.models.Money
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
+import java.time.Clock
 import java.time.Instant
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
@@ -23,6 +24,7 @@ class SpreadManagementService(
     private val marketDataPort: MarketDataPort,
     private val orderPort: OrderPort,
     private val config: ScannerConfig,
+    private val clock: Clock,
 ) {
     suspend fun checkExits() {
         val openSpreads = spreadPort.findOpen()
@@ -39,7 +41,7 @@ class SpreadManagementService(
     }
 
     private suspend fun checkSpreadExit(spread: BullPutSpread) {
-        val today = LocalDate.now()
+        val today = LocalDate.now(clock)
         val expiry = spread.soldLeg.contract.expiry
         val dte = ChronoUnit.DAYS.between(today, expiry).toInt()
 
@@ -108,7 +110,7 @@ class SpreadManagementService(
         val updated =
             spread.copy(
                 status = closeStatus,
-                closedAt = Instant.now(),
+                closedAt = Instant.now(clock),
                 closeReason = closeStatus.name,
                 closePricePerShare = currentSpreadValue,
             )

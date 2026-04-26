@@ -6,6 +6,7 @@ import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.flow.toList
 import org.springframework.stereotype.Service
+import java.time.Clock
 import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
@@ -16,6 +17,7 @@ private val logger = KotlinLogging.logger {}
 class IvRankService(
     private val histDataPort: HistoricalDataPort,
     private val config: ScannerConfig,
+    private val clock: Clock,
 ) : VolatilityPort {
     private data class CachedIvRank(
         val ivRank: IvRank,
@@ -27,7 +29,7 @@ class IvRankService(
     override suspend fun getIvRank(symbol: Symbol): IvRank {
         val cached = cache[symbol]
         val ttl = Duration.ofMinutes(config.ivCacheTtlMinutes)
-        if (cached != null && Instant.now().isBefore(cached.cachedAt.plus(ttl))) {
+        if (cached != null && Instant.now(clock).isBefore(cached.cachedAt.plus(ttl))) {
             logger.debug { "[$symbol] IV Rank cache hit: ${cached.ivRank.rank}" }
             return cached.ivRank
         }
@@ -47,8 +49,9 @@ class IvRankService(
                 (currentIv - ivMin) / (ivMax - ivMin) * 100.0
             }
 
-        val ivRank = IvRank(rank = rank, calculatedAt = Instant.now())
-        cache[symbol] = CachedIvRank(ivRank, Instant.now())
+        val now = Instant.now(clock)
+        val ivRank = IvRank(rank = rank, calculatedAt = now)
+        cache[symbol] = CachedIvRank(ivRank, now)
         logger.info {
             "[$symbol] IV Rank: ${"%.1f".format(
                 rank,

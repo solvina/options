@@ -19,6 +19,7 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.math.RoundingMode
+import java.time.Clock
 import java.time.Instant
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
@@ -37,13 +38,14 @@ class ScannerService(
     private val orderPort: OrderPort,
     private val spreadPort: SpreadPort,
     private val config: ScannerConfig,
+    private val clock: Clock,
 ) : ScannerPort {
     private val ivRanksSnapshot = ConcurrentHashMap<String, Double>()
 
     @Volatile private var lastRunAt: Instant? = null
 
     override suspend fun scan() {
-        lastRunAt = Instant.now()
+        lastRunAt = Instant.now(clock)
         logger.info { "Scanner run started" }
 
         val openCount = spreadPort.countByStatus(SpreadStatus.OPEN)
@@ -93,7 +95,7 @@ class ScannerService(
         val underlyingPrice = marketDataPort.getUnderlyingPrice(symbol)
 
         // 2. Select expiry
-        val today = LocalDate.now()
+        val today = LocalDate.now(clock)
         val availableExpirations = optionChainPort.getAvailableExpirations(symbol)
         val expiry =
             availableExpirations
@@ -224,7 +226,7 @@ class ScannerService(
                 status = SpreadStatus.OPEN,
                 ivRankAtEntry = ivRank.rank,
                 underlyingPriceAtEntry = underlyingPrice.amount,
-                openedAt = Instant.now(),
+                openedAt = Instant.now(clock),
             )
 
         spreadPort.save(spread)
