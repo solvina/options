@@ -40,12 +40,34 @@ internal data class PendingMarketDataRequest(
     val snapshot: MarketDataSnapshot = MarketDataSnapshot(),
 )
 
+/** Continuous reqMktData(snapshot=false) subscription. Snapshot is mutated in-place; [onUpdate]
+ *  is called (on the IBKR reader thread) after each tickPrice or tickOptionComputation update. */
+internal data class PendingContinuousMarketDataRequest(
+    val snapshot: MarketDataSnapshot,
+    val onUpdate: (MarketDataSnapshot) -> Unit = {},
+)
+
+/** A single bid/ask event from reqTickByTick("BidAsk"). */
+data class TickByTickBidAsk(
+    val time: Long,
+    val bidPrice: Double,
+    val askPrice: Double,
+)
+
+/** Active reqTickByTick subscription. [trySend] is called on every incoming tick. */
+internal data class PendingTickByTickRequest(
+    val trySend: (TickByTickBidAsk) -> Boolean,
+)
+
 @Component
 class IbkrRequestRegistry {
     internal val pendingHistoricalBars = ConcurrentHashMap<Int, PendingBarsRequest>()
     internal val pendingContractDetails = ConcurrentHashMap<Int, PendingContractRequest>()
     internal val pendingOptionParams = ConcurrentHashMap<Int, PendingOptionParamsRequest>()
     internal val pendingMarketData = ConcurrentHashMap<Int, PendingMarketDataRequest>()
+    internal val pendingContinuousMarketData =
+        ConcurrentHashMap<Int, PendingContinuousMarketDataRequest>()
+    internal val pendingTickByTick = ConcurrentHashMap<Int, PendingTickByTickRequest>()
     internal val pendingOrderStatus = ConcurrentHashMap<Int, CompletableDeferred<OrderStatus>>()
 
     private val dataReqIdCounter = AtomicInteger(1)
@@ -129,13 +151,26 @@ class IbkrRequestRegistry {
         field: Int,
         price: Double,
     ) {
-        val request = pendingMarketData[reqId] ?: return
-        val s = request.snapshot
-        when (field) {
-            1 -> s.bid = price
-            2 -> s.ask = price
-            4 -> s.last = price
-            9 -> s.close = price
+        // One-shot snapshot request
+        pendingMarketData[reqId]?.let { request ->
+            val s = request.snapshot
+            when (field) {
+                1 -> s.bid = price
+                2 -> s.ask = price
+                4 -> s.last = price
+                9 -> s.close = price
+            }
+        }
+        // Continuous subscription (reqMktData snapshot=false)
+        pendingContinuousMarketData[reqId]?.let { request ->
+            val s = request.snapshot
+            when (field) {
+                1 -> s.bid = price
+                2 -> s.ask = price
+                4 -> s.last = price
+                9 -> s.close = price
+            }
+            request.onUpdate(s)
         }
     }
 
@@ -148,22 +183,42 @@ class IbkrRequestRegistry {
         vega: Double,
         theta: Double,
     ) {
-        val request = pendingMarketData[reqId] ?: return
         // Accept fields 10 (bid greeks), 11 (ask greeks), 12 (last greeks), 13 (model greeks)
-        // Field 13 (model) is preferred but may not always arrive
         if (field !in 10..13) return
-        val s = request.snapshot
         val sentinel = Double.MAX_VALUE
-        if (!delta.isNaN() && delta != sentinel) s.delta = delta
-        if (!impliedVol.isNaN() && impliedVol != sentinel) s.impliedVol = impliedVol
-        if (!gamma.isNaN() && gamma != sentinel) s.gamma = gamma
-        if (!vega.isNaN() && vega != sentinel) s.vega = vega
-        if (!theta.isNaN() && theta != sentinel) s.theta = theta
+
+        // One-shot snapshot request
+        pendingMarketData[reqId]?.let { request ->
+            val s = request.snapshot
+            if (!delta.isNaN() && delta != sentinel) s.delta = delta
+            if (!impliedVol.isNaN() && impliedVol != sentinel) s.impliedVol = impliedVol
+            if (!gamma.isNaN() && gamma != sentinel) s.gamma = gamma
+            if (!vega.isNaN() && vega != sentinel) s.vega = vega
+            if (!theta.isNaN() && theta != sentinel) s.theta = theta
+        }
+        // Continuous subscription — update Greeks silently (no onUpdate call; read on next bid/ask tick)
+        pendingContinuousMarketData[reqId]?.let { request ->
+            val s = request.snapshot
+            if (!delta.isNaN() && delta != sentinel) s.delta = delta
+            if (!impliedVol.isNaN() && impliedVol != sentinel) s.impliedVol = impliedVol
+            if (!gamma.isNaN() && gamma != sentinel) s.gamma = gamma
+            if (!vega.isNaN() && vega != sentinel) s.vega = vega
+            if (!theta.isNaN() && theta != sentinel) s.theta = theta
+        }
     }
 
     fun onTickSnapshotEnd(reqId: Int) {
         val request = pendingMarketData.remove(reqId) ?: return
         request.deferred.complete(request.snapshot)
+    }
+
+    // ---- reqTickByTick bid/ask ----
+
+    fun onTickByTickBidAsk(
+        reqId: Int,
+        tick: TickByTickBidAsk,
+    ) {
+        pendingTickByTick[reqId]?.trySend?.invoke(tick)
     }
 
     // ---- Account updates ----
@@ -228,6 +283,9 @@ class IbkrRequestRegistry {
         pendingOptionParams.remove(id)?.deferred?.completeExceptionally(ex)
         pendingMarketData.remove(id)?.deferred?.completeExceptionally(ex)
         pendingOrderStatus.remove(id)?.completeExceptionally(ex)
+        // Continuous subscriptions — close gracefully so flows emit cancellation
+        pendingContinuousMarketData.remove(id)?.let { logger.warn { "Continuous market data $id errored: $msg" } }
+        pendingTickByTick.remove(id)?.let { logger.warn { "TickByTick $id errored: $msg" } }
     }
 
     // ---- Disconnect cleanup ----
@@ -239,6 +297,8 @@ class IbkrRequestRegistry {
                 pendingContractDetails.size +
                 pendingOptionParams.size +
                 pendingMarketData.size +
+                pendingContinuousMarketData.size +
+                pendingTickByTick.size +
                 pendingOrderStatus.size
         if (count > 0) logger.warn { "Cancelling $count pending IBKR requests due to disconnect" }
         pendingHistoricalBars.values.forEach { it.onError(cause) }
@@ -249,6 +309,9 @@ class IbkrRequestRegistry {
         pendingOptionParams.clear()
         pendingMarketData.values.forEach { it.deferred.completeExceptionally(cause) }
         pendingMarketData.clear()
+        // Continuous subscriptions: flows will detect completion via their awaitClose blocks
+        pendingContinuousMarketData.clear()
+        pendingTickByTick.clear()
         pendingOrderStatus.values.forEach { it.completeExceptionally(cause) }
         pendingOrderStatus.clear()
         onDisconnectCb?.invoke()

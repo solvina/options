@@ -1,14 +1,11 @@
 package cz.solvina.options.domain.features.scanner
 
 import cz.solvina.options.domain.features.account.AccountPort
+import cz.solvina.options.domain.features.execution.TradeExecutionService
+import cz.solvina.options.domain.features.execution.model.TradeExecutionRequest
 import cz.solvina.options.domain.features.market.MarketDataPort
 import cz.solvina.options.domain.features.market.OptionChainPort
-import cz.solvina.options.domain.features.order.LegAction
-import cz.solvina.options.domain.features.order.OrderPort
-import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.features.spread.SpreadPort
-import cz.solvina.options.domain.features.spread.model.BullPutSpread
-import cz.solvina.options.domain.features.spread.model.SpreadLeg
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
 import cz.solvina.options.domain.features.volatility.VolatilityPort
 import cz.solvina.options.domain.features.watchlist.WatchlistPort
@@ -16,6 +13,10 @@ import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionType
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.math.RoundingMode
@@ -35,12 +36,13 @@ class ScannerService(
     private val marketDataPort: MarketDataPort,
     private val optionChainPort: OptionChainPort,
     private val accountPort: AccountPort,
-    private val orderPort: OrderPort,
+    private val executionService: TradeExecutionService,
     private val spreadPort: SpreadPort,
     private val config: ScannerConfig,
     private val clock: Clock,
 ) : ScannerPort {
     private val ivRanksSnapshot = ConcurrentHashMap<String, Double>()
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     @Volatile private var lastRunAt: Instant? = null
 
@@ -69,8 +71,8 @@ class ScannerService(
 
         val watchlist = watchlistPort.getWatchlist()
         for (symbol in watchlist) {
-            if (symbolsWithOpenSpread.contains(symbol)) {
-                logger.debug { "[$symbol] Already has open spread, skipping" }
+            if (symbolsWithOpenSpread.contains(symbol) || executionService.isInFlight(symbol)) {
+                logger.debug { "[$symbol] Already has open or in-flight spread, skipping" }
                 continue
             }
             runCatching { scanSymbol(symbol, totalCapital) }
@@ -161,76 +163,40 @@ class ScannerService(
         if (maxRiskPerContract > allowedRiskPerTrade) {
             logger.info {
                 "[$symbol] Max risk/contract $$maxRiskPerContract > allowed $${
-                    "%.2f".format(
-                        allowedRiskPerTrade,
-                    )
+                    "%.2f".format(allowedRiskPerTrade)
                 }, skipping"
             }
             return
         }
 
+        val floorCredit =
+            credit
+                .multiply(BigDecimal.ONE.subtract(BigDecimal(config.floorCreditBuffer)))
+                .setScale(4, RoundingMode.HALF_UP)
+
         logger.info {
-            "[$symbol] Opening spread: SELL ${soldQuote.contract.strike}P / BUY ${boughtQuote.contract.strike}P " +
-                "credit=\$$credit maxRisk=\$$maxRiskPerShare"
+            "[$symbol] Launching execution: SELL ${soldQuote.contract.strike}P / BUY ${boughtQuote.contract.strike}P " +
+                "credit=\$$credit floor=\$$floorCredit maxRisk=\$$maxRiskPerShare"
         }
 
-        // 7. Place sold leg
-        val soldLegOrder =
-            orderPort.placeAndAwaitFill(
-                contract = soldQuote.contract,
-                action = LegAction.SELL,
-                limitPrice = Money(credit),
-                qty = 1,
-            )
-        if (soldLegOrder.status != OrderStatus.FILLED) {
-            logger.warn { "[$symbol] Sold leg did not fill (status=${soldLegOrder.status}), aborting" }
-            return
-        }
-
-        // 8. Place bought leg
-        val boughtLegOrder =
-            orderPort.placeAndAwaitFill(
-                contract = boughtQuote.contract,
-                action = LegAction.BUY,
-                limitPrice = boughtQuote.mid,
-                qty = 1,
-            )
-        if (boughtLegOrder.status != OrderStatus.FILLED) {
-            logger.warn { "[$symbol] Bought leg did not fill (status=${boughtLegOrder.status}), cancelling sold leg" }
-            runCatching { orderPort.cancelOrder(soldLegOrder.orderId) }
-            return
-        }
-
-        // 9. Persist spread
-        val spread =
-            BullPutSpread(
-                id = null,
-                symbol = symbol,
-                soldLeg =
-                    SpreadLeg(
-                        contract = soldQuote.contract,
-                        action = LegAction.SELL,
-                        premium = Money(soldQuote.mid.amount),
-                        orderId = soldLegOrder.orderId,
-                    ),
-                boughtLeg =
-                    SpreadLeg(
-                        contract = boughtQuote.contract,
-                        action = LegAction.BUY,
-                        premium = Money(boughtQuote.mid.amount),
-                        orderId = boughtLegOrder.orderId,
-                    ),
-                creditPerShare = credit,
+        // 7. Fire-and-forget: execution coroutine handles order placement + spread persistence
+        val request =
+            TradeExecutionRequest(
+                soldContract = soldQuote.contract,
+                boughtContract = boughtQuote.contract,
+                underlyingSymbol = symbol,
+                targetCredit = credit,
+                floorCredit = floorCredit,
                 maxRiskPerShare = maxRiskPerShare,
-                quantity = 1,
-                status = SpreadStatus.OPEN,
                 ivRankAtEntry = ivRank.rank,
+                soldBid = soldQuote.bid.amount,
+                soldAsk = soldQuote.ask.amount,
+                boughtBid = boughtQuote.bid.amount,
+                boughtAsk = boughtQuote.ask.amount,
+                boughtMid = boughtQuote.mid.amount,
                 underlyingPriceAtEntry = underlyingPrice.amount,
-                openedAt = Instant.now(clock),
             )
-
-        spreadPort.save(spread)
-        logger.info { "[$symbol] Spread saved successfully" }
+        scope.launch { executionService.execute(request) }
     }
 
     fun getLastRunAt(): Instant? = lastRunAt

@@ -17,7 +17,7 @@ spring:
 
 ibkr:
   connection:
-    host: localhost
+    host: 192.168.0.107
     port: 7497
     client-id: 1
     account: "DU7875979"           # set to your IBKR account code, e.g. U1234567
@@ -44,6 +44,11 @@ scanner:
   take-profit-percent: 0.50
   stop-loss-percent: 0.50
   time-profit-dte: 14
+  drift-protection-pct: 0.01
+  floor-credit-buffer: 0.50
+  execution-timeout-minutes: 15
+  ticks-before-price-adjust: 5
+  max-leg-bid-ask-spread-pct: 0.30
   order-chase-timeout-minutes: 5
   order-chase-max-retries: 3
   order-chase-price-step: 0.03

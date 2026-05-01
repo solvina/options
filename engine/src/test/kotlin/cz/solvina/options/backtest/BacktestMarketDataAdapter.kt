@@ -66,6 +66,12 @@ class BacktestMarketDataAdapter(
     }
 
     // -------------------------------------------------------------------------
+    // Package-visible helpers (used by backtest adapters in the same package)
+    // -------------------------------------------------------------------------
+
+    fun getIv(symbol: Symbol): Double = currentIv(symbol, clock.currentDate())
+
+    // -------------------------------------------------------------------------
     // Internal
     // -------------------------------------------------------------------------
 

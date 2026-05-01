@@ -25,6 +25,7 @@ import com.ib.client.TickAttrib
 import com.ib.client.TickAttribBidAsk
 import com.ib.client.TickAttribLast
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrRequestRegistry
+import cz.solvina.options.adapters.outbound.ibkr.registry.TickByTickBidAsk
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.stereotype.Component
 
@@ -663,6 +664,7 @@ class IbkrEWrapper(
         tickAttribBidAsk: TickAttribBidAsk,
     ) {
         logger.trace { "tickByTickBidAsk: reqId=$reqId, bid=$bidPrice, ask=$askPrice" }
+        registry.onTickByTickBidAsk(reqId, TickByTickBidAsk(time, bidPrice, askPrice))
     }
 
     override fun tickByTickMidPoint(

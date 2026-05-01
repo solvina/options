@@ -1,11 +1,15 @@
 package cz.solvina.options.backtest
 
+import cz.solvina.options.domain.features.execution.TradeExecutionService
 import cz.solvina.options.domain.features.scanner.ScannerConfig
 import cz.solvina.options.domain.features.scanner.ScannerService
 import cz.solvina.options.domain.features.spread.SpreadManagementService
 import cz.solvina.options.domain.features.volatility.IvRankService
 import cz.solvina.options.domain.features.watchlist.WatchlistPort
 import cz.solvina.options.domain.models.Symbol
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import org.junit.jupiter.api.Test
 import java.math.BigDecimal
 import java.time.LocalDate
@@ -15,8 +19,8 @@ import kotlin.test.assertTrue
  * End-to-end backtest smoke test — no Spring context, no TWS connection.
  *
  * Wires together all backtest adapters with the real domain services
- * (ScannerService, SpreadManagementService, IvRankService) and runs a
- * 3-month simulation on SPY using fixture data.
+ * (ScannerService, SpreadManagementService, IvRankService, TradeExecutionService)
+ * and runs a 3-month simulation on SPY using fixture data.
  *
  * Assertions are intentionally loose — we verify structural correctness
  * (the engine runs, produces a result, no crash) rather than exact P&L
@@ -59,12 +63,25 @@ class BacktestSmokeTest {
         val accountAdapter = BacktestAccountAdapter(initialCapital)
         val orderAdapter = BacktestOrderAdapter()
         val spreadAdapter = BacktestSpreadAdapter()
+        val marketTickAdapter = BacktestMarketTickAdapter(clock, marketAdapter)
+        val orderExecutionAdapter = BacktestOrderExecutionAdapter()
 
         val watchlistPort =
             object : WatchlistPort {
                 override fun getWatchlist() = listOf(Symbol("SPY"))
             }
         val ivRankService = IvRankService(historicalAdapter, config, clock)
+
+        val executionService =
+            TradeExecutionService(
+                marketTickPort = marketTickAdapter,
+                orderExecutionPort = orderExecutionAdapter,
+                spreadPort = spreadAdapter,
+                accountPort = accountAdapter,
+                config = config,
+                clock = clock,
+                scope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+            )
 
         val scanner =
             ScannerService(
@@ -73,7 +90,7 @@ class BacktestSmokeTest {
                 marketDataPort = marketAdapter,
                 optionChainPort = optionChainAdapter,
                 accountPort = accountAdapter,
-                orderPort = orderAdapter,
+                executionService = executionService,
                 spreadPort = spreadAdapter,
                 config = config,
                 clock = clock,

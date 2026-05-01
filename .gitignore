@@ -28,3 +28,4 @@ data/
 # Environment
 .env
 .env.local
+.env.rpi

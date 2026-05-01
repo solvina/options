@@ -28,7 +28,13 @@ data class ScannerConfig(
     val takeProfitPercent: Double = 0.50,
     val stopLossPercent: Double = 0.50,
     val timeProfitDte: Int = 14,
-    // Order chase
+    // Trade execution (tick-by-tick price improvement)
+    val driftProtectionPct: Double = 0.01,
+    val floorCreditBuffer: Double = 0.50,
+    val executionTimeoutMinutes: Long = 15,
+    val ticksBeforePriceAdjust: Int = 5,
+    val maxLegBidAskSpreadPct: Double = 0.30,
+    // Order chase (used by SpreadManagementService close orders)
     val orderChaseTimeoutMinutes: Long = 5,
     val orderChaseMaxRetries: Int = 3,
     val orderChasePriceStep: Double = 0.03,
