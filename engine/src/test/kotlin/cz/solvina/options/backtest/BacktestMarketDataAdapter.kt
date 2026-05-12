@@ -1,5 +1,6 @@
 package cz.solvina.options.backtest
 
+import cz.solvina.options.domain.features.market.BlackScholes
 import cz.solvina.options.domain.features.market.MarketDataPort
 import cz.solvina.options.domain.models.HistoricalBar
 import cz.solvina.options.domain.models.Money

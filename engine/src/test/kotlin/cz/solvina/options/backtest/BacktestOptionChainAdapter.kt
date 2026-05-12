@@ -1,5 +1,6 @@
 package cz.solvina.options.backtest
 
+import cz.solvina.options.domain.features.market.BlackScholes
 import cz.solvina.options.domain.features.market.OptionChainPort
 import cz.solvina.options.domain.features.market.model.OptionQuote
 import cz.solvina.options.domain.features.scanner.ScannerConfig

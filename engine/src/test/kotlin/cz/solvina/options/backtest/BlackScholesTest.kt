@@ -1,5 +1,6 @@
 package cz.solvina.options.backtest
 
+import cz.solvina.options.domain.features.market.BlackScholes
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test

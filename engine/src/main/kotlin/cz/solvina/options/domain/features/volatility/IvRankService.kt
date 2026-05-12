@@ -50,7 +50,7 @@ class IvRankService(
             }
 
         val now = Instant.now(clock)
-        val ivRank = IvRank(rank = rank, calculatedAt = now)
+        val ivRank = IvRank(rank = rank, currentIv = currentIv, calculatedAt = now)
         cache[symbol] = CachedIvRank(ivRank, now)
         logger.info {
             "[$symbol] IV Rank: ${"%.1f".format(

@@ -1,4 +1,4 @@
-package cz.solvina.options.backtest
+package cz.solvina.options.domain.features.market
 
 import kotlin.math.PI
 import kotlin.math.abs
@@ -9,26 +9,20 @@ import kotlin.math.sqrt
 /**
  * European put option pricing via the Black-Scholes-Merton model.
  *
- * Conventions used throughout:
- *   spot  — underlying spot price
+ * Conventions:
+ *   spot   — underlying spot price
  *   strike — strike price
- *   t     — time to expiry in years  (e.g. 45 days = 45.0 / 365.0)
- *   r     — continuously-compounded risk-free rate (e.g. 0.05 = 5 %)
- *   sigma — annualised implied volatility (e.g. 0.20 = 20 %)
+ *   t      — time to expiry in years  (e.g. 45 days = 45.0 / 365.0)
+ *   r      — continuously-compounded risk-free rate (e.g. 0.05 = 5 %)
+ *   sigma  — annualised implied volatility (e.g. 0.20 = 20 %)
  *
- * All greeks follow the standard sign conventions:
- *   delta  — negative for puts (range −1 … 0)
- *   gamma  — positive
- *   theta  — negative (time-decay per calendar day)
- *   vega   — positive, expressed per 1-point (100 %) move in vol;
- *             divide by 100 to get the standard "per 1 %" figure
+ * Greeks sign conventions:
+ *   delta — negative for puts (range −1 … 0)
+ *   gamma — positive
+ *   theta — negative (time-decay per calendar day)
+ *   vega  — positive, per 1-point (100 %) move in vol; divide by 100 for per-1 % figure
  */
 object BlackScholes {
-    // -------------------------------------------------------------------------
-    // Public API
-    // -------------------------------------------------------------------------
-
-    /** Fair value of a European put. */
     fun putPrice(
         spot: Double,
         strike: Double,
@@ -41,7 +35,6 @@ object BlackScholes {
         return strike * exp(-r * t) * cnd(-d2) - spot * cnd(-d1)
     }
 
-    /** Delta of a European put (always ≤ 0). */
     fun putDelta(
         spot: Double,
         strike: Double,
@@ -54,7 +47,6 @@ object BlackScholes {
         return cnd(d1) - 1.0
     }
 
-    /** Gamma (identical for put and call). */
     fun gamma(
         spot: Double,
         strike: Double,
@@ -67,10 +59,6 @@ object BlackScholes {
         return nd(d1) / (spot * sigma * sqrt(t))
     }
 
-    /**
-     * Theta of a European put in $ per calendar day.
-     * (Standard textbook formula divided by 365.)
-     */
     fun putTheta(
         spot: Double,
         strike: Double,
@@ -85,10 +73,6 @@ object BlackScholes {
         return (term1 + term2) / 365.0
     }
 
-    /**
-     * Vega of a European put per 1-point (100 %) change in sigma.
-     * Divide by 100 for the conventional "per 1 % vol" figure.
-     */
     fun vega(
         spot: Double,
         strike: Double,
@@ -101,12 +85,6 @@ object BlackScholes {
         return spot * nd(d1) * sqrt(t)
     }
 
-    /**
-     * Implied volatility from a market put price via Newton-Raphson iteration.
-     *
-     * Returns `null` if the price is outside the no-arbitrage bounds, or if the
-     * solver does not converge within [maxIter] steps.
-     */
     fun impliedVol(
         marketPrice: Double,
         spot: Double,
@@ -135,10 +113,6 @@ object BlackScholes {
         return null
     }
 
-    // -------------------------------------------------------------------------
-    // Internal helpers
-    // -------------------------------------------------------------------------
-
     private fun d1d2(
         spot: Double,
         strike: Double,
@@ -147,17 +121,11 @@ object BlackScholes {
         sigma: Double,
     ): Pair<Double, Double> {
         val d1 = (ln(spot / strike) + (r + sigma * sigma / 2.0) * t) / (sigma * sqrt(t))
-        val d2 = d1 - sigma * sqrt(t)
-        return d1 to d2
+        return d1 to (d1 - sigma * sqrt(t))
     }
 
-    /** Standard-normal PDF. */
     private fun nd(x: Double): Double = exp(-x * x / 2.0) / sqrt(2.0 * PI)
 
-    /**
-     * Cumulative standard-normal CDF via Hart's rational approximation
-     * (accurate to ~7.5 significant digits for |x| ≤ 7.65).
-     */
     private fun cnd(x: Double): Double {
         if (x < -7.65) return 0.0
         if (x > 7.65) return 1.0

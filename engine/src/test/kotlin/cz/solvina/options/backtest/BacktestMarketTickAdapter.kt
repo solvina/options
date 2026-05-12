@@ -1,5 +1,6 @@
 package cz.solvina.options.backtest
 
+import cz.solvina.options.domain.features.market.BlackScholes
 import cz.solvina.options.domain.features.market.MarketTickPort
 import cz.solvina.options.domain.features.market.SpreadCreditTick
 import cz.solvina.options.domain.models.OptionContract
