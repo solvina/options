@@ -1,0 +1,10 @@
+app:
+  timezone: America/New_York
+
+spring:
+  jackson:
+    time-zone: America/New_York
+
+ibkr:
+  connection:
+    host: localhost   # IB Gateway runs in Docker on the same RPi, mapped to host:7497

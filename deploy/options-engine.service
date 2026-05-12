@@ -1,0 +1,18 @@
+[Unit]
+Description=Options Engine
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=solvina
+WorkingDirectory=/home/solvina/options
+EnvironmentFile=-/home/solvina/options/engine.env
+ExecStart=/usr/bin/java -Xmx512m -jar /home/solvina/options/engine.jar --spring.profiles.active=rpi
+Restart=on-failure
+RestartSec=15
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
