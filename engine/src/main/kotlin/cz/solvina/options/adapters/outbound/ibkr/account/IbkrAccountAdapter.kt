@@ -2,7 +2,7 @@ package cz.solvina.options.adapters.outbound.ibkr.account
 
 import com.ib.client.EClientSocket
 import cz.solvina.options.adapters.outbound.ibkr.IbkrConnectionConfig
-import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrRequestRegistry
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrAccountRegistry
 import cz.solvina.options.domain.features.account.AccountDetail
 import cz.solvina.options.domain.features.account.AccountPort
 import cz.solvina.options.domain.models.Money
@@ -20,13 +20,13 @@ private val logger = KotlinLogging.logger {}
 class IbkrAccountAdapter(
     private val client: EClientSocket,
     private val config: IbkrConnectionConfig,
-    registry: IbkrRequestRegistry,
+    accountRegistry: IbkrAccountRegistry,
 ) : AccountPort {
     private val _accountDetail = MutableStateFlow<AccountDetail?>(null)
     override val accountDetail: StateFlow<AccountDetail?> = _accountDetail.asStateFlow()
 
     init {
-        registry.setAccountCallbacks(
+        accountRegistry.setCallbacks(
             onManagedAccounts = ::onManagedAccounts,
             onAccountValue = ::onAccountValue,
             onDisconnect = ::onDisconnect,

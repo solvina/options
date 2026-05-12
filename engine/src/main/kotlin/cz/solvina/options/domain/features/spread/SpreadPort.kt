@@ -2,11 +2,14 @@ package cz.solvina.options.domain.features.spread
 
 import cz.solvina.options.domain.features.spread.model.BullPutSpread
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
+import java.util.UUID
 
 interface SpreadPort {
     suspend fun save(spread: BullPutSpread): BullPutSpread
 
     suspend fun update(spread: BullPutSpread): BullPutSpread
+
+    suspend fun findById(id: UUID): BullPutSpread?
 
     suspend fun findOpen(): List<BullPutSpread>
 

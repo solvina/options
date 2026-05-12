@@ -1,0 +1,157 @@
+openapi: 3.0.3
+info:
+  title: Options Engine - Account API
+  description: Account summary and open positions overview
+  version: 1.0.0
+
+paths:
+  /account:
+    get:
+      tags:
+        - Account
+      summary: Get account overview with all positions
+      operationId: getAccountOverview
+      responses:
+        '200':
+          description: Account overview
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountOverviewDto'
+
+components:
+  schemas:
+    AccountOverviewDto:
+      type: object
+      required:
+        - openPositionCount
+        - openPositions
+        - accountPositionCount
+        - accountPositions
+      properties:
+        totalCapital:
+          type: number
+          nullable: true
+          description: Net liquidation value (USD)
+        availableFunds:
+          type: number
+          nullable: true
+          description: Cash available for new trades (USD)
+        unrealizedPnL:
+          type: number
+          nullable: true
+          description: Unrealized P&L across all positions (USD)
+        excessLiquidity:
+          type: number
+          nullable: true
+          description: Excess liquidity (USD)
+        openPositionCount:
+          type: integer
+          description: Number of spreads tracked by this engine
+        openPositions:
+          type: array
+          description: Spreads opened by this engine (with strategy metadata)
+          items:
+            $ref: '#/components/schemas/OpenPositionDto'
+        accountPositionCount:
+          type: integer
+          description: Total number of positions in the IBKR account
+        accountPositions:
+          type: array
+          description: All positions in the IBKR account (stocks, options, futures, etc.)
+          items:
+            $ref: '#/components/schemas/AccountPositionDto'
+
+    OpenPositionDto:
+      type: object
+      required:
+        - id
+        - symbol
+        - soldStrike
+        - boughtStrike
+        - expiryDate
+        - creditPerShare
+        - maxRiskPerShare
+        - maxRiskTotal
+        - quantity
+        - openedAt
+        - dte
+      properties:
+        id:
+          type: string
+          format: uuid
+        symbol:
+          type: string
+        soldStrike:
+          type: number
+          description: Strike of the short (sold) put
+        boughtStrike:
+          type: number
+          description: Strike of the long (bought) put
+        expiryDate:
+          type: string
+          format: date
+        creditPerShare:
+          type: number
+          description: Net credit received per share at entry
+        maxRiskPerShare:
+          type: number
+          description: Maximum loss per share (spread width minus credit)
+        maxRiskTotal:
+          type: number
+          description: Maximum total loss for the position (maxRiskPerShare × quantity × 100)
+        quantity:
+          type: integer
+          description: Number of contracts
+        dte:
+          type: integer
+          description: Calendar days until expiry as of today
+        openedAt:
+          type: string
+          format: date-time
+        ivRankAtEntry:
+          type: number
+          nullable: true
+        underlyingPriceAtEntry:
+          type: number
+          nullable: true
+
+    AccountPositionDto:
+      type: object
+      required:
+        - account
+        - symbol
+        - secType
+        - currency
+        - quantity
+        - avgCost
+      properties:
+        account:
+          type: string
+          description: IBKR account ID
+        symbol:
+          type: string
+        secType:
+          type: string
+          description: Security type (STK, OPT, FUT, etc.)
+        currency:
+          type: string
+        expiry:
+          type: string
+          format: date
+          nullable: true
+          description: Expiry date for options and futures
+        strike:
+          type: number
+          nullable: true
+          description: Strike price for options
+        optionRight:
+          type: string
+          nullable: true
+          description: P (put) or C (call) for options
+        quantity:
+          type: number
+          description: Position size; negative means short
+        avgCost:
+          type: number
+          description: Average cost per share or per contract

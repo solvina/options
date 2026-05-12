@@ -51,6 +51,56 @@ paths:
         '404':
           description: Not found
 
+  /spreads/{id}/close:
+    post:
+      tags:
+        - Spreads
+      summary: Soft-close a spread at mid price (limit orders)
+      operationId: softCloseSpread
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Spread closed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpreadDto'
+        '404':
+          description: Spread not found
+        '409':
+          description: Spread is not open
+
+  /spreads/{id}/close-force:
+    post:
+      tags:
+        - Spreads
+      summary: Force-close a spread at market price
+      operationId: forceCloseSpread
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Spread closed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpreadDto'
+        '404':
+          description: Spread not found
+        '409':
+          description: Spread is not open
+
   /scanner/run:
     post:
       tags:
@@ -65,7 +115,7 @@ paths:
     get:
       tags:
         - Scanner
-      summary: Get scanner status
+      summary: Get scanner and monitor status including kill-switch state
       operationId: getScannerStatus
       responses:
         '200':
@@ -74,6 +124,46 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ScannerStatusDto'
+
+  /scanner/pause:
+    post:
+      tags:
+        - Scanner
+      summary: Pause new-entry scanner (existing positions are unaffected)
+      operationId: pauseScanner
+      responses:
+        '204':
+          description: Scanner paused
+
+  /scanner/resume:
+    post:
+      tags:
+        - Scanner
+      summary: Resume new-entry scanner
+      operationId: resumeScanner
+      responses:
+        '204':
+          description: Scanner resumed
+
+  /monitor/pause:
+    post:
+      tags:
+        - Scanner
+      summary: Pause spread exit monitor (no automatic closes will be triggered)
+      operationId: pauseMonitor
+      responses:
+        '204':
+          description: Monitor paused
+
+  /monitor/resume:
+    post:
+      tags:
+        - Scanner
+      summary: Resume spread exit monitor
+      operationId: resumeMonitor
+      responses:
+        '204':
+          description: Monitor resumed
 
 components:
   schemas:
@@ -135,6 +225,8 @@ components:
       required:
         - openSpreadCount
         - ivRanks
+        - scannerPaused
+        - monitorPaused
       properties:
         lastRunAt:
           type: string
@@ -147,3 +239,7 @@ components:
           type: object
           additionalProperties:
             type: number
+        scannerPaused:
+          type: boolean
+        monitorPaused:
+          type: boolean

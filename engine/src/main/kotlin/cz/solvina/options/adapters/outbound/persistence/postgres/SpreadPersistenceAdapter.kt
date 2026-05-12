@@ -31,6 +31,11 @@ class SpreadPersistenceAdapter(
             repository.save(spread.toEntity()).toDomain()
         }
 
+    override suspend fun findById(id: java.util.UUID): BullPutSpread? =
+        withContext(Dispatchers.IO) {
+            repository.findById(id).orElse(null)?.toDomain()
+        }
+
     override suspend fun findOpen(): List<BullPutSpread> =
         withContext(Dispatchers.IO) {
             repository.findByStatus(SpreadStatus.OPEN.name).map { it.toDomain() }
