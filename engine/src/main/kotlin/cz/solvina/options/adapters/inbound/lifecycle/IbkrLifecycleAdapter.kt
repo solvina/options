@@ -2,7 +2,10 @@ package cz.solvina.options.adapters.inbound.lifecycle
 
 import cz.solvina.options.adapters.outbound.ibkr.IbkrConnectionConfig
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrAccountAdapter
-import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrRequestRegistry
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrContractRegistry
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrHistoricalDataRegistry
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import cz.solvina.options.domain.features.connection.ConnectionPort
 import io.github.oshai.kotlinlogging.KotlinLogging
 import jakarta.annotation.PreDestroy
@@ -18,7 +21,10 @@ class IbkrLifecycleAdapter(
     private val config: IbkrConnectionConfig,
     private val connectionPort: ConnectionPort,
     private val accountAdapter: IbkrAccountAdapter,
-    private val registry: IbkrRequestRegistry,
+    private val historicalRegistry: IbkrHistoricalDataRegistry,
+    private val contractRegistry: IbkrContractRegistry,
+    private val marketDataRegistry: IbkrMarketDataRegistry,
+    private val orderRegistry: IbkrOrderRegistry,
 ) {
     @EventListener(ApplicationReadyEvent::class)
     fun onApplicationReady() {
@@ -44,7 +50,11 @@ class IbkrLifecycleAdapter(
     @PreDestroy
     fun onShutdown() {
         logger.info { "Disconnecting from IBKR..." }
-        registry.cancelAllPending()
+        val cause = RuntimeException("Application shutting down")
+        historicalRegistry.cancelAllPending(cause)
+        contractRegistry.cancelAllPending(cause)
+        marketDataRegistry.cancelAllPending(cause)
+        orderRegistry.cancelAllPending(cause)
         accountAdapter.onDisconnect()
         connectionPort.disconnect()
     }

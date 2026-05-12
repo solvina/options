@@ -1,0 +1,144 @@
+package cz.solvina.options.adapters.outbound.ibkr.market
+
+import com.ib.client.EClientSocket
+import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrOptionParamsCache
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
+import cz.solvina.options.domain.features.market.BlackScholes
+import cz.solvina.options.domain.features.market.OptionChainPort
+import cz.solvina.options.domain.features.market.model.OptionQuote
+import cz.solvina.options.domain.features.scanner.ScannerConfig
+import cz.solvina.options.domain.features.volatility.VolatilityPort
+import cz.solvina.options.domain.models.Money
+import cz.solvina.options.domain.models.OptionContract
+import cz.solvina.options.domain.models.OptionGreeks
+import cz.solvina.options.domain.models.OptionType
+import cz.solvina.options.domain.models.Symbol
+import io.github.oshai.kotlinlogging.KotlinLogging
+import org.springframework.stereotype.Component
+import java.math.BigDecimal
+import java.math.RoundingMode
+import java.time.LocalDate
+import java.time.temporal.ChronoUnit
+import kotlin.math.abs
+
+private val logger = KotlinLogging.logger {}
+
+private const val RISK_FREE_RATE = 0.05
+
+@Component
+class IbkrOptionChainAdapter(
+    private val registry: IbkrMarketDataRegistry,
+    private val client: EClientSocket,
+    private val scannerConfig: ScannerConfig,
+    private val optionParamsCache: IbkrOptionParamsCache,
+    private val volatilityPort: VolatilityPort,
+) : OptionChainPort {
+    override suspend fun getAvailableExpirations(symbol: Symbol): Set<LocalDate> =
+        optionParamsCache
+            .getOrFetch(symbol)
+            .expirations
+
+    override suspend fun getOptionChain(
+        symbol: Symbol,
+        expiry: LocalDate,
+        underlyingPrice: Money,
+    ): List<OptionQuote> {
+        val params = optionParamsCache.getOrFetch(symbol)
+
+        val lowerBound = underlyingPrice.amount.multiply(BigDecimal.ONE.subtract(BigDecimal(scannerConfig.strikeBandPercent)))
+        val upperBound = underlyingPrice.amount.multiply(BigDecimal("0.999"))
+
+        val validStrikes =
+            params.strikes.filter { strike ->
+                strike in lowerBound..upperBound && params.expirations.contains(expiry)
+            }
+
+        if (validStrikes.isEmpty()) {
+            logger.warn { "[$symbol] No valid OTM put strikes found in [$lowerBound, $upperBound]" }
+            return emptyList()
+        }
+
+        val targetStrike = underlyingPrice.amount.multiply(BigDecimal.ONE.subtract(BigDecimal(scannerConfig.targetDelta)))
+        val nearest =
+            validStrikes
+                .sortedBy { abs((it - targetStrike).toDouble()) }
+                .take(scannerConfig.candidateStrikeCount)
+
+        // Also include the strike needed for the bought leg of every candidate, so ScannerService
+        // always finds both legs inside the returned chain without a second round-trip.
+        val boughtLegs =
+            nearest
+                .mapNotNull { soldStrike ->
+                    val boughtTarget = soldStrike.subtract(scannerConfig.spreadWidthUsd)
+                    validStrikes.filter { it <= boughtTarget }.maxOrNull()
+                }.toSet()
+
+        val candidateStrikes = (nearest + boughtLegs).distinct().sortedDescending()
+
+        logger.debug {
+            "[$symbol] Fetching greeks for ${candidateStrikes.size} candidate strikes (${nearest.size} sold + ${boughtLegs.size} bought-leg) near $targetStrike"
+        }
+
+        val tte = ChronoUnit.DAYS.between(LocalDate.now(), expiry) / 365.0
+        val spot = underlyingPrice.amount.toDouble()
+
+        return candidateStrikes.mapNotNull { strike ->
+            runCatching {
+                val contract = OptionContract(symbol, expiry, strike, OptionType.PUT)
+                val snapshot = reqMktDataSnapshot(registry, client, buildOptionContract(contract), "")
+                val bid = snapshot.bid.takeIf { !it.isNaN() } ?: 0.0
+                val ask = snapshot.ask.takeIf { !it.isNaN() } ?: 0.0
+                val mid = midPrice(bid, ask)
+
+                if (!snapshot.delta.isNaN()) {
+                    return@runCatching OptionQuote(
+                        contract = contract,
+                        bid = Money(BigDecimal(bid).setScale(4, RoundingMode.HALF_UP)),
+                        ask = Money(BigDecimal(ask).setScale(4, RoundingMode.HALF_UP)),
+                        mid = Money(mid),
+                        greeks =
+                            OptionGreeks(
+                                delta = snapshot.delta,
+                                gamma = snapshot.gamma.takeIf { !it.isNaN() } ?: 0.0,
+                                theta = snapshot.theta.takeIf { !it.isNaN() } ?: 0.0,
+                                vega = snapshot.vega.takeIf { !it.isNaN() } ?: 0.0,
+                                iv = snapshot.impliedVol.takeIf { !it.isNaN() } ?: 0.0,
+                            ),
+                    )
+                }
+
+                // No live Greeks — fall back to Black-Scholes using historical IV
+                val sigma = volatilityPort.getIvRank(symbol).currentIv
+                if (sigma <= 0.0 || tte <= 0.0) {
+                    logger.debug { "[$symbol] Strike $strike: no Greeks and cannot compute analytically (sigma=$sigma, tte=$tte)" }
+                    return@runCatching null
+                }
+                val strikeDouble = strike.toDouble()
+                val bsMid = BlackScholes.putPrice(spot, strikeDouble, tte, RISK_FREE_RATE, sigma)
+                val halfSpread = maxOf(bsMid * 0.05, 0.05)
+                logger.debug {
+                    "[$symbol] Strike $strike: using BS fallback (sigma=${"%.4f".format(
+                        sigma,
+                    )}, delta=${"%.4f".format(BlackScholes.putDelta(spot, strikeDouble, tte, RISK_FREE_RATE, sigma))})"
+                }
+                OptionQuote(
+                    contract = contract,
+                    bid = Money(BigDecimal(maxOf(bsMid - halfSpread, 0.01)).setScale(4, RoundingMode.HALF_UP)),
+                    ask = Money(BigDecimal(bsMid + halfSpread).setScale(4, RoundingMode.HALF_UP)),
+                    mid = Money(BigDecimal(bsMid).setScale(4, RoundingMode.HALF_UP)),
+                    greeks =
+                        OptionGreeks(
+                            delta = BlackScholes.putDelta(spot, strikeDouble, tte, RISK_FREE_RATE, sigma),
+                            gamma = BlackScholes.gamma(spot, strikeDouble, tte, RISK_FREE_RATE, sigma),
+                            theta = BlackScholes.putTheta(spot, strikeDouble, tte, RISK_FREE_RATE, sigma),
+                            vega = BlackScholes.vega(spot, strikeDouble, tte, RISK_FREE_RATE, sigma) / 100.0,
+                            iv = sigma,
+                        ),
+                )
+            }.getOrElse { e ->
+                logger.warn { "[$symbol] Failed to get greeks for strike $strike: ${e.message}" }
+                null
+            }
+        }
+    }
+}

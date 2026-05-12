@@ -32,8 +32,8 @@ dependencies {
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 
     // OpenAPI for WebFlux
-    implementation("org.springdoc:springdoc-openapi-starter-webflux-ui:2.8.14")
-    testImplementation("org.springdoc:springdoc-openapi-starter-webflux-api:2.8.14")
+    implementation("org.springdoc:springdoc-openapi-starter-webflux-ui:2.8.17")
+    testImplementation("org.springdoc:springdoc-openapi-starter-webflux-api:2.8.17")
 
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
 
@@ -55,6 +55,7 @@ dependencies {
     implementation("ch.qos.logback:logback-classic:1.5.18")
 
     // Testing
+    testImplementation("io.mockk:mockk:1.14.9")
     testImplementation("org.testcontainers:junit-jupiter")
     testImplementation("org.testcontainers:postgresql")
     testImplementation("org.springframework.boot:spring-boot-testcontainers")

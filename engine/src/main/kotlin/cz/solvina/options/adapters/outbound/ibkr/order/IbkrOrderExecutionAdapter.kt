@@ -8,7 +8,7 @@ import com.ib.client.Order
 import com.ib.client.OrderCancel
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
 import cz.solvina.options.adapters.outbound.ibkr.cache.OptionContractKey
-import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrRequestRegistry
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import cz.solvina.options.domain.features.order.OrderExecutionPort
 import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.models.Money
@@ -23,7 +23,7 @@ private val logger = KotlinLogging.logger {}
 
 @Component
 class IbkrOrderExecutionAdapter(
-    private val registry: IbkrRequestRegistry,
+    private val registry: IbkrOrderRegistry,
     private val client: EClientSocket,
     private val contractCache: IbkrContractCache,
 ) : OrderExecutionPort {
@@ -63,7 +63,11 @@ class IbkrOrderExecutionAdapter(
         val deferred =
             registry.pendingOrderStatus[orderId]
                 ?: return OrderStatus.CANCELLED
-        return deferred.await()
+        return try {
+            deferred.await()
+        } finally {
+            registry.pendingOrderStatus.remove(orderId)
+        }
     }
 
     override suspend fun cancelAndAwait(orderId: Int) {
@@ -92,8 +96,6 @@ class IbkrOrderExecutionAdapter(
         cancelAndAwait(existingOrderId)
         return submitComboLimitOrder(soldContract, boughtContract, newCredit, qty)
     }
-
-    // -------------------------------------------------------------------------
 
     private suspend fun resolveConId(contract: OptionContract): Int =
         contractCache.getOrFetchOptionConId(

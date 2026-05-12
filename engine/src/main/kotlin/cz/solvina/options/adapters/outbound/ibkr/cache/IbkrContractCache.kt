@@ -2,7 +2,7 @@ package cz.solvina.options.adapters.outbound.ibkr.cache
 
 import com.ib.client.Contract
 import com.ib.client.EClientSocket
-import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrRequestRegistry
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrContractRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.PendingContractRequest
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -17,7 +17,7 @@ private val logger = KotlinLogging.logger {}
 
 @Component
 class IbkrContractCache(
-    private val registry: IbkrRequestRegistry,
+    private val registry: IbkrContractRegistry,
     private val client: EClientSocket,
 ) {
     private val underlyingConIds = ConcurrentHashMap<Symbol, Int>()
@@ -27,7 +27,7 @@ class IbkrContractCache(
         underlyingConIds[symbol]?.let { return it }
 
         logger.debug { "[$symbol] Fetching underlying conId" }
-        val reqId = registry.nextDataReqId()
+        val reqId = registry.nextReqId()
         val deferred = CompletableDeferred<List<com.ib.client.ContractDetails>>()
         registry.pendingContractDetails[reqId] = PendingContractRequest(deferred, CopyOnWriteArrayList())
 
@@ -53,11 +53,10 @@ class IbkrContractCache(
     suspend fun getOrFetchOptionConId(key: OptionContractKey): Int {
         optionConIds[key]?.let { return it }
 
-        // Evict expired entries lazily
         evictExpired()
 
         logger.debug { "[$key] Fetching option conId" }
-        val reqId = registry.nextDataReqId()
+        val reqId = registry.nextReqId()
         val deferred = CompletableDeferred<List<com.ib.client.ContractDetails>>()
         registry.pendingContractDetails[reqId] = PendingContractRequest(deferred, CopyOnWriteArrayList())
 

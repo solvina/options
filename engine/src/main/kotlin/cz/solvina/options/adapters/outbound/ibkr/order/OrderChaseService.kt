@@ -5,7 +5,7 @@ import com.ib.client.Decimal
 import com.ib.client.EClientSocket
 import com.ib.client.Order
 import com.ib.client.OrderCancel
-import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrRequestRegistry
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import cz.solvina.options.domain.features.order.LegOrder
 import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.features.scanner.ScannerConfig
@@ -22,7 +22,7 @@ private val logger = KotlinLogging.logger {}
 
 @Service
 class OrderChaseService(
-    private val registry: IbkrRequestRegistry,
+    private val registry: IbkrOrderRegistry,
     private val client: EClientSocket,
     private val config: ScannerConfig,
 ) {
@@ -89,14 +89,12 @@ class OrderChaseService(
         client.cancelOrder(orderId, OrderCancel())
         runCatching {
             withTimeout(10_000L) {
-                // Wait for cancel confirmation from orderStatus callback
                 val deferred = registry.pendingOrderStatus[orderId]
                 if (deferred != null && !deferred.isCompleted) {
                     deferred.await()
                 }
             }
         }.onFailure {
-            // Force-complete if IBKR doesn't send cancel confirmation in time
             registry.pendingOrderStatus.remove(orderId)?.complete(OrderStatus.CANCELLED)
         }
         delay(500)

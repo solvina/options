@@ -2,7 +2,7 @@ package cz.solvina.options.adapters.outbound.ibkr.account
 
 import com.ib.client.EClientSocket
 import cz.solvina.options.adapters.outbound.ibkr.IbkrConnectionConfig
-import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrRequestRegistry
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrAccountRegistry
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.verify
@@ -10,9 +10,9 @@ import org.mockito.Mockito.verifyNoMoreInteractions
 
 class IbkrAccountAdapterTest {
     private val client = mock(EClientSocket::class.java)
-    private val registry = IbkrRequestRegistry()
+    private val accountRegistry = IbkrAccountRegistry()
 
-    private fun adapter(account: String) = IbkrAccountAdapter(client, IbkrConnectionConfig(account = account), registry)
+    private fun adapter(account: String) = IbkrAccountAdapter(client, IbkrConnectionConfig(account = account), accountRegistry)
 
     @Test
     fun `subscribes only to the configured account when managedAccounts lists two accounts`() {

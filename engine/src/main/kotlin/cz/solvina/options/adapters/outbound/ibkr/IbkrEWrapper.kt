@@ -24,7 +24,12 @@ import com.ib.client.SoftDollarTier
 import com.ib.client.TickAttrib
 import com.ib.client.TickAttribBidAsk
 import com.ib.client.TickAttribLast
-import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrRequestRegistry
+import cz.solvina.options.adapters.outbound.ibkr.account.IbkrPositionsRegistry
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrAccountRegistry
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrContractRegistry
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrHistoricalDataRegistry
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.TickByTickBidAsk
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.stereotype.Component
@@ -33,7 +38,12 @@ private val logger = KotlinLogging.logger {}
 
 @Component
 class IbkrEWrapper(
-    private val registry: IbkrRequestRegistry,
+    private val historicalRegistry: IbkrHistoricalDataRegistry,
+    private val contractRegistry: IbkrContractRegistry,
+    private val marketDataRegistry: IbkrMarketDataRegistry,
+    private val orderRegistry: IbkrOrderRegistry,
+    private val accountRegistry: IbkrAccountRegistry,
+    private val positionsRegistry: IbkrPositionsRegistry,
 ) : EWrapper {
     override fun tickPrice(
         tickerId: Int,
@@ -42,7 +52,7 @@ class IbkrEWrapper(
         attrib: TickAttrib,
     ) {
         logger.trace { "tickPrice: tickerId=$tickerId, field=$field, price=$price" }
-        registry.onTickPrice(tickerId, field, price)
+        marketDataRegistry.onTickPrice(tickerId, field, price)
     }
 
     override fun tickSize(
@@ -67,7 +77,7 @@ class IbkrEWrapper(
         undPrice: Double,
     ) {
         logger.trace { "tickOptionComputation: tickerId=$tickerId, field=$field, delta=$delta" }
-        registry.onTickOptionComputation(tickerId, field, impliedVol, delta, gamma, vega, theta)
+        marketDataRegistry.onTickOptionComputation(tickerId, field, impliedVol, delta, gamma, vega, theta)
     }
 
     override fun tickGeneric(
@@ -114,7 +124,7 @@ class IbkrEWrapper(
         mktCapPrice: Double,
     ) {
         logger.debug { "orderStatus: orderId=$orderId, status=$status, filled=$filled" }
-        registry.onOrderStatus(orderId, status)
+        orderRegistry.onOrderStatus(orderId, status)
     }
 
     override fun openOrder(
@@ -137,7 +147,7 @@ class IbkrEWrapper(
         accountName: String,
     ) {
         logger.trace { "updateAccountValue: key=$key, value=$value, currency=$currency" }
-        registry.onAccountValue(key, value, accountName)
+        accountRegistry.onAccountValue(key, value, accountName)
     }
 
     override fun updatePortfolio(
@@ -163,7 +173,7 @@ class IbkrEWrapper(
 
     override fun nextValidId(orderId: Int) {
         logger.info { "nextValidId: $orderId" }
-        registry.seedOrderId(orderId)
+        orderRegistry.seedOrderId(orderId)
     }
 
     override fun contractDetails(
@@ -171,7 +181,7 @@ class IbkrEWrapper(
         contractDetails: ContractDetails,
     ) {
         logger.debug { "contractDetails: reqId=$reqId, symbol=${contractDetails.contract().symbol()}" }
-        registry.onContractDetails(reqId, contractDetails)
+        contractRegistry.onContractDetails(reqId, contractDetails)
     }
 
     override fun bondContractDetails(
@@ -183,7 +193,7 @@ class IbkrEWrapper(
 
     override fun contractDetailsEnd(reqId: Int) {
         logger.debug { "contractDetailsEnd: reqId=$reqId" }
-        registry.onContractDetailsEnd(reqId)
+        contractRegistry.onContractDetailsEnd(reqId)
     }
 
     override fun execDetails(
@@ -233,7 +243,7 @@ class IbkrEWrapper(
 
     override fun managedAccounts(accountsList: String) {
         logger.info { "managedAccounts: $accountsList" }
-        registry.onManagedAccounts(accountsList)
+        accountRegistry.onManagedAccounts(accountsList)
     }
 
     override fun receiveFA(
@@ -248,7 +258,7 @@ class IbkrEWrapper(
         bar: Bar,
     ) {
         logger.trace { "historicalData: reqId=$reqId, time=${bar.time()}" }
-        registry.onHistoricalBar(reqId, bar)
+        historicalRegistry.onHistoricalBar(reqId, bar)
     }
 
     override fun scannerParameters(xml: String) {
@@ -305,7 +315,7 @@ class IbkrEWrapper(
 
     override fun tickSnapshotEnd(reqId: Int) {
         logger.trace { "tickSnapshotEnd: reqId=$reqId" }
-        registry.onTickSnapshotEnd(reqId)
+        marketDataRegistry.onTickSnapshotEnd(reqId)
     }
 
     override fun marketDataType(
@@ -326,10 +336,12 @@ class IbkrEWrapper(
         avgCost: Double,
     ) {
         logger.debug { "position: account=$account, symbol=${contract.symbol()}, pos=$pos" }
+        positionsRegistry.onPosition(account, contract, pos, avgCost)
     }
 
     override fun positionEnd() {
         logger.debug { "positionEnd" }
+        positionsRegistry.onPositionEnd()
     }
 
     override fun accountSummary(
@@ -403,13 +415,24 @@ class IbkrEWrapper(
             logger.info { "IBKR info [id=$id, code=$errorCode]: $errorMsg" }
         } else {
             logger.error { "IBKR error [id=$id, code=$errorCode]: $errorMsg" }
-            if (id > 0) registry.onError(id, errorCode, errorMsg)
+            if (id > 0) {
+                historicalRegistry.onError(id, errorCode, errorMsg)
+                contractRegistry.onError(id, errorCode, errorMsg)
+                marketDataRegistry.onError(id, errorCode, errorMsg)
+                orderRegistry.onError(id, errorCode, errorMsg)
+            }
         }
     }
 
     override fun connectionClosed() {
         logger.warn { "IBKR connection closed" }
-        registry.cancelAllPending()
+        val cause = RuntimeException("IBKR disconnected")
+        historicalRegistry.cancelAllPending(cause)
+        contractRegistry.cancelAllPending(cause)
+        marketDataRegistry.cancelAllPending(cause)
+        orderRegistry.cancelAllPending(cause)
+        positionsRegistry.cancelPending()
+        accountRegistry.onDisconnect()
     }
 
     override fun connectAck() {
@@ -458,12 +481,12 @@ class IbkrEWrapper(
         logger.debug {
             "securityDefinitionOptionalParameter: reqId=$reqId, exchange=$exchange, expirations=${expirations.size}, strikes=${strikes.size}"
         }
-        registry.onSecurityDefinitionOptionalParameter(reqId, expirations, strikes)
+        contractRegistry.onSecurityDefinitionOptionalParameter(reqId, expirations, strikes)
     }
 
     override fun securityDefinitionOptionalParameterEnd(reqId: Int) {
         logger.debug { "securityDefinitionOptionalParameterEnd: reqId=$reqId" }
-        registry.onSecurityDefinitionOptionalParameterEnd(reqId)
+        contractRegistry.onSecurityDefinitionOptionalParameterEnd(reqId)
     }
 
     override fun softDollarTiers(
@@ -490,7 +513,7 @@ class IbkrEWrapper(
         endDateStr: String,
     ) {
         logger.debug { "historicalDataEnd: reqId=$reqId, start=$startDateStr, end=$endDateStr" }
-        registry.onHistoricalDataEnd(reqId)
+        historicalRegistry.onHistoricalDataEnd(reqId)
     }
 
     override fun mktDepthExchanges(depthMktDataDescriptions: Array<out DepthMktDataDescription>) {
@@ -664,7 +687,7 @@ class IbkrEWrapper(
         tickAttribBidAsk: TickAttribBidAsk,
     ) {
         logger.trace { "tickByTickBidAsk: reqId=$reqId, bid=$bidPrice, ask=$askPrice" }
-        registry.onTickByTickBidAsk(reqId, TickByTickBidAsk(time, bidPrice, askPrice))
+        marketDataRegistry.onTickByTickBidAsk(reqId, TickByTickBidAsk(time, bidPrice, askPrice))
     }
 
     override fun tickByTickMidPoint(

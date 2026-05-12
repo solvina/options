@@ -1,7 +1,7 @@
 package cz.solvina.options.adapters.outbound.ibkr.cache
 
 import com.ib.client.EClientSocket
-import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrRequestRegistry
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrContractRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.PendingOptionParamsRequest
 import cz.solvina.options.domain.features.scanner.ScannerConfig
 import cz.solvina.options.domain.models.Symbol
@@ -17,7 +17,7 @@ private val logger = KotlinLogging.logger {}
 
 @Component
 class IbkrOptionParamsCache(
-    private val registry: IbkrRequestRegistry,
+    private val registry: IbkrContractRegistry,
     private val client: EClientSocket,
     private val contractCache: IbkrContractCache,
     private val scannerConfig: ScannerConfig,
@@ -34,7 +34,7 @@ class IbkrOptionParamsCache(
         logger.debug { "[$symbol] Fetching option params" }
         val underlyingConId = contractCache.getOrFetchUnderlyingConId(symbol)
 
-        val reqId = registry.nextDataReqId()
+        val reqId = registry.nextReqId()
         val deferred = CompletableDeferred<OptionParams>()
         registry.pendingOptionParams[reqId] =
             PendingOptionParamsRequest(

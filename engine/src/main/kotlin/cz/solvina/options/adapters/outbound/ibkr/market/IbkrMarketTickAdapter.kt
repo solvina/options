@@ -1,12 +1,9 @@
 package cz.solvina.options.adapters.outbound.ibkr.market
 
-import com.ib.client.Contract
 import com.ib.client.EClientSocket
-import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrRequestRegistry
-import cz.solvina.options.adapters.outbound.ibkr.registry.MarketDataSnapshot
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.PendingContinuousMarketDataRequest
 import cz.solvina.options.adapters.outbound.ibkr.registry.PendingTickByTickRequest
-import cz.solvina.options.adapters.outbound.ibkr.registry.TickByTickBidAsk
 import cz.solvina.options.domain.features.market.MarketTickPort
 import cz.solvina.options.domain.features.market.SpreadCreditTick
 import cz.solvina.options.domain.models.OptionContract
@@ -16,21 +13,25 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import org.springframework.stereotype.Component
-import java.time.format.DateTimeFormatter
+import java.util.concurrent.atomic.AtomicReference
 
 private val logger = KotlinLogging.logger {}
 
+private data class LegPrices(
+    val bid: Double = Double.NaN,
+    val ask: Double = Double.NaN,
+)
+
 @Component
 class IbkrMarketTickAdapter(
-    private val registry: IbkrRequestRegistry,
+    private val registry: IbkrMarketDataRegistry,
     private val client: EClientSocket,
 ) : MarketTickPort {
     override fun streamUnderlyingPrice(symbol: Symbol): Flow<Double> =
         callbackFlow {
-            val reqId = registry.nextDataReqId()
+            val reqId = registry.nextReqId()
             registry.pendingContinuousMarketData[reqId] =
                 PendingContinuousMarketDataRequest(
-                    snapshot = MarketDataSnapshot(),
                     onUpdate = { snapshot ->
                         val price =
                             snapshot.last.takeIf { !it.isNaN() }
@@ -53,26 +54,21 @@ class IbkrMarketTickAdapter(
     ): Flow<SpreadCreditTick> =
         callbackFlow {
             // reqTickByTick for real-time bid/ask on each leg
-            val soldTickReqId = registry.nextDataReqId()
-            val boughtTickReqId = registry.nextDataReqId()
+            val soldTickReqId = registry.nextReqId()
+            val boughtTickReqId = registry.nextReqId()
             // reqMktData(snapshot=false) for continuous Greeks on each leg
-            val soldGreeksReqId = registry.nextDataReqId()
-            val boughtGreeksReqId = registry.nextDataReqId()
+            val soldGreeksReqId = registry.nextReqId()
+            val boughtGreeksReqId = registry.nextReqId()
 
-            // Mutable state — all callbacks fire on the single IBKR reader thread
-            var soldBid = Double.NaN
-            var soldAsk = Double.NaN
-            var boughtBid = Double.NaN
-            var boughtAsk = Double.NaN
+            val soldPrices = AtomicReference(LegPrices())
+            val boughtPrices = AtomicReference(LegPrices())
 
-            fun emitIfReady(tick: TickByTickBidAsk? = null) {
-                val sB = soldBid
-                val sA = soldAsk
-                val bB = boughtBid
-                val bA = boughtAsk
-                if (sB.isNaN() || sA.isNaN() || bB.isNaN() || bA.isNaN()) return
-                val soldMid = (sB + sA) / 2
-                val boughtMid = (bB + bA) / 2
+            fun emitIfReady() {
+                val s = soldPrices.get()
+                val b = boughtPrices.get()
+                if (s.bid.isNaN() || s.ask.isNaN() || b.bid.isNaN() || b.ask.isNaN()) return
+                val soldMid = (s.bid + s.ask) / 2
+                val boughtMid = (b.bid + b.ask) / 2
                 val soldDelta =
                     registry.pendingContinuousMarketData[soldGreeksReqId]
                         ?.snapshot
@@ -85,10 +81,10 @@ class IbkrMarketTickAdapter(
                         ?.takeIf { !it.isNaN() }
                 trySend(
                     SpreadCreditTick(
-                        soldBid = sB,
-                        soldAsk = sA,
-                        boughtBid = bB,
-                        boughtAsk = bA,
+                        soldBid = s.bid,
+                        soldAsk = s.ask,
+                        boughtBid = b.bid,
+                        boughtAsk = b.ask,
                         netCredit = soldMid - boughtMid,
                         soldDelta = soldDelta,
                         boughtDelta = boughtDelta,
@@ -98,22 +94,18 @@ class IbkrMarketTickAdapter(
 
             registry.pendingTickByTick[soldTickReqId] =
                 PendingTickByTickRequest { tick ->
-                    soldBid = tick.bidPrice
-                    soldAsk = tick.askPrice
-                    emitIfReady(tick)
+                    soldPrices.set(LegPrices(bid = tick.bidPrice, ask = tick.askPrice))
+                    emitIfReady()
                     true
                 }
             registry.pendingTickByTick[boughtTickReqId] =
                 PendingTickByTickRequest { tick ->
-                    boughtBid = tick.bidPrice
-                    boughtAsk = tick.askPrice
-                    emitIfReady(tick)
+                    boughtPrices.set(LegPrices(bid = tick.bidPrice, ask = tick.askPrice))
+                    emitIfReady()
                     true
                 }
-            registry.pendingContinuousMarketData[soldGreeksReqId] =
-                PendingContinuousMarketDataRequest(snapshot = MarketDataSnapshot())
-            registry.pendingContinuousMarketData[boughtGreeksReqId] =
-                PendingContinuousMarketDataRequest(snapshot = MarketDataSnapshot())
+            registry.pendingContinuousMarketData[soldGreeksReqId] = PendingContinuousMarketDataRequest()
+            registry.pendingContinuousMarketData[boughtGreeksReqId] = PendingContinuousMarketDataRequest()
 
             client.reqTickByTickData(soldTickReqId, buildOptionContract(soldContract), "BidAsk", 0, true)
             client.reqTickByTickData(boughtTickReqId, buildOptionContract(boughtContract), "BidAsk", 0, true)
@@ -139,29 +131,5 @@ class IbkrMarketTickAdapter(
                         "${soldContract.strike}P/${boughtContract.strike}P"
                 }
             }
-        }
-
-    // -------------------------------------------------------------------------
-
-    private fun buildStockContract(symbol: Symbol): Contract =
-        Contract().apply {
-            symbol(symbol.value)
-            secType("STK")
-            currency("USD")
-            exchange("SMART")
-        }
-
-    private fun buildOptionContract(contract: OptionContract): Contract =
-        Contract().apply {
-            symbol(contract.symbol.value)
-            secType("OPT")
-            currency("USD")
-            exchange("SMART")
-            lastTradeDateOrContractMonth(
-                contract.expiry.format(DateTimeFormatter.ofPattern("yyyyMMdd")),
-            )
-            strike(contract.strike.toDouble())
-            right(contract.type.ibkrCode)
-            multiplier("100")
         }
 }
