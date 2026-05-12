@@ -6,6 +6,7 @@ import cz.solvina.options.adapters.outbound.ibkr.IbkrConnectionConfig
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrAccountAdapter
 import cz.solvina.options.adapters.outbound.ibkr.market.IbkrHistoricalDataAdapter
 import cz.solvina.options.adapters.outbound.ibkr.market.IbkrMarketDataAdapter
+import cz.solvina.options.adapters.outbound.ibkr.market.IbkrOptionChainAdapter
 import cz.solvina.options.domain.features.scanner.ScannerConfig
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -116,6 +117,9 @@ class FixtureFetchTest {
 
     @Autowired
     private lateinit var marketAdapter: IbkrMarketDataAdapter
+
+    @Autowired
+    private lateinit var optionChainAdapter: IbkrOptionChainAdapter
 
     @Autowired
     private lateinit var accountAdapter: IbkrAccountAdapter
@@ -242,7 +246,7 @@ class FixtureFetchTest {
                 logger.info { "[$symbol] Fetching option chain…" }
 
                 val underlying = marketAdapter.getUnderlyingPrice(symbol)
-                val expirations = marketAdapter.getAvailableExpirations(symbol)
+                val expirations = optionChainAdapter.getAvailableExpirations(symbol)
 
                 val expiry =
                     expirations
@@ -264,7 +268,7 @@ class FixtureFetchTest {
                 val dte = ChronoUnit.DAYS.between(today, expiry)
                 logger.info { "[$symbol] underlying=\$${underlying.amount}  expiry=$expiry ($dte DTE)" }
 
-                val chain = marketAdapter.getOptionChain(symbol, expiry, underlying)
+                val chain = optionChainAdapter.getOptionChain(symbol, expiry, underlying)
                 logger.info { "[$symbol] Got ${chain.size} quotes" }
 
                 val fixture =

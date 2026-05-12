@@ -42,6 +42,16 @@ class BacktestOrderAdapter(
         return LegOrder(orderId = orderId, status = OrderStatus.FILLED)
     }
 
+    override suspend fun placeMarketOrder(
+        contract: OptionContract,
+        action: LegAction,
+        qty: Int,
+    ): LegOrder {
+        val orderId = nextOrderId.getAndIncrement()
+        fills.add(FillRecord(orderId = orderId, contract = contract, action = action, price = Money(java.math.BigDecimal.ZERO), qty = qty))
+        return LegOrder(orderId = orderId, status = OrderStatus.FILLED)
+    }
+
     override suspend fun cancelOrder(orderId: Int) {
         // No-op in backtest — fills are always immediate
     }

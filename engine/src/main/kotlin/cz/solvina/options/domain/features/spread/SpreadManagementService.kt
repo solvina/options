@@ -15,6 +15,7 @@ import java.time.Clock
 import java.time.Instant
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
+import java.util.UUID
 
 private val logger = KotlinLogging.logger {}
 
@@ -26,6 +27,67 @@ class SpreadManagementService(
     private val config: ScannerConfig,
     private val clock: Clock,
 ) {
+    sealed interface ManualCloseResult {
+        data class Closed(
+            val spread: BullPutSpread,
+        ) : ManualCloseResult
+
+        data object NotFound : ManualCloseResult
+
+        data class AlreadyClosed(
+            val spread: BullPutSpread,
+        ) : ManualCloseResult
+    }
+
+    suspend fun softClose(id: UUID): ManualCloseResult = manualClose(id, useMarket = false)
+
+    suspend fun forceClose(id: UUID): ManualCloseResult = manualClose(id, useMarket = true)
+
+    private suspend fun manualClose(
+        id: UUID,
+        useMarket: Boolean,
+    ): ManualCloseResult {
+        val spread = spreadPort.findById(id) ?: return ManualCloseResult.NotFound
+        if (spread.status != SpreadStatus.OPEN) return ManualCloseResult.AlreadyClosed(spread)
+
+        val soldMid = marketDataPort.getOptionMid(spread.soldLeg.contract)
+        val boughtMid = marketDataPort.getOptionMid(spread.boughtLeg.contract)
+        val spreadValue = soldMid.amount.subtract(boughtMid.amount)
+
+        val closed =
+            if (useMarket) {
+                forceCloseSpread(spread, spreadValue)
+            } else {
+                closeSpread(spread, SpreadStatus.CLOSED_MANUAL, soldMid, boughtMid, spreadValue)
+                spread.copy(
+                    status = SpreadStatus.CLOSED_MANUAL,
+                    closedAt = Instant.now(clock),
+                    closeReason = SpreadStatus.CLOSED_MANUAL.name,
+                    closePricePerShare = spreadValue,
+                )
+            }
+        return ManualCloseResult.Closed(closed)
+    }
+
+    private suspend fun forceCloseSpread(
+        spread: BullPutSpread,
+        estimatedSpreadValue: BigDecimal,
+    ): BullPutSpread {
+        logger.info { "[${spread.symbol}] Force-closing at market" }
+        orderPort.placeMarketOrder(spread.soldLeg.contract, LegAction.BUY, spread.quantity)
+        orderPort.placeMarketOrder(spread.boughtLeg.contract, LegAction.SELL, spread.quantity)
+        val updated =
+            spread.copy(
+                status = SpreadStatus.CLOSED_MANUAL,
+                closedAt = Instant.now(clock),
+                closeReason = "MANUAL_FORCE",
+                closePricePerShare = estimatedSpreadValue,
+            )
+        spreadPort.update(updated)
+        logger.info { "[${spread.symbol}] Force-closed. Estimated value \$$estimatedSpreadValue" }
+        return updated
+    }
+
     suspend fun checkExits() {
         val openSpreads = spreadPort.findOpen()
         if (openSpreads.isEmpty()) {
@@ -51,7 +113,7 @@ class SpreadManagementService(
         val currentSpreadValue = soldMid.amount.subtract(boughtMid.amount)
 
         val tpThreshold = spread.creditPerShare.multiply(BigDecimal.ONE.subtract(BigDecimal(config.takeProfitPercent)))
-        val slThreshold = spread.creditPerShare.add(spread.maxRiskPerShare.multiply(BigDecimal(config.stopLossPercent)))
+        val slThreshold = spread.creditPerShare.add(spread.creditPerShare.multiply(BigDecimal(config.stopLossPercent)))
 
         logger.debug {
             "[${spread.symbol}] spread value=\$$currentSpreadValue credit=\$${"%.4f".format(spread.creditPerShare)} " +
@@ -70,12 +132,14 @@ class SpreadManagementService(
             }
 
         logger.info { "[${spread.symbol}] Closing spread — $reason" }
-        closeSpread(spread, closeStatus, currentSpreadValue)
+        closeSpread(spread, closeStatus, soldMid, boughtMid, currentSpreadValue)
     }
 
     private suspend fun closeSpread(
         spread: BullPutSpread,
         closeStatus: SpreadStatus,
+        soldMid: Money,
+        boughtMid: Money,
         currentSpreadValue: BigDecimal,
     ) {
         // Buy back sold put
@@ -83,7 +147,7 @@ class SpreadManagementService(
             orderPort.placeAndAwaitFill(
                 contract = spread.soldLeg.contract,
                 action = LegAction.BUY,
-                limitPrice = Money(currentSpreadValue),
+                limitPrice = soldMid,
                 qty = spread.quantity,
             )
         if (buyBackOrder.status != OrderStatus.FILLED) {
@@ -96,15 +160,12 @@ class SpreadManagementService(
             orderPort.placeAndAwaitFill(
                 contract = spread.boughtLeg.contract,
                 action = LegAction.SELL,
-                limitPrice =
-                    Money(
-                        spread.boughtLeg.contract.strike
-                            .multiply(BigDecimal.ZERO),
-                    ),
+                limitPrice = boughtMid,
                 qty = spread.quantity,
             )
         if (sellBackOrder.status != OrderStatus.FILLED) {
-            logger.warn { "[${spread.symbol}] Sell-back of bought put did not fill" }
+            logger.warn { "[${spread.symbol}] Sell-back of bought put did not fill, spread NOT closed" }
+            return
         }
 
         val updated =

@@ -29,6 +29,8 @@ class BacktestSpreadAdapter : SpreadPort {
         return spread
     }
 
+    override suspend fun findById(id: UUID): BullPutSpread? = store.firstOrNull { it.id == id }
+
     override suspend fun findOpen(): List<BullPutSpread> = store.filter { it.status == SpreadStatus.OPEN }
 
     override suspend fun findAll(): List<BullPutSpread> = store.toList()

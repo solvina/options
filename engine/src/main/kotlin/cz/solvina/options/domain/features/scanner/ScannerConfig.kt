@@ -41,6 +41,9 @@ data class ScannerConfig(
     // Schedulers
     val cron: String = "0 */15 10-15 * * MON-FRI",
     val monitorDelayMs: Long = 60_000,
+    // Kill switches (can be overridden at runtime via API)
+    val scannerPaused: Boolean = false,
+    val monitorPaused: Boolean = false,
     // Cache TTLs
     val ivHistoryDays: Int = 365,
     val ivCacheTtlMinutes: Long = 60,

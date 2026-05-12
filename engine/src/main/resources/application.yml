@@ -1,6 +1,8 @@
 spring:
   application:
     name: options
+  webflux:
+    base-path: /options
   datasource:
     url: jdbc:postgresql://localhost:5433/options
     username: options_user
@@ -27,7 +29,7 @@ ibkr:
     reconnect-interval-ms: 10000
 
 scanner:
-  watchlist: [SPY, QQQ, AAPL, MSFT, AMZN]
+  watchlist: [ SPY, QQQ, AAPL, MSFT, AMZN, IWM,DIA,TSLA, NVDA, META, GOOGL,XLF,XLE,XLV,AMD,UNH ]
   iv-rank-threshold: 30
   min-dte: 30
   max-dte: 50
@@ -60,11 +62,7 @@ scanner:
 
 server:
   port: 8081
-  servlet:
-    context-path: /options
 
 springdoc:
   packagesToScan: cz.solvina.options
-  swagger-ui:
-    path: /swagger-ui.html
   use-management-port: false
