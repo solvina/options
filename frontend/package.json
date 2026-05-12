@@ -8,8 +8,10 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "generate:api": "npm run generate:health",
-    "generate:health": "openapi-ts -i ../engine/openapi/cz.solvina.options.health.yaml -o ./src/generated/health -c @hey-api/client-fetch -p @tanstack/react-query"
+    "generate:api": "npm run generate:health && npm run generate:account && npm run generate:spreads",
+    "generate:health": "openapi-ts -i ../engine/openapi/cz.solvina.options.health.yaml -o ./src/generated/health -c @hey-api/client-fetch -p @tanstack/react-query",
+    "generate:account": "openapi-ts -i ../engine/openapi/cz.solvina.options.account.yaml -o ./src/generated/account -c @hey-api/client-fetch -p @tanstack/react-query",
+    "generate:spreads": "openapi-ts -i ../engine/openapi/cz.solvina.options.spreads.yaml -o ./src/generated/spreads -c @hey-api/client-fetch -p @tanstack/react-query"
   },
   "dependencies": {
     "@hey-api/client-fetch": "^0.13.1",

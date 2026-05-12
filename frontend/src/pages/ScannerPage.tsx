@@ -1,0 +1,164 @@
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import {
+  getScannerStatusOptions,
+  triggerScanMutation,
+  pauseScannerMutation,
+  resumeScannerMutation,
+  pauseMonitorMutation,
+  resumeMonitorMutation,
+} from '../generated/spreads/@tanstack/react-query.gen'
+
+function KillSwitchRow({
+  label,
+  paused,
+  onPause,
+  onResume,
+  isPending,
+}: {
+  label: string
+  paused: boolean
+  onPause: () => void
+  onResume: () => void
+  isPending: boolean
+}) {
+  return (
+    <div className="flex items-center justify-between py-3 border-b border-border last:border-0">
+      <div>
+        <p className="text-sm font-medium">{label}</p>
+        <p className={`text-xs mt-0.5 ${paused ? 'text-amber-600 dark:text-amber-400' : 'text-green-600 dark:text-green-400'}`}>
+          {paused ? 'PAUSED' : 'ACTIVE'}
+        </p>
+      </div>
+      <div className="flex gap-2">
+        <button
+          onClick={onPause}
+          disabled={paused || isPending}
+          className="px-3 py-1.5 text-xs rounded bg-amber-100 text-amber-800 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-300 disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          Pause
+        </button>
+        <button
+          onClick={onResume}
+          disabled={!paused || isPending}
+          className="px-3 py-1.5 text-xs rounded bg-green-100 text-green-800 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-300 disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          Resume
+        </button>
+      </div>
+    </div>
+  )
+}
+
+export function ScannerPage() {
+  const qc = useQueryClient()
+  const invalidate = () => qc.invalidateQueries({ queryKey: ['getScannerStatus'] })
+
+  const { data, isLoading, isError } = useQuery({
+    ...getScannerStatusOptions(),
+    refetchInterval: 15_000,
+  })
+
+  const triggerScan = useMutation({ ...triggerScanMutation() })
+  const pauseScanner = useMutation({ ...pauseScannerMutation(), onSuccess: invalidate })
+  const resumeScanner = useMutation({ ...resumeScannerMutation(), onSuccess: invalidate })
+  const pauseMonitor = useMutation({ ...pauseMonitorMutation(), onSuccess: invalidate })
+  const resumeMonitor = useMutation({ ...resumeMonitorMutation(), onSuccess: invalidate })
+
+  const ivRanks = data?.ivRanks
+    ? Object.entries(data.ivRanks).sort(([, a], [, b]) => b - a)
+    : []
+
+  return (
+    <div className="space-y-8 max-w-2xl">
+      <h1 className="text-xl font-semibold">Scanner</h1>
+
+      {isLoading && <p className="text-muted-foreground text-sm">Loading…</p>}
+      {isError && <p className="text-destructive text-sm">Failed to load scanner status.</p>}
+
+      {data && (
+        <>
+          <section className="rounded-lg border border-border bg-card p-4 space-y-2">
+            <div className="flex justify-between text-sm">
+              <span className="text-muted-foreground">Last scan</span>
+              <span>{data.lastRunAt ? new Date(data.lastRunAt).toLocaleString() : 'Never'}</span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-muted-foreground">Open spreads</span>
+              <span>{data.openSpreadCount}</span>
+            </div>
+          </section>
+
+          <section>
+            <h2 className="text-base font-semibold mb-3">Kill Switches</h2>
+            <div className="rounded-lg border border-border bg-card px-4">
+              <KillSwitchRow
+                label="New Entry Scanner"
+                paused={data.scannerPaused}
+                onPause={() => pauseScanner.mutate({})}
+                onResume={() => resumeScanner.mutate({})}
+                isPending={pauseScanner.isPending || resumeScanner.isPending}
+              />
+              <KillSwitchRow
+                label="Exit Monitor"
+                paused={data.monitorPaused}
+                onPause={() => pauseMonitor.mutate({})}
+                onResume={() => resumeMonitor.mutate({})}
+                isPending={pauseMonitor.isPending || resumeMonitor.isPending}
+              />
+            </div>
+          </section>
+
+          <section>
+            <h2 className="text-base font-semibold mb-3">Manual Scan</h2>
+            <button
+              onClick={() => triggerScan.mutate({})}
+              disabled={triggerScan.isPending || data.scannerPaused}
+              className="px-4 py-2 rounded bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {triggerScan.isPending ? 'Running…' : 'Run Scan Now'}
+            </button>
+            {data.scannerPaused && (
+              <p className="mt-2 text-xs text-muted-foreground">Resume the scanner to trigger a new scan.</p>
+            )}
+            {triggerScan.isSuccess && (
+              <p className="mt-2 text-xs text-green-600 dark:text-green-400">Scan started.</p>
+            )}
+          </section>
+
+          {ivRanks.length > 0 && (
+            <section>
+              <h2 className="text-base font-semibold mb-3">IV Ranks</h2>
+              <div className="rounded-lg border border-border overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border bg-muted/50 text-muted-foreground text-xs uppercase tracking-wide">
+                      <th className="px-4 py-2 text-left">Symbol</th>
+                      <th className="px-4 py-2 text-left">IV Rank</th>
+                      <th className="px-4 py-2 text-left"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ivRanks.map(([symbol, rank]) => (
+                      <tr key={symbol} className="border-b border-border last:border-0 hover:bg-muted/40">
+                        <td className="px-4 py-2 font-medium">{symbol}</td>
+                        <td className="px-4 py-2 tabular-nums">{rank.toFixed(1)}%</td>
+                        <td className="px-4 py-2 w-32">
+                          <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                            <div
+                              className={`h-full rounded-full ${rank >= 50 ? 'bg-green-500' : rank >= 30 ? 'bg-amber-400' : 'bg-muted-foreground/30'}`}
+                              style={{ width: `${Math.min(rank, 100)}%` }}
+                            />
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
