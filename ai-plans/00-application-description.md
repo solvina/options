@@ -1,7 +1,7 @@
 # Options Engine — Application Description
 
 > **Living document.** Update this file whenever significant structural changes land.
-> Last updated: 2026-05-12 (session 2)
+> Last updated: 2026-05-13 (session 3)
 
 ---
 
@@ -203,7 +203,7 @@ Six focused registries, all injecting the shared **`IbkrIdCounter`** for request
 ### Market data adapters
 - **`IbkrMarketDataAdapter`** — Snapshot queries: underlying price + option mid.
 - **`IbkrMarketTickAdapter`** — Streaming: `Flow<Double>` underlying price, `Flow<SpreadCreditTick>` for both legs simultaneously (bid/ask via `reqTickByTick` + Greeks via continuous `reqMktData`).
-- **`IbkrOptionChainAdapter`** — Fetches OTM put chain with Greeks for candidate strikes. Fetches `candidateStrikeCount` strikes near the target delta, plus the corresponding bought-leg strike for each, so `ScannerService` always finds both spread legs without a second round-trip. When IBKR returns no Greeks (paper account, error 354 or 10197), falls back to **Black-Scholes** pricing using `IvRankService.currentIv`. `BlackScholes` object lives in `domain/features/market/` and provides `putPrice`, `putDelta`, `gamma`, `putTheta`, `vega`, `impliedVol`.
+- **`IbkrOptionChainAdapter`** — Fetches OTM put chain with Greeks for candidate strikes. Candidate selection uses two pools merged as `nearest`: `candidateStrikeCount` strikes closest to the moneyness-based target (spot × 0.85), plus the `candidateStrikeCount` lowest valid strikes (to cover high-IV underlyings where the delta-matching strikes sit far below the moneyness target). `validStrikes` is extended one `spreadWidthUsd` below the standard band floor so bought-leg strikes are not cut off. The boughtLegs set adds the top-2 strikes below each sold candidate's spread target. When IBKR returns no Greeks (paper account, error 354 or 10197), falls back to **Black-Scholes** pricing using `IvRankService.currentIv`. `BlackScholes` object lives in `domain/features/market/` and provides `putPrice`, `putDelta`, `gamma`, `putTheta`, `vega`, `impliedVol`.
 - **`IbkrHistoricalDataAdapter`** — Fetches daily IV or price bars as a `Flow`.
 
 ### Order adapters
