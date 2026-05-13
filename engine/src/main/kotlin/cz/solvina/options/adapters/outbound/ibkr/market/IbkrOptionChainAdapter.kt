@@ -47,36 +47,48 @@ class IbkrOptionChainAdapter(
 
         val lowerBound = underlyingPrice.amount.multiply(BigDecimal.ONE.subtract(BigDecimal(scannerConfig.strikeBandPercent)))
         val upperBound = underlyingPrice.amount.multiply(BigDecimal("0.999"))
+        // Allow bought-leg candidates to sit one spread-width below the sold-leg band
+        val boughtLegFloor = lowerBound.subtract(scannerConfig.spreadWidthUsd)
 
         val validStrikes =
             params.strikes.filter { strike ->
-                strike in lowerBound..upperBound && params.expirations.contains(expiry)
+                strike >= boughtLegFloor && strike <= upperBound && params.expirations.contains(expiry)
             }
 
         if (validStrikes.isEmpty()) {
-            logger.warn { "[$symbol] No valid OTM put strikes found in [$lowerBound, $upperBound]" }
+            logger.warn { "[$symbol] No valid OTM put strikes found in [$boughtLegFloor, $upperBound]" }
             return emptyList()
         }
 
         val targetStrike = underlyingPrice.amount.multiply(BigDecimal.ONE.subtract(BigDecimal(scannerConfig.targetDelta)))
-        val nearest =
+
+        // Strikes near the moneyness-based target (high-delta region)
+        val nearTarget =
             validStrikes
                 .sortedBy { abs((it - targetStrike).toDouble()) }
                 .take(scannerConfig.candidateStrikeCount)
 
-        // Also include the strike needed for the bought leg of every candidate, so ScannerService
-        // always finds both legs inside the returned chain without a second round-trip.
+        // Strikes from the lower end of the valid band (covers high-IV underlyings where the
+        // actual delta-matching strikes sit well below the moneyness-based targetStrike)
+        val lowerBand =
+            validStrikes
+                .sortedDescending()
+                .takeLast(scannerConfig.candidateStrikeCount)
+
+        val nearest = (nearTarget + lowerBand).distinct()
+
+        // Bought-leg candidates: one spread-width below each sold candidate
         val boughtLegs =
             nearest
-                .mapNotNull { soldStrike ->
+                .flatMap { soldStrike ->
                     val boughtTarget = soldStrike.subtract(scannerConfig.spreadWidthUsd)
-                    validStrikes.filter { it <= boughtTarget }.maxOrNull()
+                    validStrikes.filter { it <= boughtTarget }.sortedDescending().take(2)
                 }.toSet()
 
         val candidateStrikes = (nearest + boughtLegs).distinct().sortedDescending()
 
         logger.debug {
-            "[$symbol] Fetching greeks for ${candidateStrikes.size} candidate strikes (${nearest.size} sold + ${boughtLegs.size} bought-leg) near $targetStrike"
+            "[$symbol] Fetching greeks for ${candidateStrikes.size} candidate strikes (${nearest.size} sold + ${boughtLegs.size} bought-leg)"
         }
 
         val tte = ChronoUnit.DAYS.between(LocalDate.now(), expiry) / 365.0
