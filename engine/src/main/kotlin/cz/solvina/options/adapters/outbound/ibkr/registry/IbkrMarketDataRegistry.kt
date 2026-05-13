@@ -128,6 +128,9 @@ class IbkrMarketDataRegistry(
             }
             return
         }
+        // 10167 = informational: IBKR is switching to delayed market data.
+        // Actual tick data (and tickSnapshotEnd) will still arrive — do not touch the deferred.
+        if (code == 10167) return
         val ex = RuntimeException("IBKR error [code=$code]: $msg")
         pendingMarketData.remove(id)?.deferred?.completeExceptionally(ex)
         pendingContinuousMarketData.remove(id)?.let { logger.warn { "Continuous market data $id errored: $msg" } }

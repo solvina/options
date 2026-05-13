@@ -8,3 +8,4 @@ spring:
 ibkr:
   connection:
     host: localhost   # IB Gateway runs in Docker on the same RPi, mapped to host:7497
+    paper-account: true

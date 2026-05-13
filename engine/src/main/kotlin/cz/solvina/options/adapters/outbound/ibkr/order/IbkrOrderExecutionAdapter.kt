@@ -14,6 +14,8 @@ import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
 import io.github.oshai.kotlinlogging.KotlinLogging
+import java.math.BigDecimal
+import java.math.RoundingMode
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
@@ -42,7 +44,7 @@ class IbkrOrderExecutionAdapter(
                 // BUY the combo = receive net credit (IBKR BAG convention for credit spreads)
                 action("BUY")
                 orderType("LMT")
-                lmtPrice(netCredit.amount.toDouble())
+                lmtPrice(netCredit.amount.floorToTick().toDouble())
                 totalQuantity(Decimal.get(qty.toLong()))
                 tif("DAY")
             }
@@ -136,4 +138,10 @@ class IbkrOrderExecutionAdapter(
             )
         }
     }
+}
+
+/** Floor-rounds a credit amount to the IBKR minimum price variation grid ($0.01 below $3, $0.05 at or above $3). */
+private fun BigDecimal.floorToTick(): BigDecimal {
+    val tick = if (this < BigDecimal("3.00")) BigDecimal("0.01") else BigDecimal("0.05")
+    return divide(tick, 0, RoundingMode.FLOOR).multiply(tick)
 }
