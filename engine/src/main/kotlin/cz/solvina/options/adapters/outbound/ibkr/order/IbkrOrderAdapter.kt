@@ -1,10 +1,10 @@
 package cz.solvina.options.adapters.outbound.ibkr.order
 
-import com.ib.client.Contract
 import com.ib.client.Decimal
 import com.ib.client.EClientSocket
 import com.ib.client.Order
 import com.ib.client.OrderCancel
+import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
 import cz.solvina.options.adapters.outbound.ibkr.cache.OptionContractKey
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
@@ -18,7 +18,6 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.withTimeout
 import org.springframework.stereotype.Component
-import java.time.format.DateTimeFormatter
 
 private val logger = KotlinLogging.logger {}
 
@@ -28,6 +27,7 @@ class IbkrOrderAdapter(
     private val client: EClientSocket,
     private val contractCache: IbkrContractCache,
     private val chaseService: OrderChaseService,
+    private val contractFactory: IbkrContractFactory,
 ) : OrderPort {
     override suspend fun placeAndAwaitFill(
         contract: OptionContract,
@@ -114,16 +114,7 @@ class IbkrOrderAdapter(
     private fun buildIbkrContract(
         contract: OptionContract,
         conId: Int?,
-    ): Contract =
-        Contract().apply {
-            if (conId != null) conid(conId)
-            symbol(contract.symbol.value)
-            secType("OPT")
-            currency("USD")
-            exchange("SMART")
-            lastTradeDateOrContractMonth(contract.expiry.format(DateTimeFormatter.ofPattern("yyyyMMdd")))
-            strike(contract.strike.toDouble())
-            right(contract.type.ibkrCode)
-            multiplier("100")
-        }
+    ) = contractFactory.optionContract(contract).also { c ->
+        if (conId != null) c.conid(conId)
+    }
 }

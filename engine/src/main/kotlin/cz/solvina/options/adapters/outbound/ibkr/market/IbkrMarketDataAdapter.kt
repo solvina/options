@@ -1,6 +1,7 @@
 package cz.solvina.options.adapters.outbound.ibkr.market
 
 import com.ib.client.EClientSocket
+import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
 import cz.solvina.options.domain.features.market.MarketDataPort
 import cz.solvina.options.domain.models.Money
@@ -14,9 +15,10 @@ import java.math.RoundingMode
 class IbkrMarketDataAdapter(
     private val registry: IbkrMarketDataRegistry,
     private val client: EClientSocket,
+    private val contractFactory: IbkrContractFactory,
 ) : MarketDataPort {
     override suspend fun getUnderlyingPrice(symbol: Symbol): Money {
-        val snapshot = reqMktDataSnapshot(registry, client, buildStockContract(symbol), "")
+        val snapshot = reqMktDataSnapshot(registry, client, contractFactory.stockContract(symbol), "")
         val price =
             snapshot.last.takeIf { !it.isNaN() }
                 ?: snapshot.close.takeIf { !it.isNaN() }
@@ -25,6 +27,6 @@ class IbkrMarketDataAdapter(
     }
 
     override suspend fun getOptionMid(contract: OptionContract): Money =
-        reqMktDataSnapshot(registry, client, buildOptionContract(contract), "")
+        reqMktDataSnapshot(registry, client, contractFactory.optionContract(contract), "")
             .let { snapshot -> Money(midPrice(snapshot.bid, snapshot.ask)) }
 }

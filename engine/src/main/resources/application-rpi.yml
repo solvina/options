@@ -5,7 +5,14 @@ spring:
   jackson:
     time-zone: America/New_York
 
+scanner:
+  watchlist: [ SPY, QQQ, AAPL, MSFT, AMZN, IWM, DIA, TSLA, NVDA, META, GOOGL, XLF, XLE, XLV, AMD, UNH, ASML ]
+
 ibkr:
   connection:
     host: localhost   # IB Gateway runs in Docker on the same RPi, mapped to host:7497
     paper-account: true
+  instruments:
+    ASML:
+      currency: EUR
+      exchange: AEB

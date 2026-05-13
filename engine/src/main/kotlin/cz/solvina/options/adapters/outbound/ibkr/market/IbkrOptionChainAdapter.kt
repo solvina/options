@@ -1,6 +1,7 @@
 package cz.solvina.options.adapters.outbound.ibkr.market
 
 import com.ib.client.EClientSocket
+import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrOptionParamsCache
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
 import cz.solvina.options.domain.features.market.BlackScholes
@@ -32,6 +33,7 @@ class IbkrOptionChainAdapter(
     private val scannerConfig: ScannerConfig,
     private val optionParamsCache: IbkrOptionParamsCache,
     private val volatilityPort: VolatilityPort,
+    private val contractFactory: IbkrContractFactory,
 ) : OptionChainPort {
     override suspend fun getAvailableExpirations(symbol: Symbol): Set<LocalDate> =
         optionParamsCache
@@ -97,7 +99,7 @@ class IbkrOptionChainAdapter(
         return candidateStrikes.mapNotNull { strike ->
             runCatching {
                 val contract = OptionContract(symbol, expiry, strike, OptionType.PUT)
-                val snapshot = reqMktDataSnapshot(registry, client, buildOptionContract(contract), "")
+                val snapshot = reqMktDataSnapshot(registry, client, contractFactory.optionContract(contract), "")
                 val bid = snapshot.bid.takeIf { !it.isNaN() } ?: 0.0
                 val ask = snapshot.ask.takeIf { !it.isNaN() } ?: 0.0
                 val mid = midPrice(bid, ask)

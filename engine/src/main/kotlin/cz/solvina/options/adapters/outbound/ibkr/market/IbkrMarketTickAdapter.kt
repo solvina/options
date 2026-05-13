@@ -2,6 +2,7 @@ package cz.solvina.options.adapters.outbound.ibkr.market
 
 import com.ib.client.EClientSocket
 import cz.solvina.options.adapters.outbound.ibkr.IbkrConnectionConfig
+import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.PendingContinuousMarketDataRequest
 import cz.solvina.options.adapters.outbound.ibkr.registry.PendingTickByTickRequest
@@ -33,6 +34,7 @@ class IbkrMarketTickAdapter(
     private val registry: IbkrMarketDataRegistry,
     private val client: EClientSocket,
     private val ibkrConfig: IbkrConnectionConfig,
+    private val contractFactory: IbkrContractFactory,
 ) : MarketTickPort {
     override fun streamUnderlyingPrice(symbol: Symbol): Flow<Double> =
         callbackFlow {
@@ -46,7 +48,7 @@ class IbkrMarketTickAdapter(
                         if (price != null) trySend(price)
                     },
                 )
-            client.reqMktData(reqId, buildStockContract(symbol), "", false, false, null)
+            client.reqMktData(reqId, contractFactory.stockContract(symbol), "", false, false, null)
             logger.debug { "[$symbol] Started underlying price stream (reqId=$reqId)" }
             awaitClose {
                 registry.pendingContinuousMarketData.remove(reqId)
@@ -123,10 +125,10 @@ class IbkrMarketTickAdapter(
             registry.pendingContinuousMarketData[soldGreeksReqId] = PendingContinuousMarketDataRequest()
             registry.pendingContinuousMarketData[boughtGreeksReqId] = PendingContinuousMarketDataRequest()
 
-            client.reqTickByTickData(soldTickReqId, buildOptionContract(soldContract), "BidAsk", 0, true)
-            client.reqTickByTickData(boughtTickReqId, buildOptionContract(boughtContract), "BidAsk", 0, true)
-            client.reqMktData(soldGreeksReqId, buildOptionContract(soldContract), "100", false, false, null)
-            client.reqMktData(boughtGreeksReqId, buildOptionContract(boughtContract), "100", false, false, null)
+            client.reqTickByTickData(soldTickReqId, contractFactory.optionContract(soldContract), "BidAsk", 0, true)
+            client.reqTickByTickData(boughtTickReqId, contractFactory.optionContract(boughtContract), "BidAsk", 0, true)
+            client.reqMktData(soldGreeksReqId, contractFactory.optionContract(soldContract), "100", false, false, null)
+            client.reqMktData(boughtGreeksReqId, contractFactory.optionContract(boughtContract), "100", false, false, null)
 
             logger.debug {
                 "Started spread credit stream for " +
@@ -165,8 +167,8 @@ class IbkrMarketTickAdapter(
             registry.pendingContinuousMarketData[soldReqId] = PendingContinuousMarketDataRequest()
             registry.pendingContinuousMarketData[boughtReqId] = PendingContinuousMarketDataRequest()
 
-            client.reqMktData(soldReqId, buildOptionContract(soldContract), "", false, false, null)
-            client.reqMktData(boughtReqId, buildOptionContract(boughtContract), "", false, false, null)
+            client.reqMktData(soldReqId, contractFactory.optionContract(soldContract), "", false, false, null)
+            client.reqMktData(boughtReqId, contractFactory.optionContract(boughtContract), "", false, false, null)
 
             logger.debug {
                 "Started spread credit polling stream (paper) for " +

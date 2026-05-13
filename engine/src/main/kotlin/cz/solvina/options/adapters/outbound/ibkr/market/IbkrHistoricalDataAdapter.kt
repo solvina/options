@@ -1,7 +1,7 @@
 package cz.solvina.options.adapters.outbound.ibkr.market
 
-import com.ib.client.Contract
 import com.ib.client.EClientSocket
+import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrHistoricalDataRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.PendingBarsRequest
 import cz.solvina.options.domain.features.volatility.HistoricalDataPort
@@ -21,6 +21,7 @@ private val logger = KotlinLogging.logger {}
 class IbkrHistoricalDataAdapter(
     private val registry: IbkrHistoricalDataRegistry,
     private val client: EClientSocket,
+    private val contractFactory: IbkrContractFactory,
 ) : HistoricalDataPort {
     override fun fetchDailyBars(
         symbol: Symbol,
@@ -47,13 +48,7 @@ class IbkrHistoricalDataAdapter(
                     onError = { e -> close(e) },
                 )
 
-            val contract =
-                Contract().apply {
-                    symbol(symbol.value)
-                    secType("STK")
-                    currency("USD")
-                    exchange("SMART")
-                }
+            val contract = contractFactory.stockContract(symbol)
 
             logger.debug { "[$symbol] Requesting $days days of $whatToShow history (reqId=$reqId)" }
             client.reqHistoricalData(

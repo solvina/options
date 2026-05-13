@@ -6,6 +6,7 @@ import com.ib.client.Decimal
 import com.ib.client.EClientSocket
 import com.ib.client.Order
 import com.ib.client.OrderCancel
+import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
 import cz.solvina.options.adapters.outbound.ibkr.cache.OptionContractKey
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
@@ -28,6 +29,7 @@ class IbkrOrderExecutionAdapter(
     private val registry: IbkrOrderRegistry,
     private val client: EClientSocket,
     private val contractCache: IbkrContractCache,
+    private val contractFactory: IbkrContractFactory,
 ) : OrderExecutionPort {
     override suspend fun submitComboLimitOrder(
         soldContract: OptionContract,
@@ -131,7 +133,7 @@ class IbkrOrderExecutionAdapter(
         return Contract().apply {
             symbol(soldContract.symbol.value)
             secType("BAG")
-            currency("USD")
+            currency(contractFactory.defFor(soldContract.symbol).currency)
             exchange("SMART")
             comboLegs(
                 listOf(soldLeg, boughtLeg),
