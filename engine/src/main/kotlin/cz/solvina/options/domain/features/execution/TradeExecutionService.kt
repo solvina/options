@@ -1,6 +1,5 @@
 package cz.solvina.options.domain.features.execution
 
-import cz.solvina.options.domain.features.account.AccountPort
 import cz.solvina.options.domain.features.execution.model.ExecutionOutcome
 import cz.solvina.options.domain.features.execution.model.TradeExecutionRequest
 import cz.solvina.options.domain.features.execution.model.TradeExecutionResult
@@ -41,7 +40,7 @@ class TradeExecutionService(
     private val marketTickPort: MarketTickPort,
     private val orderExecutionPort: OrderExecutionPort,
     private val spreadPort: SpreadPort,
-    private val accountPort: AccountPort,
+    private val validator: PreTradeValidator,
     private val config: ScannerConfig,
     private val clock: Clock,
     private val scope: CoroutineScope,
@@ -53,8 +52,18 @@ class TradeExecutionService(
     // -------------------------------------------------------------------------
 
     suspend fun execute(request: TradeExecutionRequest): TradeExecutionResult {
+        if (!config.tradingEnabled) {
+            logger.info {
+                "[${request.underlyingSymbol}] DIAGNOSTIC: would enter " +
+                    "${request.soldContract.strike}P/${request.boughtContract.strike}P " +
+                    "exp=${request.soldContract.expiry} " +
+                    "credit≈\$${request.targetCredit} ivRank=${"%.1f".format(request.ivRankAtEntry)}%"
+            }
+            return TradeExecutionResult(ExecutionOutcome.DIAGNOSTIC_SKIPPED)
+        }
+
         // Pre-trade checks
-        val preCheck = preTradeCheck(request)
+        val preCheck = validator.validate(request, inFlightSymbols.keys)
         if (preCheck != null) return TradeExecutionResult(preCheck)
 
         inFlightSymbols[request.underlyingSymbol] = Unit
@@ -68,75 +77,28 @@ class TradeExecutionService(
     fun isInFlight(symbol: Symbol): Boolean = inFlightSymbols.containsKey(symbol)
 
     // -------------------------------------------------------------------------
-    // Pre-trade checks
-    // -------------------------------------------------------------------------
-
-    private suspend fun preTradeCheck(request: TradeExecutionRequest): ExecutionOutcome? {
-        // Exposure: open spreads + in-flight
-        val openSymbols =
-            spreadPort
-                .findOpen()
-                .map { it.symbol }
-                .toSet()
-        if (request.underlyingSymbol in openSymbols || inFlightSymbols.containsKey(request.underlyingSymbol)) {
-            logger.info { "[${request.underlyingSymbol}] EXPOSURE_REJECTED — open or in-flight position exists" }
-            return ExecutionOutcome.EXPOSURE_REJECTED
-        }
-
-        // Capital: available funds vs max risk per contract
-        val availableFunds =
-            accountPort.accountDetail.value
-                ?.availableFunds
-                ?.amount
-        val maxRiskPerContract = request.maxRiskPerShare.multiply(BigDecimal("100"))
-        if (availableFunds == null || availableFunds < maxRiskPerContract) {
-            logger.info {
-                "[${request.underlyingSymbol}] CAPITAL_REJECTED — available=\$$availableFunds " +
-                    "required=\$$maxRiskPerContract"
-            }
-            return ExecutionOutcome.CAPITAL_REJECTED
-        }
-
-        // Liquidity: leg bid-ask spreads
-        if (isLiquidityTooWide(request.soldBid, request.soldAsk, "sold")) {
-            logger.info { "[${request.underlyingSymbol}] LIQUIDITY_REJECTED — sold leg spread too wide" }
-            return ExecutionOutcome.LIQUIDITY_REJECTED
-        }
-        if (isLiquidityTooWide(request.boughtBid, request.boughtAsk, "bought")) {
-            logger.info { "[${request.underlyingSymbol}] LIQUIDITY_REJECTED — bought leg spread too wide" }
-            return ExecutionOutcome.LIQUIDITY_REJECTED
-        }
-
-        return null
-    }
-
-    private fun isLiquidityTooWide(
-        bid: BigDecimal,
-        ask: BigDecimal,
-        leg: String,
-    ): Boolean {
-        val mid = bid.add(ask).divide(BigDecimal("2"), 4, RoundingMode.HALF_UP)
-        if (mid <= BigDecimal.ZERO) {
-            logger.debug { "Leg $leg mid is zero, skipping liquidity check" }
-            return false
-        }
-        val spread = ask.subtract(bid)
-        val spreadPct = spread.divide(mid, 4, RoundingMode.HALF_UP).toDouble()
-        return spreadPct > config.maxLegBidAskSpreadPct
-    }
-
-    // -------------------------------------------------------------------------
     // Execution loop
     // -------------------------------------------------------------------------
 
     private suspend fun executeInternal(request: TradeExecutionRequest): TradeExecutionResult {
+        // Persist PENDING before submitting — survives engine restarts so fill can be recovered
+        var pendingSpread = spreadPort.save(buildSpread(request, orderId = 0, credit = request.targetCredit, status = SpreadStatus.PENDING))
+
         var currentOrderId =
-            orderExecutionPort.submitComboLimitOrder(
-                soldContract = request.soldContract,
-                boughtContract = request.boughtContract,
-                netCredit = Money(request.targetCredit),
-                qty = request.quantity,
-            )
+            runCatching {
+                orderExecutionPort.submitComboLimitOrder(
+                    soldContract = request.soldContract,
+                    boughtContract = request.boughtContract,
+                    netCredit = Money(request.targetCredit),
+                    qty = request.quantity,
+                )
+            }.getOrElse { e ->
+                logger.warn(e) { "[${request.underlyingSymbol}] Failed to submit order: ${e.message}" }
+                spreadPort.update(pendingSpread.copy(status = SpreadStatus.CLOSED_MANUAL, closeReason = "order_rejected"))
+                return TradeExecutionResult(ExecutionOutcome.ORDER_REJECTED)
+            }
+        // Stamp the real orderId now that we have it
+        pendingSpread = spreadPort.update(pendingSpread.copy(soldLeg = pendingSpread.soldLeg.copy(orderId = currentOrderId), boughtLeg = pendingSpread.boughtLeg.copy(orderId = currentOrderId)))
         var currentCredit = request.targetCredit
         var ticksSinceAdjust = 0
         var outcome = ExecutionOutcome.TIMED_OUT
@@ -191,9 +153,20 @@ class TradeExecutionService(
                                 }
                                 continue
                             }
-                            if (event.status == OrderStatus.FILLED) {
-                                outcome = ExecutionOutcome.FILLED
-                                break
+                            when (event.status) {
+                                OrderStatus.FILLED -> {
+                                    outcome = ExecutionOutcome.FILLED
+                                    break
+                                }
+                                OrderStatus.CANCELLED -> {
+                                    logger.info {
+                                        "[${request.underlyingSymbol}] ORDER_REJECTED — " +
+                                            "orderId=$currentOrderId rejected/cancelled by broker"
+                                    }
+                                    outcome = ExecutionOutcome.ORDER_REJECTED
+                                    break
+                                }
+                                OrderStatus.PENDING -> continue
                             }
                         }
 
@@ -266,15 +239,25 @@ class TradeExecutionService(
         }
 
         if (outcome == ExecutionOutcome.FILLED) {
-            val spread = buildSpread(request, currentOrderId, currentCredit)
-            spreadPort.save(spread)
+            // Deduct entry fees (2 legs × feePerContract / 100 = fee per share)
+            val feePerShare = config.feePerContract.multiply(BigDecimal("2")).divide(BigDecimal("100"))
+            val netCredit = currentCredit.subtract(feePerShare).setScale(4, RoundingMode.HALF_UP)
+            spreadPort.update(
+                pendingSpread.copy(
+                    soldLeg = pendingSpread.soldLeg.copy(orderId = currentOrderId),
+                    boughtLeg = pendingSpread.boughtLeg.copy(orderId = currentOrderId),
+                    creditPerShare = netCredit,
+                    status = SpreadStatus.OPEN,
+                ),
+            )
             logger.info {
                 "[${request.underlyingSymbol}] FILLED — " +
-                    "credit=\$$currentCredit orderId=$currentOrderId spread saved"
+                    "gross=\$$currentCredit fees=\$$feePerShare net=\$$netCredit orderId=$currentOrderId spread saved"
             }
-            return TradeExecutionResult(ExecutionOutcome.FILLED, currentCredit, currentOrderId)
+            return TradeExecutionResult(ExecutionOutcome.FILLED, netCredit, currentOrderId)
         }
 
+        spreadPort.update(pendingSpread.copy(status = SpreadStatus.CLOSED_MANUAL, closeReason = outcome.name.lowercase()))
         return TradeExecutionResult(outcome)
     }
 
@@ -286,34 +269,20 @@ class TradeExecutionService(
 
     private fun buildSpread(
         request: TradeExecutionRequest,
-        comboOrderId: Int,
-        creditAchieved: BigDecimal,
+        orderId: Int,
+        credit: BigDecimal,
+        status: SpreadStatus = SpreadStatus.OPEN,
     ): BullPutSpread {
-        val soldPremium =
-            creditAchieved
-                .add(request.boughtMid)
-                .setScale(4, RoundingMode.HALF_UP)
+        val soldPremium = credit.add(request.boughtMid).setScale(4, RoundingMode.HALF_UP)
         return BullPutSpread(
             id = null,
             symbol = request.underlyingSymbol,
-            soldLeg =
-                SpreadLeg(
-                    contract = request.soldContract,
-                    action = LegAction.SELL,
-                    premium = Money(soldPremium),
-                    orderId = comboOrderId,
-                ),
-            boughtLeg =
-                SpreadLeg(
-                    contract = request.boughtContract,
-                    action = LegAction.BUY,
-                    premium = Money(request.boughtMid),
-                    orderId = comboOrderId,
-                ),
-            creditPerShare = creditAchieved,
+            soldLeg = SpreadLeg(contract = request.soldContract, action = LegAction.SELL, premium = Money(soldPremium), orderId = orderId),
+            boughtLeg = SpreadLeg(contract = request.boughtContract, action = LegAction.BUY, premium = Money(request.boughtMid), orderId = orderId),
+            creditPerShare = credit,
             maxRiskPerShare = request.maxRiskPerShare,
             quantity = request.quantity,
-            status = SpreadStatus.OPEN,
+            status = status,
             ivRankAtEntry = request.ivRankAtEntry,
             underlyingPriceAtEntry = request.underlyingPriceAtEntry,
             openedAt = Instant.now(clock),
