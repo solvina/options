@@ -1,7 +1,7 @@
 package cz.solvina.options.domain.features.scanner
 
 import cz.solvina.options.domain.features.account.AccountPort
-import cz.solvina.options.domain.features.execution.TradeExecutionService
+import cz.solvina.options.domain.features.execution.TradeExecutionPort
 import cz.solvina.options.domain.features.execution.model.TradeExecutionRequest
 import cz.solvina.options.domain.features.market.MarketDataPort
 import cz.solvina.options.domain.features.market.OptionChainPort
@@ -36,7 +36,7 @@ class ScannerService(
     private val marketDataPort: MarketDataPort,
     private val optionChainPort: OptionChainPort,
     private val accountPort: AccountPort,
-    private val executionService: TradeExecutionService,
+    private val executionPort: TradeExecutionPort,
     private val spreadPort: SpreadPort,
     private val config: ScannerConfig,
     private val clock: Clock,
@@ -66,12 +66,12 @@ class ScannerService(
                 logger.info { "Net liquidation not yet available, skipping scan" }
                 return
             }
-        val openSpreads = spreadPort.findOpen()
+        val openSpreads = spreadPort.findOpen() + spreadPort.findByStatus(SpreadStatus.PENDING)
         val symbolsWithOpenSpread = openSpreads.map { it.symbol }.toSet()
 
-        val watchlist = watchlistPort.getWatchlist()
+        val watchlist = watchlistPort.getActiveSymbols()
         for (symbol in watchlist) {
-            if (symbolsWithOpenSpread.contains(symbol) || executionService.isInFlight(symbol)) {
+            if (symbolsWithOpenSpread.contains(symbol) || executionPort.isInFlight(symbol)) {
                 logger.debug { "[$symbol] Already has open or in-flight spread, skipping" }
                 continue
             }
@@ -144,18 +144,22 @@ class ScannerService(
             return
         }
 
-        // 5. Credit check
-        val credit =
+        // 5. Credit check — use mid for filters, bid side for the initial order price
+        val midCredit =
             soldQuote.mid.amount
                 .subtract(boughtQuote.mid.amount)
                 .setScale(4, RoundingMode.HALF_UP)
-        if (credit < config.minCreditPerShare) {
-            logger.info { "[$symbol] Credit $credit < minimum ${config.minCreditPerShare}, skipping" }
+        if (midCredit < config.minCreditPerShare) {
+            logger.info { "[$symbol] Credit $midCredit < minimum ${config.minCreditPerShare}, skipping" }
             return
         }
 
         val actualSpreadWidth = soldQuote.contract.strike.subtract(boughtQuote.contract.strike)
-        val maxRiskPerShare = actualSpreadWidth.subtract(credit).setScale(4, RoundingMode.HALF_UP)
+        val maxRiskPerShare = actualSpreadWidth.subtract(midCredit).setScale(4, RoundingMode.HALF_UP)
+        if (maxRiskPerShare <= BigDecimal.ZERO) {
+            logger.info { "[$symbol] Credit \$$midCredit ≥ spread width \$$actualSpreadWidth (BS pricing artifact), skipping" }
+            return
+        }
 
         // 6. Money management check
         val maxRiskPerContract = maxRiskPerShare.multiply(BigDecimal("100"))
@@ -169,14 +173,21 @@ class ScannerService(
             return
         }
 
+        // Bid-side credit: what a real buyer would pay — more aggressive, fills on paper
+        val bidCredit =
+            soldQuote.bid.amount
+                .subtract(boughtQuote.ask.amount)
+                .max(config.minCreditPerShare)
+                .setScale(4, RoundingMode.HALF_UP)
+
         val floorCredit =
-            credit
+            bidCredit
                 .multiply(BigDecimal.ONE.subtract(BigDecimal(config.floorCreditBuffer)))
                 .setScale(4, RoundingMode.HALF_UP)
 
         logger.info {
             "[$symbol] Launching execution: SELL ${soldQuote.contract.strike}P / BUY ${boughtQuote.contract.strike}P " +
-                "credit=\$$credit floor=\$$floorCredit maxRisk=\$$maxRiskPerShare"
+                "mid=\$$midCredit bid=\$$bidCredit floor=\$$floorCredit maxRisk=\$$maxRiskPerShare"
         }
 
         // 7. Fire-and-forget: execution coroutine handles order placement + spread persistence
@@ -185,7 +196,7 @@ class ScannerService(
                 soldContract = soldQuote.contract,
                 boughtContract = boughtQuote.contract,
                 underlyingSymbol = symbol,
-                targetCredit = credit,
+                targetCredit = bidCredit,
                 floorCredit = floorCredit,
                 maxRiskPerShare = maxRiskPerShare,
                 ivRankAtEntry = ivRank.rank,
@@ -196,7 +207,7 @@ class ScannerService(
                 boughtMid = boughtQuote.mid.amount,
                 underlyingPriceAtEntry = underlyingPrice.amount,
             )
-        scope.launch { executionService.execute(request) }
+        scope.launch { executionPort.execute(request) }
     }
 
     fun getLastRunAt(): Instant? = lastRunAt

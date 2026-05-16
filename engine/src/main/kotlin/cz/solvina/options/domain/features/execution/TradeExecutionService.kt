@@ -44,14 +44,14 @@ class TradeExecutionService(
     private val config: ScannerConfig,
     private val clock: Clock,
     private val scope: CoroutineScope,
-) {
+) : TradeExecutionPort {
     private val inFlightSymbols = ConcurrentHashMap<Symbol, Unit>()
 
     // -------------------------------------------------------------------------
     // Public API
     // -------------------------------------------------------------------------
 
-    suspend fun execute(request: TradeExecutionRequest): TradeExecutionResult {
+    override suspend fun execute(request: TradeExecutionRequest): TradeExecutionResult {
         if (!config.tradingEnabled) {
             logger.info {
                 "[${request.underlyingSymbol}] DIAGNOSTIC: would enter " +
@@ -74,7 +74,7 @@ class TradeExecutionService(
         }
     }
 
-    fun isInFlight(symbol: Symbol): Boolean = inFlightSymbols.containsKey(symbol)
+    override fun isInFlight(symbol: Symbol): Boolean = inFlightSymbols.containsKey(symbol)
 
     // -------------------------------------------------------------------------
     // Execution loop
