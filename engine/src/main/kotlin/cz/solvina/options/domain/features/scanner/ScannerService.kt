@@ -2,15 +2,10 @@ package cz.solvina.options.domain.features.scanner
 
 import cz.solvina.options.domain.features.account.AccountPort
 import cz.solvina.options.domain.features.execution.TradeExecutionPort
-import cz.solvina.options.domain.features.execution.model.TradeExecutionRequest
-import cz.solvina.options.domain.features.market.MarketDataPort
-import cz.solvina.options.domain.features.market.OptionChainPort
 import cz.solvina.options.domain.features.spread.SpreadPort
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
-import cz.solvina.options.domain.features.volatility.VolatilityPort
 import cz.solvina.options.domain.features.watchlist.WatchlistPort
 import cz.solvina.options.domain.models.Money
-import cz.solvina.options.domain.models.OptionType
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CoroutineScope
@@ -18,23 +13,16 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import org.springframework.stereotype.Service
-import java.math.BigDecimal
-import java.math.RoundingMode
 import java.time.Clock
 import java.time.Instant
-import java.time.LocalDate
-import java.time.temporal.ChronoUnit
 import java.util.concurrent.ConcurrentHashMap
-import kotlin.math.abs
 
 private val logger = KotlinLogging.logger {}
 
 @Service
 class ScannerService(
     private val watchlistPort: WatchlistPort,
-    private val volatilityPort: VolatilityPort,
-    private val marketDataPort: MarketDataPort,
-    private val optionChainPort: OptionChainPort,
+    private val candidateSelector: ScanCandidateSelector,
     private val accountPort: AccountPort,
     private val executionPort: TradeExecutionPort,
     private val spreadPort: SpreadPort,
@@ -82,131 +70,9 @@ class ScannerService(
         logger.info { "Scanner run complete" }
     }
 
-    private suspend fun scanSymbol(
-        symbol: Symbol,
-        totalCapital: Money,
-    ) {
-        // 1. IV Rank filter
-        val ivRank = volatilityPort.getIvRank(symbol)
-        ivRanksSnapshot[symbol.value] = ivRank.rank
-        if (ivRank.rank < config.ivRankThreshold) {
-            logger.info { "[$symbol] IV Rank ${"%.1f".format(ivRank.rank)}% < threshold ${config.ivRankThreshold}%, skipping" }
-            return
-        }
-
-        val underlyingPrice = marketDataPort.getUnderlyingPrice(symbol)
-
-        // 2. Select expiry
-        val today = LocalDate.now(clock)
-        val availableExpirations = optionChainPort.getAvailableExpirations(symbol)
-        val expiry =
-            availableExpirations
-                .filter { exp ->
-                    val dte = ChronoUnit.DAYS.between(today, exp).toInt()
-                    dte in config.minDte..config.maxDte
-                }.minByOrNull { exp ->
-                    abs(ChronoUnit.DAYS.between(today, exp).toInt() - config.preferredDte)
-                }
-        if (expiry == null) {
-            logger.info { "[$symbol] No valid expiry in [${config.minDte}, ${config.maxDte}] DTE, skipping" }
-            return
-        }
-        val dte = ChronoUnit.DAYS.between(today, expiry).toInt()
-        logger.info { "[$symbol] Selected expiry $expiry ($dte DTE)" }
-
-        // 3. Get option chain and find the best put
-        val chain = optionChainPort.getOptionChain(symbol, expiry, underlyingPrice)
-        val puts = chain.filter { it.contract.type == OptionType.PUT }
-
-        val soldQuote =
-            puts
-                .filter { quote ->
-                    val absDelta = abs(quote.greeks.delta)
-                    absDelta in config.deltaMin..config.deltaMax
-                }.minByOrNull { quote ->
-                    abs(abs(quote.greeks.delta) - config.targetDelta)
-                }
-        if (soldQuote == null) {
-            logger.info { "[$symbol] No put with delta in [${config.deltaMin}, ${config.deltaMax}] found, skipping" }
-            return
-        }
-
-        logger.info { "[$symbol] Selected sold put strike=${soldQuote.contract.strike} delta=${soldQuote.greeks.delta}" }
-
-        // 4. Find bought strike
-        val targetBoughtStrike = soldQuote.contract.strike.subtract(config.spreadWidthUsd)
-        val boughtQuote =
-            puts
-                .filter { it.contract.strike <= targetBoughtStrike }
-                .maxByOrNull { it.contract.strike }
-        if (boughtQuote == null) {
-            logger.info { "[$symbol] No valid bought strike ≤ $targetBoughtStrike found, skipping" }
-            return
-        }
-
-        // 5. Credit check — use mid for filters, bid side for the initial order price
-        val midCredit =
-            soldQuote.mid.amount
-                .subtract(boughtQuote.mid.amount)
-                .setScale(4, RoundingMode.HALF_UP)
-        if (midCredit < config.minCreditPerShare) {
-            logger.info { "[$symbol] Credit $midCredit < minimum ${config.minCreditPerShare}, skipping" }
-            return
-        }
-
-        val actualSpreadWidth = soldQuote.contract.strike.subtract(boughtQuote.contract.strike)
-        val maxRiskPerShare = actualSpreadWidth.subtract(midCredit).setScale(4, RoundingMode.HALF_UP)
-        if (maxRiskPerShare <= BigDecimal.ZERO) {
-            logger.info { "[$symbol] Credit \$$midCredit ≥ spread width \$$actualSpreadWidth (BS pricing artifact), skipping" }
-            return
-        }
-
-        // 6. Money management check
-        val maxRiskPerContract = maxRiskPerShare.multiply(BigDecimal("100"))
-        val allowedRiskPerTrade = totalCapital.amount.multiply(BigDecimal(config.maxRiskPercent))
-        if (maxRiskPerContract > allowedRiskPerTrade) {
-            logger.info {
-                "[$symbol] Max risk/contract $$maxRiskPerContract > allowed $${
-                    "%.2f".format(allowedRiskPerTrade)
-                }, skipping"
-            }
-            return
-        }
-
-        // Bid-side credit: what a real buyer would pay — more aggressive, fills on paper
-        val bidCredit =
-            soldQuote.bid.amount
-                .subtract(boughtQuote.ask.amount)
-                .max(config.minCreditPerShare)
-                .setScale(4, RoundingMode.HALF_UP)
-
-        val floorCredit =
-            bidCredit
-                .multiply(BigDecimal.ONE.subtract(BigDecimal(config.floorCreditBuffer)))
-                .setScale(4, RoundingMode.HALF_UP)
-
-        logger.info {
-            "[$symbol] Launching execution: SELL ${soldQuote.contract.strike}P / BUY ${boughtQuote.contract.strike}P " +
-                "mid=\$$midCredit bid=\$$bidCredit floor=\$$floorCredit maxRisk=\$$maxRiskPerShare"
-        }
-
-        // 7. Fire-and-forget: execution coroutine handles order placement + spread persistence
-        val request =
-            TradeExecutionRequest(
-                soldContract = soldQuote.contract,
-                boughtContract = boughtQuote.contract,
-                underlyingSymbol = symbol,
-                targetCredit = bidCredit,
-                floorCredit = floorCredit,
-                maxRiskPerShare = maxRiskPerShare,
-                ivRankAtEntry = ivRank.rank,
-                soldBid = soldQuote.bid.amount,
-                soldAsk = soldQuote.ask.amount,
-                boughtBid = boughtQuote.bid.amount,
-                boughtAsk = boughtQuote.ask.amount,
-                boughtMid = boughtQuote.mid.amount,
-                underlyingPriceAtEntry = underlyingPrice.amount,
-            )
+    private suspend fun scanSymbol(symbol: Symbol, totalCapital: Money) {
+        val request = candidateSelector.select(symbol, totalCapital) ?: return
+        ivRanksSnapshot[symbol.value] = request.ivRankAtEntry
         scope.launch { executionPort.execute(request) }
     }
 
