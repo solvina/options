@@ -1,6 +1,6 @@
 loki.source.journal "options" {
   max_age    = "12h"
-  path       = "/var/log/journal"
+  path       = "/run/log/journal"
   labels     = { job = "options-engine" }
   matches    = "_SYSTEMD_UNIT=options-engine.service"
   forward_to = [loki.process.extract_labels.receiver]
