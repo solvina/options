@@ -1,0 +1,31 @@
+loki.source.journal "options" {
+  max_age    = "12h"
+  path       = "/var/log/journal"
+  labels     = { job = "options-engine" }
+  matches    = "_SYSTEMD_UNIT=options-engine.service"
+  forward_to = [loki.process.extract_labels.receiver]
+}
+
+loki.process "extract_labels" {
+  // Extract level from: "HH:mm:ss.SSS [thread] LEVEL logger - message"
+  stage.regex {
+    expression = `^\d{2}:\d{2}:\d{2}\.\d{3} \[.*?\] (?P<level>\w+)`
+  }
+
+  // Extract symbol from bracketed prefix: "[SPY] ..." or "[AAPL] ..."
+  stage.regex {
+    expression = `\[(?P<symbol>[A-Z]{1,5})\]`
+  }
+
+  stage.labels {
+    values = { level = "", symbol = "" }
+  }
+
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

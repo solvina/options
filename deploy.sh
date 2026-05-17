@@ -41,6 +41,10 @@ rsync -a --delete "$SCRIPT_DIR/frontend/dist/" "$RPI_HOST:$DEPLOY_DIR/frontend/"
 scp "$SCRIPT_DIR/docker-compose.rpi.yml" "$RPI_HOST:$DEPLOY_DIR/docker-compose.yml"
 scp "$SCRIPT_DIR/deploy/options-engine.service" "$RPI_HOST:$DEPLOY_DIR/"
 scp "$SCRIPT_DIR/deploy/options.nginx.conf" "$RPI_HOST:$DEPLOY_DIR/"
+ssh "$RPI_HOST" "mkdir -p $DEPLOY_DIR/deploy/grafana-provisioning/datasources"
+scp "$SCRIPT_DIR/deploy/loki-config.yml" "$RPI_HOST:$DEPLOY_DIR/deploy/"
+scp "$SCRIPT_DIR/deploy/alloy-config.alloy" "$RPI_HOST:$DEPLOY_DIR/deploy/"
+rsync -a "$SCRIPT_DIR/deploy/grafana-provisioning/" "$RPI_HOST:$DEPLOY_DIR/deploy/grafana-provisioning/"
 
 
 # ── 3. Remote setup ───────────────────────────────────────────────────────────
@@ -51,7 +55,7 @@ set -euo pipefail
 
 # DB + IB Gateway
 cd $DEPLOY_DIR
-docker compose --env-file .env.rpi up -d db ib-gateway
+docker compose --env-file .env.rpi up -d db ib-gateway loki grafana alloy
 
 # systemd service
 sudo cp $DEPLOY_DIR/options-engine.service /etc/systemd/system/options-engine.service
@@ -76,4 +80,5 @@ REMOTE
 echo ""
 echo "Deploy complete."
 echo "  Frontend + API: http://$(echo $RPI_HOST | cut -d@ -f2)"
+echo "  Grafana:        http://$(echo $RPI_HOST | cut -d@ -f2)/grafana"
 echo "  App logs:       ssh $RPI_HOST 'journalctl -fu options-engine'"

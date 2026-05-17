@@ -32,5 +32,45 @@ services:
       - "7497:4004"   # paper SOCAT relay: 4004 → 4002 (internal), host 7497 matches application.yml
       - "5901:5900"   # VNC
 
+  loki:
+    image: grafana/loki:3.4.2
+    restart: unless-stopped
+    command: -config.file=/etc/loki/config.yml
+    volumes:
+      - ./deploy/loki-config.yml:/etc/loki/config.yml:ro
+      - loki-data:/loki
+    ports:
+      - "127.0.0.1:3100:3100"
+
+  grafana:
+    image: grafana/grafana-oss:11.6.1
+    restart: unless-stopped
+    environment:
+      GF_SERVER_ROOT_URL: "%(protocol)s://%(domain)s/grafana/"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      GF_SECURITY_ADMIN_PASSWORD: "options"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./deploy/grafana-provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on: [loki]
+
+  alloy:
+    image: grafana/alloy:v1.8.3
+    restart: unless-stopped
+    user: root
+    volumes:
+      - ./deploy/alloy-config.alloy:/etc/alloy/config.alloy:ro
+      - /var/log/journal:/var/log/journal:ro
+      - /run/log/journal:/run/log/journal:ro
+      - /etc/machine-id:/etc/machine-id:ro
+    command: run /etc/alloy/config.alloy
+    depends_on: [loki]
+
 volumes:
   ibkr_settings:
+  loki-data:
+  grafana-data:
