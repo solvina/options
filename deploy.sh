@@ -13,7 +13,7 @@
 #   RPI_HOST=solvina@192.168.0.107 ./deploy.sh
 set -euo pipefail
 
-RPI_HOST="${RPI_HOST:-solvina@192.168.0.107}"
+RPI_HOST="${RPI_HOST:-solvina@100.65.216.36}"
 DEPLOY_DIR="/home/solvina/options"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 

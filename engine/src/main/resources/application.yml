@@ -20,7 +20,7 @@ spring:
 ibkr:
   instruments: {}
   connection:
-    host: 192.168.0.107
+    host: 100.65.216.36
     port: 7497
     client-id: 1
     account: "DU7875979"           # set to your IBKR account code, e.g. U1234567
