@@ -28,8 +28,10 @@ ibkr:
     enabled: true
     auto-reconnect: true
     reconnect-interval-ms: 10000
+    use-live-market-data: true     # paper account with live data subscription enabled in TWS
 
 scanner:
+  trading-enabled: true            # paper trading active with live data subscription
   watchlist: [ SPY, QQQ, AAPL, MSFT, AMZN, IWM,DIA,TSLA, NVDA, META, GOOGL,XLF,XLE,XLV,AMD,UNH ]
   iv-rank-threshold: 30
   min-dte: 30
@@ -55,7 +57,7 @@ scanner:
   order-chase-timeout-minutes: 5
   order-chase-max-retries: 3
   order-chase-price-step: 0.03
-  cron: "0 */15 10-15 * * MON-FRI"
+  cron: "0 */15 3-16 * * MON-FRI"
   monitor-delay-ms: 60000
   iv-history-days: 365
   iv-cache-ttl-minutes: 60
