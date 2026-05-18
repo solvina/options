@@ -19,6 +19,40 @@ paths:
               schema:
                 $ref: '#/components/schemas/AccountOverviewDto'
 
+  /account/positions/close:
+    post:
+      tags:
+        - Account
+      summary: Close (kill) an IBKR position with a market order
+      operationId: closePosition
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClosePositionRequestDto'
+      responses:
+        '204':
+          description: Close order submitted
+
+  /orders/{orderId}:
+    delete:
+      tags:
+        - Account
+      summary: Cancel an open IBKR order
+      operationId: cancelOrder
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: Cancel request sent
+        '404':
+          description: Order not found
+
 components:
   schemas:
     AccountOverviewDto:
@@ -28,6 +62,8 @@ components:
         - openPositions
         - accountPositionCount
         - accountPositions
+        - openOrderCount
+        - openOrders
       properties:
         totalCapital:
           type: number
@@ -61,6 +97,14 @@ components:
           description: All positions in the IBKR account (stocks, options, futures, etc.)
           items:
             $ref: '#/components/schemas/AccountPositionDto'
+        openOrderCount:
+          type: integer
+          description: Number of non-terminal open IBKR orders
+        openOrders:
+          type: array
+          description: Open (non-terminal) orders currently on the IBKR account
+          items:
+            $ref: '#/components/schemas/OpenOrderDto'
 
     OpenPositionDto:
       type: object
@@ -115,6 +159,23 @@ components:
         underlyingPriceAtEntry:
           type: number
           nullable: true
+        unrealizedPnL:
+          type: number
+          nullable: true
+          description: "(creditPerShare - currentSpreadValue) × quantity × 100; null until first monitor check"
+
+    ClosePositionRequestDto:
+      type: object
+      required:
+        - conId
+        - quantity
+      properties:
+        conId:
+          type: integer
+          description: IBKR contract ID
+        quantity:
+          type: number
+          description: Current position size (negative = short). Closing order will use the opposite action.
 
     AccountPositionDto:
       type: object
@@ -125,7 +186,11 @@ components:
         - currency
         - quantity
         - avgCost
+        - conId
       properties:
+        conId:
+          type: integer
+          description: IBKR contract ID (used for closing orders)
         account:
           type: string
           description: IBKR account ID
@@ -155,3 +220,33 @@ components:
         avgCost:
           type: number
           description: Average cost per share or per contract
+        unrealizedPnL:
+          type: number
+          nullable: true
+          description: Unrealized P&L from IBKR (USD)
+
+    OpenOrderDto:
+      type: object
+      required:
+        - orderId
+        - symbol
+        - action
+        - orderType
+        - status
+      properties:
+        orderId:
+          type: integer
+        symbol:
+          type: string
+        action:
+          type: string
+          description: BUY or SELL
+        orderType:
+          type: string
+          description: LMT, MKT, etc.
+        limitPrice:
+          type: number
+          nullable: true
+        status:
+          type: string
+          description: PreSubmitted, Submitted, PendingSubmit, etc.

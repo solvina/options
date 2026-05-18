@@ -1,7 +1,6 @@
 package cz.solvina.options.adapters.outbound.ibkr.market
 
 import com.ib.client.EClientSocket
-import cz.solvina.options.adapters.outbound.ibkr.IbkrConnectionConfig
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.PendingContinuousMarketDataRequest
@@ -12,17 +11,12 @@ import cz.solvina.options.domain.models.OptionContract
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.channels.awaitClose
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
 import org.springframework.stereotype.Component
 import java.util.concurrent.atomic.AtomicReference
 
 private val logger = KotlinLogging.logger {}
-
-private const val PAPER_CREDIT_POLL_MS = 3_000L
 
 private data class LegPrices(
     val bid: Double = Double.NaN,
@@ -33,7 +27,6 @@ private data class LegPrices(
 class IbkrMarketTickAdapter(
     private val registry: IbkrMarketDataRegistry,
     private val client: EClientSocket,
-    private val ibkrConfig: IbkrConnectionConfig,
     private val contractFactory: IbkrContractFactory,
 ) : MarketTickPort {
     override fun streamUnderlyingPrice(symbol: Symbol): Flow<Double> =
@@ -60,15 +53,10 @@ class IbkrMarketTickAdapter(
     override fun streamSpreadCredit(
         soldContract: OptionContract,
         boughtContract: OptionContract,
-    ): Flow<SpreadCreditTick> =
-        if (ibkrConfig.paperAccount) {
-            paperCreditFlow(soldContract, boughtContract)
-        } else {
-            liveCreditFlow(soldContract, boughtContract)
-        }
+    ): Flow<SpreadCreditTick> = perLegCreditFlow(soldContract, boughtContract)
 
-    /** Live: real-time tick-by-tick bid/ask + continuous Greeks subscription. */
-    private fun liveCreditFlow(
+    /** Subscribe to individual leg bid/ask via tick-by-tick + continuous Greeks. Works on live and paper. */
+    private fun perLegCreditFlow(
         soldContract: OptionContract,
         boughtContract: OptionContract,
     ): Flow<SpreadCreditTick> =
@@ -146,66 +134,6 @@ class IbkrMarketTickAdapter(
                 client.cancelMktData(boughtGreeksReqId)
                 logger.debug {
                     "Cancelled spread credit stream for " +
-                        "${soldContract.strike}P/${boughtContract.strike}P"
-                }
-            }
-        }
-
-    /**
-     * Paper: poll continuous reqMktData snapshots every 3s.
-     * tick-by-tick (reqTickByTick) is not supported for options on paper accounts (error 10189).
-     * reqMarketDataType(3) is set at connection time so delayed prices are returned.
-     */
-    private fun paperCreditFlow(
-        soldContract: OptionContract,
-        boughtContract: OptionContract,
-    ): Flow<SpreadCreditTick> =
-        callbackFlow {
-            val soldReqId = registry.nextReqId()
-            val boughtReqId = registry.nextReqId()
-
-            registry.pendingContinuousMarketData[soldReqId] = PendingContinuousMarketDataRequest()
-            registry.pendingContinuousMarketData[boughtReqId] = PendingContinuousMarketDataRequest()
-
-            client.reqMktData(soldReqId, contractFactory.optionContract(soldContract), "", false, false, null)
-            client.reqMktData(boughtReqId, contractFactory.optionContract(boughtContract), "", false, false, null)
-
-            logger.debug {
-                "Started spread credit polling stream (paper) for " +
-                    "${soldContract.strike}P/${boughtContract.strike}P"
-            }
-
-            launch {
-                while (isActive) {
-                    delay(PAPER_CREDIT_POLL_MS)
-                    val s = registry.pendingContinuousMarketData[soldReqId]?.snapshot ?: continue
-                    val b = registry.pendingContinuousMarketData[boughtReqId]?.snapshot ?: continue
-                    // Delayed options data sends last/close but not bid/ask — fall back to those
-                    val sBid = s.bid.takeIf { !it.isNaN() } ?: s.last.takeIf { !it.isNaN() } ?: s.close.takeIf { !it.isNaN() } ?: continue
-                    val sAsk = s.ask.takeIf { !it.isNaN() } ?: s.last.takeIf { !it.isNaN() } ?: s.close.takeIf { !it.isNaN() } ?: continue
-                    val bBid = b.bid.takeIf { !it.isNaN() } ?: b.last.takeIf { !it.isNaN() } ?: b.close.takeIf { !it.isNaN() } ?: continue
-                    val bAsk = b.ask.takeIf { !it.isNaN() } ?: b.last.takeIf { !it.isNaN() } ?: b.close.takeIf { !it.isNaN() } ?: continue
-                    trySend(
-                        SpreadCreditTick(
-                            soldBid = sBid,
-                            soldAsk = sAsk,
-                            boughtBid = bBid,
-                            boughtAsk = bAsk,
-                            netCredit = (sBid + sAsk) / 2.0 - (bBid + bAsk) / 2.0,
-                            soldDelta = s.delta.takeIf { !it.isNaN() },
-                            boughtDelta = b.delta.takeIf { !it.isNaN() },
-                        ),
-                    )
-                }
-            }
-
-            awaitClose {
-                registry.pendingContinuousMarketData.remove(soldReqId)
-                client.cancelMktData(soldReqId)
-                registry.pendingContinuousMarketData.remove(boughtReqId)
-                client.cancelMktData(boughtReqId)
-                logger.debug {
-                    "Cancelled spread credit polling stream (paper) for " +
                         "${soldContract.strike}P/${boughtContract.strike}P"
                 }
             }

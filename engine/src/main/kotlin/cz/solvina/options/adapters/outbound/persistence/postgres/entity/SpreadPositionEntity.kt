@@ -16,7 +16,7 @@ import java.util.UUID
 class SpreadPositionEntity(
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
-    var id: UUID = UUID.randomUUID(),
+    var id: UUID? = null,
     @Column(nullable = false, length = 10)
     var symbol: String = "",
     @Column(nullable = false, length = 30)
@@ -49,4 +49,6 @@ class SpreadPositionEntity(
     var closeReason: String? = null,
     @Column(name = "close_price_per_share", precision = 10, scale = 4)
     var closePricePerShare: BigDecimal? = null,
+    @Column(name = "last_spread_value", precision = 10, scale = 4)
+    var lastSpreadValue: BigDecimal? = null,
 )

@@ -7,6 +7,7 @@ import {
   pauseMonitorMutation,
   resumeMonitorMutation,
 } from '../generated/spreads/@tanstack/react-query.gen'
+import { useSortable, sorted, SortTh } from '../lib/sort'
 
 function KillSwitchRow({
   label,
@@ -52,6 +53,7 @@ function KillSwitchRow({
 export function ScannerPage() {
   const qc = useQueryClient()
   const invalidate = () => qc.invalidateQueries({ queryKey: ['getScannerStatus'] })
+  const { sort, toggle } = useSortable('ivRank', 'desc')
 
   const { data, isLoading, isError } = useQuery({
     ...getScannerStatusOptions(),
@@ -64,9 +66,14 @@ export function ScannerPage() {
   const pauseMonitor = useMutation({ ...pauseMonitorMutation(), onSuccess: invalidate })
   const resumeMonitor = useMutation({ ...resumeMonitorMutation(), onSuccess: invalidate })
 
-  const ivRanks = data?.ivRanks
-    ? Object.entries(data.ivRanks).sort(([, a], [, b]) => b - a)
+  const ivRankEntries: [string, number][] = data?.ivRanks
+    ? Object.entries(data.ivRanks as Record<string, number>)
     : []
+  const sortedIvRanks = sorted(ivRankEntries, sort, ([sym, rank], k) =>
+    k === 'ivRank' ? rank : sym,
+  )
+
+  const thClass = 'px-4 py-2 text-left'
 
   return (
     <div className="space-y-8 max-w-2xl">
@@ -125,20 +132,20 @@ export function ScannerPage() {
             )}
           </section>
 
-          {ivRanks.length > 0 && (
+          {sortedIvRanks.length > 0 && (
             <section>
               <h2 className="text-base font-semibold mb-3">IV Ranks</h2>
               <div className="rounded-lg border border-border overflow-hidden">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border bg-muted/50 text-muted-foreground text-xs uppercase tracking-wide">
-                      <th className="px-4 py-2 text-left">Symbol</th>
-                      <th className="px-4 py-2 text-left">IV Rank</th>
-                      <th className="px-4 py-2 text-left"></th>
+                      <SortTh label="Symbol" col="symbol" sort={sort} onSort={toggle} className={thClass} />
+                      <SortTh label="IV Rank" col="ivRank" sort={sort} onSort={toggle} className={thClass} />
+                      <th className={thClass}></th>
                     </tr>
                   </thead>
                   <tbody>
-                    {ivRanks.map(([symbol, rank]) => (
+                    {sortedIvRanks.map(([symbol, rank]) => (
                       <tr key={symbol} className="border-b border-border last:border-0 hover:bg-muted/40">
                         <td className="px-4 py-2 font-medium">{symbol}</td>
                         <td className="px-4 py-2 tabular-nums">{rank.toFixed(1)}%</td>

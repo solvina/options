@@ -1,0 +1,167 @@
+databaseChangeLog:
+  - changeSet:
+      id: v4__instrument_universe
+      author: vseliga
+      changes:
+        - createTable:
+            tableName: instrument_universe
+            columns:
+              - column:
+                  name: symbol
+                  type: VARCHAR(10)
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: enabled
+                  type: BOOLEAN
+                  defaultValueBoolean: true
+                  constraints:
+                    nullable: false
+              - column:
+                  name: iv_rank_threshold
+                  type: NUMERIC(5, 2)
+              - column:
+                  name: min_dte
+                  type: INT
+              - column:
+                  name: max_dte
+                  type: INT
+              - column:
+                  name: preferred_dte
+                  type: INT
+              - column:
+                  name: target_delta
+                  type: NUMERIC(4, 3)
+              - column:
+                  name: delta_min
+                  type: NUMERIC(4, 3)
+              - column:
+                  name: delta_max
+                  type: NUMERIC(4, 3)
+              - column:
+                  name: spread_width_usd
+                  type: NUMERIC(8, 2)
+              - column:
+                  name: min_credit_per_share
+                  type: NUMERIC(8, 4)
+              - column:
+                  name: max_risk_percent
+                  type: NUMERIC(5, 4)
+              - column:
+                  name: take_profit_percent
+                  type: NUMERIC(5, 4)
+              - column:
+                  name: stop_loss_percent
+                  type: NUMERIC(5, 4)
+              - column:
+                  name: time_profit_dte
+                  type: INT
+              - column:
+                  name: notes
+                  type: VARCHAR(500)
+
+  - changeSet:
+      id: v4__instrument_universe_seed
+      author: vseliga
+      changes:
+        - insert:
+            tableName: instrument_universe
+            columns:
+              - column: { name: symbol, value: SPY }
+              - column: { name: enabled, valueBoolean: true }
+        - insert:
+            tableName: instrument_universe
+            columns:
+              - column: { name: symbol, value: QQQ }
+              - column: { name: enabled, valueBoolean: true }
+        - insert:
+            tableName: instrument_universe
+            columns:
+              - column: { name: symbol, value: AAPL }
+              - column: { name: enabled, valueBoolean: true }
+        - insert:
+            tableName: instrument_universe
+            columns:
+              - column: { name: symbol, value: MSFT }
+              - column: { name: enabled, valueBoolean: true }
+        - insert:
+            tableName: instrument_universe
+            columns:
+              - column: { name: symbol, value: AMZN }
+              - column: { name: enabled, valueBoolean: true }
+        - insert:
+            tableName: instrument_universe
+            columns:
+              - column: { name: symbol, value: IWM }
+              - column: { name: enabled, valueBoolean: true }
+        - insert:
+            tableName: instrument_universe
+            columns:
+              - column: { name: symbol, value: DIA }
+              - column: { name: enabled, valueBoolean: true }
+        - insert:
+            tableName: instrument_universe
+            columns:
+              - column: { name: symbol, value: TSLA }
+              - column: { name: enabled, valueBoolean: true }
+        - insert:
+            tableName: instrument_universe
+            columns:
+              - column: { name: symbol, value: NVDA }
+              - column: { name: enabled, valueBoolean: true }
+        - insert:
+            tableName: instrument_universe
+            columns:
+              - column: { name: symbol, value: META }
+              - column: { name: enabled, valueBoolean: true }
+        - insert:
+            tableName: instrument_universe
+            columns:
+              - column: { name: symbol, value: GOOGL }
+              - column: { name: enabled, valueBoolean: true }
+        - insert:
+            tableName: instrument_universe
+            columns:
+              - column: { name: symbol, value: XLF }
+              - column: { name: enabled, valueBoolean: true }
+        - insert:
+            tableName: instrument_universe
+            columns:
+              - column: { name: symbol, value: XLE }
+              - column: { name: enabled, valueBoolean: true }
+        - insert:
+            tableName: instrument_universe
+            columns:
+              - column: { name: symbol, value: XLV }
+              - column: { name: enabled, valueBoolean: true }
+        - insert:
+            tableName: instrument_universe
+            columns:
+              - column: { name: symbol, value: AMD }
+              - column: { name: enabled, valueBoolean: true }
+        - insert:
+            tableName: instrument_universe
+            columns:
+              - column: { name: symbol, value: UNH }
+              - column: { name: enabled, valueBoolean: true }
+        - insert:
+            tableName: instrument_universe
+            columns:
+              - column: { name: symbol, value: ASML }
+              - column: { name: enabled, valueBoolean: true }
+        - insert:
+            tableName: instrument_universe
+            columns:
+              - column: { name: symbol, value: SAP }
+              - column: { name: enabled, valueBoolean: true }
+        - insert:
+            tableName: instrument_universe
+            columns:
+              - column: { name: symbol, value: SIE }
+              - column: { name: enabled, valueBoolean: true }
+        - insert:
+            tableName: instrument_universe
+            columns:
+              - column: { name: symbol, value: ALV }
+              - column: { name: enabled, valueBoolean: true }

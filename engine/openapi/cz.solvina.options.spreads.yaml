@@ -17,16 +17,26 @@ paths:
           required: false
           schema:
             type: string
-            enum: [OPEN, CLOSED_PROFIT, CLOSED_STOP, CLOSED_TIME, CLOSED_MANUAL]
+            enum: [OPEN, CLOSING, CLOSED_PROFIT, CLOSED_STOP, CLOSED_TIME, CLOSED_MANUAL]
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+        - name: size
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 25
       responses:
         '200':
-          description: List of spread positions
+          description: Paginated spread positions
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/SpreadDto'
+                $ref: '#/components/schemas/PagedSpreadsDto'
 
   /spreads/{id}:
     get:
@@ -75,6 +85,29 @@ paths:
           description: Spread not found
         '409':
           description: Spread is not open
+
+  /spreads/{id}/refresh-pnl:
+    post:
+      tags:
+        - Spreads
+      summary: Recompute and persist current P&L for a spread (ad-hoc, hits market data)
+      operationId: refreshSpreadPnl
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Updated spread with fresh P&L
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpreadDto'
+        '404':
+          description: Spread not found
 
   /spreads/{id}/close-force:
     post:
@@ -219,6 +252,30 @@ components:
         closePricePerShare:
           type: number
           nullable: true
+        currentSpreadValue:
+          type: number
+          nullable: true
+        currentPnl:
+          type: number
+          nullable: true
+
+    PagedSpreadsDto:
+      type: object
+      required: [content, totalElements, totalPages, page, size]
+      properties:
+        content:
+          type: array
+          items:
+            $ref: '#/components/schemas/SpreadDto'
+        totalElements:
+          type: integer
+          format: int64
+        totalPages:
+          type: integer
+        page:
+          type: integer
+        size:
+          type: integer
 
     ScannerStatusDto:
       type: object

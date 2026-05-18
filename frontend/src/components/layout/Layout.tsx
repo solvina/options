@@ -6,6 +6,8 @@ const navItems = [
   { to: '/spreads', label: 'Spreads' },
   { to: '/account', label: 'Account' },
   { to: '/scanner', label: 'Scanner' },
+  { to: '/universe', label: 'Universe' },
+  { to: '/diagnostic', label: 'Diagnostics' },
 ]
 
 export function Layout() {

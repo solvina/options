@@ -1,12 +1,14 @@
 package cz.solvina.options.adapters.inbound.api
 
+import cz.solvina.options.domain.features.market.MarketDataPort
 import cz.solvina.options.domain.features.spread.SpreadManagementService
 import cz.solvina.options.domain.features.spread.SpreadPort
 import cz.solvina.options.domain.features.spread.model.BullPutSpread
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
 import `cz.solvina.options.spreads`.api.SpreadsApi
+import `cz.solvina.options.spreads`.dto.PagedSpreadsDto
 import `cz.solvina.options.spreads`.dto.SpreadDto
-import kotlinx.coroutines.flow.Flow
+import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.RequestMapping
@@ -14,35 +16,54 @@ import org.springframework.web.bind.annotation.RestController
 import java.time.ZoneOffset
 import java.util.UUID
 
+private val logger = KotlinLogging.logger {}
+
 @RestController
 @RequestMapping
 class SpreadsApiImpl(
     private val spreadPort: SpreadPort,
     private val spreadManagementService: SpreadManagementService,
+    private val marketDataPort: MarketDataPort,
 ) : SpreadsApi {
-    override fun listSpreads(status: String?): ResponseEntity<Flow<SpreadDto>> {
-        // Spring WebFlux invokes this method in a coroutine context; returning Flow is fine here.
-        // We use a suspend-to-blocking shim by delegating to a blocking repository call via a flow.
-        val spreadsFlow =
-            kotlinx.coroutines.flow.flow {
-                val spreads =
-                    if (status != null) {
-                        val spreadStatus = runCatching { SpreadStatus.valueOf(status) }.getOrNull()
-                        if (spreadStatus != null) spreadPort.findByStatus(spreadStatus) else spreadPort.findAll()
-                    } else {
-                        spreadPort.findAll()
-                    }
-                spreads.forEach { emit(it.toDto()) }
-            }
-        return ResponseEntity.ok(spreadsFlow)
+    override suspend fun listSpreads(
+        status: String?,
+        page: Int,
+        size: Int,
+    ): ResponseEntity<PagedSpreadsDto> {
+        val spreadStatus = status?.let { runCatching { SpreadStatus.valueOf(it) }.getOrNull() }
+        val spreadPage = spreadPort.findPage(spreadStatus, page, size)
+        val dtos = spreadPage.content.map { it.toDto() }
+        return ResponseEntity.ok(
+            PagedSpreadsDto(
+                content = dtos,
+                totalElements = spreadPage.totalElements,
+                totalPages = spreadPage.totalPages,
+                page = spreadPage.page,
+                propertySize = spreadPage.size,
+            ),
+        )
     }
 
     override suspend fun getSpreadById(id: UUID): ResponseEntity<SpreadDto> {
         val all = spreadPort.findAll()
-        val spread =
-            all.firstOrNull { it.id == id }
-                ?: return ResponseEntity.notFound().build()
+        val spread = all.firstOrNull { it.id == id } ?: return ResponseEntity.notFound().build()
         return ResponseEntity.ok(spread.toDto())
+    }
+
+    override suspend fun refreshSpreadPnl(id: UUID): ResponseEntity<SpreadDto> {
+        val spread = spreadPort.findById(id) ?: return ResponseEntity.notFound().build()
+        if (spread.status != SpreadStatus.OPEN) return ResponseEntity.ok(spread.toDto())
+
+        val updated =
+            runCatching {
+                val soldMid = marketDataPort.getOptionMid(spread.soldLeg.contract).amount
+                val boughtMid = marketDataPort.getOptionMid(spread.boughtLeg.contract).amount
+                val spreadValue = soldMid.subtract(boughtMid)
+                spreadPort.update(spread.copy(lastSpreadValue = spreadValue))
+            }.onFailure { e -> logger.warn(e) { "[${spread.symbol}] refreshSpreadPnl failed: ${e.message}" } }
+                .getOrDefault(spread)
+
+        return ResponseEntity.ok(updated.toDto())
     }
 
     override suspend fun softCloseSpread(id: UUID): ResponseEntity<SpreadDto> =
@@ -59,8 +80,18 @@ class SpreadsApiImpl(
             is SpreadManagementService.ManualCloseResult.AlreadyClosed -> ResponseEntity.status(HttpStatus.CONFLICT).build()
         }
 
-    private fun BullPutSpread.toDto(): SpreadDto =
-        SpreadDto(
+    private fun BullPutSpread.toDto(): SpreadDto {
+        val (currentSpreadValue, currentPnl) =
+            if (status == SpreadStatus.OPEN) {
+                val sv = lastSpreadValue
+                if (sv != null) sv to creditPerShare.subtract(sv) else null to null
+            } else {
+                val sv = closePricePerShare
+                val pnl = if (sv != null) creditPerShare.subtract(sv) else null
+                sv to pnl
+            }
+
+        return SpreadDto(
             id = id,
             symbol = symbol.value,
             status = status.name,
@@ -76,5 +107,8 @@ class SpreadsApiImpl(
             closedAt = closedAt?.atOffset(ZoneOffset.UTC),
             closeReason = closeReason,
             closePricePerShare = closePricePerShare,
+            currentSpreadValue = currentSpreadValue,
+            currentPnl = currentPnl,
         )
+    }
 }

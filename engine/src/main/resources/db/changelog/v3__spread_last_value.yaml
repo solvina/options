@@ -1,0 +1,13 @@
+databaseChangeLog:
+  - changeSet:
+      id: v3__spread_last_value
+      author: vseliga
+      changes:
+        - addColumn:
+            tableName: spread_positions
+            columns:
+              - column:
+                  name: last_spread_value
+                  type: DECIMAL(10,4)
+                  constraints:
+                    nullable: true

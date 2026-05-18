@@ -20,4 +20,5 @@ data class BullPutSpread(
     val closedAt: Instant? = null,
     val closeReason: String? = null,
     val closePricePerShare: BigDecimal? = null,
+    val lastSpreadValue: BigDecimal? = null,
 )

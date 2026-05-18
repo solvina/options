@@ -6,10 +6,14 @@ import App from './App.tsx'
 import { client as healthClient } from './generated/health/client.gen'
 import { client as accountClient } from './generated/account/client.gen'
 import { client as spreadsClient } from './generated/spreads/client.gen'
+import { client as diagnosticClient } from './generated/diagnostic/client.gen'
+import { client as universeClient } from './generated/universe/client.gen'
 
 healthClient.setConfig({ baseUrl: '/api' })
 accountClient.setConfig({ baseUrl: '/api' })
 spreadsClient.setConfig({ baseUrl: '/api' })
+diagnosticClient.setConfig({ baseUrl: '/api' })
+universeClient.setConfig({ baseUrl: '/api' })
 
 const queryClient = new QueryClient()
 

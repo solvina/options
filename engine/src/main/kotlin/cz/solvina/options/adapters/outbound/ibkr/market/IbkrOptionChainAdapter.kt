@@ -2,7 +2,9 @@ package cz.solvina.options.adapters.outbound.ibkr.market
 
 import com.ib.client.EClientSocket
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
+import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrOptionParamsCache
+import cz.solvina.options.adapters.outbound.ibkr.cache.OptionContractKey
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
 import cz.solvina.options.domain.features.market.BlackScholes
 import cz.solvina.options.domain.features.market.OptionChainPort
@@ -32,6 +34,7 @@ class IbkrOptionChainAdapter(
     private val client: EClientSocket,
     private val scannerConfig: ScannerConfig,
     private val optionParamsCache: IbkrOptionParamsCache,
+    private val contractCache: IbkrContractCache,
     private val volatilityPort: VolatilityPort,
     private val contractFactory: IbkrContractFactory,
 ) : OptionChainPort {
@@ -52,9 +55,10 @@ class IbkrOptionChainAdapter(
         // Allow bought-leg candidates to sit one spread-width below the sold-leg band
         val boughtLegFloor = lowerBound.subtract(scannerConfig.spreadWidthUsd)
 
+        val expiryStrikes = params.strikesByExpiry[expiry] ?: params.strikes
         val validStrikes =
-            params.strikes.filter { strike ->
-                strike >= boughtLegFloor && strike <= upperBound && params.expirations.contains(expiry)
+            expiryStrikes.filter { strike ->
+                strike >= boughtLegFloor && strike <= upperBound
             }
 
         if (validStrikes.isEmpty()) {
@@ -87,7 +91,15 @@ class IbkrOptionChainAdapter(
                     validStrikes.filter { it <= boughtTarget }.sortedDescending().take(2)
                 }.toSet()
 
-        val candidateStrikes = (nearest + boughtLegs).distinct().sortedDescending()
+        val allCandidates = (nearest + boughtLegs).distinct().sortedDescending()
+        val candidateStrikes =
+            allCandidates.filter { strike ->
+                !contractCache.isMissing(OptionContractKey(symbol, expiry, strike, OptionType.PUT))
+            }
+        val filteredCount = allCandidates.size - candidateStrikes.size
+        if (filteredCount > 0) {
+            logger.debug { "[$symbol] Filtered $filteredCount known-missing strike(s) from candidate list" }
+        }
 
         logger.debug {
             "[$symbol] Fetching greeks for ${candidateStrikes.size} candidate strikes (${nearest.size} sold + ${boughtLegs.size} bought-leg)"
@@ -99,7 +111,13 @@ class IbkrOptionChainAdapter(
         return candidateStrikes.mapNotNull { strike ->
             runCatching {
                 val contract = OptionContract(symbol, expiry, strike, OptionType.PUT)
-                val snapshot = reqMktDataSnapshot(registry, client, contractFactory.optionContract(contract), "")
+                val snapshot =
+                    reqMktDataSnapshot(
+                        registry,
+                        client,
+                        contractFactory.optionContract(contract, params.exchange, params.tradingClass, params.multiplier),
+                        "",
+                    )
                 val bid = snapshot.bid.takeIf { !it.isNaN() } ?: 0.0
                 val ask = snapshot.ask.takeIf { !it.isNaN() } ?: 0.0
                 val mid = midPrice(bid, ask)

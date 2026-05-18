@@ -4,6 +4,7 @@ import cz.solvina.options.domain.features.order.OrderExecutionPort
 import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
+import cz.solvina.options.domain.models.Symbol
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -54,6 +55,8 @@ class BacktestOrderExecutionAdapter : OrderExecutionPort {
         newCredit: Money,
         qty: Int,
     ): Int = submitComboLimitOrder(soldContract, boughtContract, newCredit, qty)
+
+    override suspend fun getSymbolsWithOpenOrders(): Set<Symbol> = emptySet()
 }
 
 data class ComboFillRecord(

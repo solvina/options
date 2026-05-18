@@ -1,12 +1,13 @@
 package cz.solvina.options.adapters.outbound.ibkr.order
 
-import com.ib.client.ComboLeg
 import com.ib.client.Contract
 import com.ib.client.Decimal
 import com.ib.client.EClientSocket
 import com.ib.client.Order
 import com.ib.client.OrderCancel
+import cz.solvina.options.adapters.outbound.ibkr.IbkrConnectionConfig
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
+import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOpenOrdersAdapter
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
 import cz.solvina.options.adapters.outbound.ibkr.cache.OptionContractKey
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
@@ -14,13 +15,14 @@ import cz.solvina.options.domain.features.order.OrderExecutionPort
 import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
+import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
-import java.math.BigDecimal
-import java.math.RoundingMode
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
 import org.springframework.stereotype.Component
+import java.math.BigDecimal
+import java.math.RoundingMode
 
 private val logger = KotlinLogging.logger {}
 
@@ -30,6 +32,8 @@ class IbkrOrderExecutionAdapter(
     private val client: EClientSocket,
     private val contractCache: IbkrContractCache,
     private val contractFactory: IbkrContractFactory,
+    private val connectionConfig: IbkrConnectionConfig,
+    private val openOrdersAdapter: IbkrOpenOrdersAdapter,
 ) : OrderExecutionPort {
     override suspend fun submitComboLimitOrder(
         soldContract: OptionContract,
@@ -43,12 +47,14 @@ class IbkrOrderExecutionAdapter(
         val bag = buildBagContract(soldContract, soldConId, boughtConId)
         val order =
             Order().apply {
-                // BUY the combo = receive net credit (IBKR BAG convention for credit spreads)
+                // BUY the combo at a negative limit = receive net credit (IBKR BAG convention:
+                // negative lmtPrice on BUY means minimum credit to accept, positive would mean debit paid)
                 action("BUY")
                 orderType("LMT")
-                lmtPrice(netCredit.amount.floorToTick().toDouble())
+                lmtPrice(-netCredit.amount.floorToTick().toDouble())
                 totalQuantity(Decimal.get(qty.toLong()))
                 tif("DAY")
+                if (connectionConfig.account.isNotBlank()) account(connectionConfig.account)
             }
 
         val orderId = registry.nextOrderId()
@@ -101,6 +107,12 @@ class IbkrOrderExecutionAdapter(
         return submitComboLimitOrder(soldContract, boughtContract, newCredit, qty)
     }
 
+    override suspend fun getSymbolsWithOpenOrders(): Set<Symbol> =
+        runCatching { openOrdersAdapter.getOpenOrders() }
+            .getOrDefault(emptyList())
+            .map { Symbol(it.symbol) }
+            .toSet()
+
     private suspend fun resolveConId(contract: OptionContract): Int =
         contractCache.getOrFetchOptionConId(
             OptionContractKey(
@@ -115,31 +127,7 @@ class IbkrOrderExecutionAdapter(
         soldContract: OptionContract,
         soldConId: Int,
         boughtConId: Int,
-    ): Contract {
-        val soldLeg =
-            ComboLeg().apply {
-                conid(soldConId)
-                ratio(1)
-                action("SELL")
-                exchange("SMART")
-            }
-        val boughtLeg =
-            ComboLeg().apply {
-                conid(boughtConId)
-                ratio(1)
-                action("BUY")
-                exchange("SMART")
-            }
-        return Contract().apply {
-            symbol(soldContract.symbol.value)
-            secType("BAG")
-            currency(contractFactory.defFor(soldContract.symbol).currency)
-            exchange("SMART")
-            comboLegs(
-                listOf(soldLeg, boughtLeg),
-            )
-        }
-    }
+    ): Contract = contractFactory.bagContract(soldContract, soldConId, boughtConId)
 }
 
 /** Floor-rounds a credit amount to the IBKR minimum price variation grid ($0.01 below $3, $0.05 at or above $3). */

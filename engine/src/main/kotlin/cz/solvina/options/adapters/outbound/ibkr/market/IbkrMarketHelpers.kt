@@ -6,6 +6,8 @@ import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.MarketDataSnapshot
 import cz.solvina.options.adapters.outbound.ibkr.registry.PendingMarketDataRequest
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.withTimeout
 import java.math.BigDecimal
 import java.math.RoundingMode
 
@@ -19,7 +21,12 @@ internal suspend fun reqMktDataSnapshot(
     val deferred = CompletableDeferred<MarketDataSnapshot>()
     registry.pendingMarketData[reqId] = PendingMarketDataRequest(deferred)
     client.reqMktData(reqId, contract, genericTickList, true, false, null)
-    return deferred.await()
+    return try {
+        withTimeout(4_000L) { deferred.await() }
+    } catch (_: TimeoutCancellationException) {
+        registry.pendingMarketData.remove(reqId)
+        MarketDataSnapshot()
+    }
 }
 
 internal fun midPrice(

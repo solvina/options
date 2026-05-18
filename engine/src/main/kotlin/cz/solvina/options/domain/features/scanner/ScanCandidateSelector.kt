@@ -3,6 +3,7 @@ package cz.solvina.options.domain.features.scanner
 import cz.solvina.options.domain.features.execution.model.TradeExecutionRequest
 import cz.solvina.options.domain.features.market.MarketDataPort
 import cz.solvina.options.domain.features.market.OptionChainPort
+import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.features.volatility.VolatilityPort
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionType
@@ -17,20 +18,40 @@ import java.time.temporal.ChronoUnit
 import kotlin.math.abs
 
 private val logger = KotlinLogging.logger {}
+private val tradeLogger = KotlinLogging.logger("TRADES")
 
 @Component
 class ScanCandidateSelector(
     private val volatilityPort: VolatilityPort,
     private val marketDataPort: MarketDataPort,
     private val optionChainPort: OptionChainPort,
+    private val universePort: UniversePort,
     private val config: ScannerConfig,
     private val clock: Clock,
 ) {
-    suspend fun select(symbol: Symbol, totalCapital: Money): TradeExecutionRequest? {
+    suspend fun select(
+        symbol: Symbol,
+        totalCapital: Money,
+    ): TradeExecutionRequest? {
+        val inst = universePort.get(symbol)
+
+        // Resolve per-symbol overrides with global config fallback
+        val ivRankThreshold = inst?.ivRankThreshold ?: config.ivRankThreshold
+        val minDte = inst?.minDte ?: config.minDte
+        val maxDte = inst?.maxDte ?: config.maxDte
+        val preferredDte = inst?.preferredDte ?: config.preferredDte
+        val targetDelta = inst?.targetDelta ?: config.targetDelta
+        val deltaMin = inst?.deltaMin ?: config.deltaMin
+        val deltaMax = inst?.deltaMax ?: config.deltaMax
+        val spreadWidthUsd = inst?.spreadWidthUsd ?: config.spreadWidthUsd
+        val minCreditPerShare = inst?.minCreditPerShare ?: config.minCreditPerShare
+        val maxRiskPercent = inst?.maxRiskPercent ?: config.maxRiskPercent
+
         // 1. IV Rank filter
         val ivRank = volatilityPort.getIvRank(symbol)
-        if (ivRank.rank < config.ivRankThreshold) {
-            logger.info { "[$symbol] IV Rank ${"%.1f".format(ivRank.rank)}% < threshold ${config.ivRankThreshold}%, skipping" }
+        if (ivRank.rank < ivRankThreshold) {
+            logger.info { "[$symbol] IV Rank ${"%.1f".format(ivRank.rank)}% < threshold $ivRankThreshold%, skipping" }
+            tradeLogger.info { "SKIP   $symbol  iv_rank=${"%.1f".format(ivRank.rank)}% < threshold=$ivRankThreshold%" }
             return null
         }
 
@@ -43,12 +64,12 @@ class ScanCandidateSelector(
             availableExpirations
                 .filter { exp ->
                     val dte = ChronoUnit.DAYS.between(today, exp).toInt()
-                    dte in config.minDte..config.maxDte
+                    dte in minDte..maxDte
                 }.minByOrNull { exp ->
-                    abs(ChronoUnit.DAYS.between(today, exp).toInt() - config.preferredDte)
+                    abs(ChronoUnit.DAYS.between(today, exp).toInt() - preferredDte)
                 }
         if (expiry == null) {
-            logger.info { "[$symbol] No valid expiry in [${config.minDte}, ${config.maxDte}] DTE, skipping" }
+            logger.info { "[$symbol] No valid expiry in [$minDte, $maxDte] DTE, skipping" }
             return null
         }
         val dte = ChronoUnit.DAYS.between(today, expiry).toInt()
@@ -62,19 +83,19 @@ class ScanCandidateSelector(
             puts
                 .filter { quote ->
                     val absDelta = abs(quote.greeks.delta)
-                    absDelta in config.deltaMin..config.deltaMax
+                    absDelta in deltaMin..deltaMax
                 }.minByOrNull { quote ->
-                    abs(abs(quote.greeks.delta) - config.targetDelta)
+                    abs(abs(quote.greeks.delta) - targetDelta)
                 }
         if (soldQuote == null) {
-            logger.info { "[$symbol] No put with delta in [${config.deltaMin}, ${config.deltaMax}] found, skipping" }
+            logger.info { "[$symbol] No put with delta in [$deltaMin, $deltaMax] found, skipping" }
             return null
         }
 
         logger.info { "[$symbol] Selected sold put strike=${soldQuote.contract.strike} delta=${soldQuote.greeks.delta}" }
 
         // 4. Find bought strike
-        val targetBoughtStrike = soldQuote.contract.strike.subtract(config.spreadWidthUsd)
+        val targetBoughtStrike = soldQuote.contract.strike.subtract(spreadWidthUsd)
         val boughtQuote =
             puts
                 .filter { it.contract.strike <= targetBoughtStrike }
@@ -89,8 +110,8 @@ class ScanCandidateSelector(
             soldQuote.mid.amount
                 .subtract(boughtQuote.mid.amount)
                 .setScale(4, RoundingMode.HALF_UP)
-        if (midCredit < config.minCreditPerShare) {
-            logger.info { "[$symbol] Credit $midCredit < minimum ${config.minCreditPerShare}, skipping" }
+        if (midCredit < minCreditPerShare) {
+            logger.info { "[$symbol] Credit $midCredit < minimum $minCreditPerShare, skipping" }
             return null
         }
 
@@ -103,7 +124,7 @@ class ScanCandidateSelector(
 
         // 6. Money management check
         val maxRiskPerContract = maxRiskPerShare.multiply(BigDecimal("100"))
-        val allowedRiskPerTrade = totalCapital.amount.multiply(BigDecimal(config.maxRiskPercent))
+        val allowedRiskPerTrade = totalCapital.amount.multiply(BigDecimal(maxRiskPercent))
         if (maxRiskPerContract > allowedRiskPerTrade) {
             logger.info {
                 "[$symbol] Max risk/contract $$maxRiskPerContract > allowed $${
@@ -113,28 +134,30 @@ class ScanCandidateSelector(
             return null
         }
 
-        // 7. Build execution request
+        // 7. Build execution request — start at mid, floor at bid-side natural cross price
         val bidCredit =
             soldQuote.bid.amount
                 .subtract(boughtQuote.ask.amount)
-                .max(config.minCreditPerShare)
                 .setScale(4, RoundingMode.HALF_UP)
 
-        val floorCredit =
-            bidCredit
-                .multiply(BigDecimal.ONE.subtract(BigDecimal(config.floorCreditBuffer)))
-                .setScale(4, RoundingMode.HALF_UP)
+        val floorCredit = bidCredit.max(minCreditPerShare).setScale(4, RoundingMode.HALF_UP)
 
         logger.info {
             "[$symbol] Launching execution: SELL ${soldQuote.contract.strike}P / BUY ${boughtQuote.contract.strike}P " +
-                "mid=\$$midCredit bid=\$$bidCredit floor=\$$floorCredit maxRisk=\$$maxRiskPerShare"
+                "target(mid)=\$$midCredit floor(bid)=\$$bidCredit maxRisk=\$$maxRiskPerShare"
+        }
+        tradeLogger.info {
+            "CANDIDATE $symbol  ${soldQuote.contract.strike}P/${boughtQuote.contract.strike}P  exp=$expiry  dte=$dte" +
+                "  iv_rank=${"%.1f".format(
+                    ivRank.rank,
+                )}%  underlying=${underlyingPrice.amount}  mid=\$$midCredit  max_risk=\$$maxRiskPerShare"
         }
 
         return TradeExecutionRequest(
             soldContract = soldQuote.contract,
             boughtContract = boughtQuote.contract,
             underlyingSymbol = symbol,
-            targetCredit = bidCredit,
+            targetCredit = midCredit,
             floorCredit = floorCredit,
             maxRiskPerShare = maxRiskPerShare,
             ivRankAtEntry = ivRank.rank,

@@ -2,6 +2,7 @@ package cz.solvina.options.execution
 
 import cz.solvina.options.domain.features.account.AccountDetail
 import cz.solvina.options.domain.features.account.AccountPort
+import cz.solvina.options.domain.features.execution.PreTradeValidator
 import cz.solvina.options.domain.features.execution.TradeExecutionService
 import cz.solvina.options.domain.features.execution.model.ExecutionOutcome
 import cz.solvina.options.domain.features.execution.model.TradeExecutionRequest
@@ -58,10 +59,10 @@ class TradeExecutionServiceTest {
         ScannerConfig(
             watchlist = listOf("SPY"),
             driftProtectionPct = 0.02,
-            floorCreditBuffer = 0.50,
             executionTimeoutMinutes = 1,
             ticksBeforePriceAdjust = 3,
             maxLegBidAskSpreadPct = 0.30,
+            feePerContract = java.math.BigDecimal.ZERO,
         )
 
     private fun buildRequest(
@@ -107,7 +108,13 @@ class TradeExecutionServiceTest {
         marketTickPort = marketTickPort,
         orderExecutionPort = orderExecutionPort,
         spreadPort = spreadPort,
-        accountPort = accountPort,
+        validator =
+            PreTradeValidator(
+                spreadPort = spreadPort,
+                orderExecutionPort = orderExecutionPort,
+                accountPort = accountPort,
+                config = config,
+            ),
         config = config,
         clock = Clock.systemUTC(),
         scope = backgroundScope,
@@ -134,7 +141,7 @@ class TradeExecutionServiceTest {
             val result = service.execute(buildRequest(targetCredit = BigDecimal("1.00")))
 
             assertEquals(ExecutionOutcome.FILLED, result.outcome)
-            assertEquals(BigDecimal("1.00"), result.creditAchieved)
+            assertEquals(0, BigDecimal("1.00").compareTo(result.creditAchieved))
             assertNotNull(result.comboOrderId)
         }
 
@@ -178,6 +185,8 @@ class TradeExecutionServiceTest {
                         cancelAndAwait(existingOrderId)
                         return submitComboLimitOrder(soldContract, boughtContract, newCredit, qty)
                     }
+
+                    override suspend fun getSymbolsWithOpenOrders(): Set<Symbol> = emptySet()
                 }
 
             val creditChannel = Channel<SpreadCreditTick>(Channel.UNLIMITED)
@@ -239,6 +248,8 @@ class TradeExecutionServiceTest {
                         newCredit: Money,
                         qty: Int,
                     ): Int = submitComboLimitOrder(soldContract, boughtContract, newCredit, qty)
+
+                    override suspend fun getSymbolsWithOpenOrders(): Set<Symbol> = emptySet()
                 }
 
             val creditChannel = Channel<SpreadCreditTick>(Channel.UNLIMITED)
@@ -333,6 +344,8 @@ class TradeExecutionServiceTest {
                         newCredit: Money,
                         qty: Int,
                     ): Int = 1
+
+                    override suspend fun getSymbolsWithOpenOrders(): Set<Symbol> = emptySet()
                 }
 
             val service =
@@ -448,6 +461,8 @@ class TradeExecutionServiceTest {
                 newCredit: Money,
                 qty: Int,
             ): Int = submitComboLimitOrder(soldContract, boughtContract, newCredit, qty)
+
+            override suspend fun getSymbolsWithOpenOrders(): Set<Symbol> = emptySet()
         }
     }
 
@@ -475,6 +490,8 @@ class TradeExecutionServiceTest {
                 newCredit: Money,
                 qty: Int,
             ): Int = nextId.getAndIncrement()
+
+            override suspend fun getSymbolsWithOpenOrders(): Set<Symbol> = emptySet()
         }
     }
 
@@ -499,6 +516,22 @@ class TradeExecutionServiceTest {
         override suspend fun findOpen(): List<BullPutSpread> = store.filter { it.status == SpreadStatus.OPEN }
 
         override suspend fun findAll(): List<BullPutSpread> = store.toList()
+
+        override suspend fun findPage(
+            status: SpreadStatus?,
+            page: Int,
+            size: Int,
+        ): cz.solvina.options.domain.features.spread.SpreadPage {
+            val filtered = if (status == null) store.toList() else store.filter { it.status == status }
+            val paged = filtered.drop(page * size).take(size)
+            return cz.solvina.options.domain.features.spread.SpreadPage(
+                paged,
+                filtered.size.toLong(),
+                (filtered.size + size - 1) / size,
+                page,
+                size,
+            )
+        }
 
         override suspend fun countByStatus(status: SpreadStatus): Long = store.count { it.status == status }.toLong()
 

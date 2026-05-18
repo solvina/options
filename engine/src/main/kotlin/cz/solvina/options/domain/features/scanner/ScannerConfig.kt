@@ -5,7 +5,7 @@ import java.math.BigDecimal
 
 @ConfigurationProperties("scanner")
 data class ScannerConfig(
-    val watchlist: List<String>,
+    val watchlist: List<String> = emptyList(),
     // Entry filters
     val ivRankThreshold: Double = 30.0,
     val minDte: Int = 30,
@@ -24,13 +24,14 @@ data class ScannerConfig(
     val minCreditPerShare: BigDecimal = BigDecimal("0.30"),
     val maxRiskPercent: Double = 0.025,
     val maxOpenSpreads: Int = 5,
+    // Fees: IBKR charges per contract; 2 legs × feePerContract / 100 = fee per share
+    val feePerContract: BigDecimal = BigDecimal("0.65"),
     // Exit rules
     val takeProfitPercent: Double = 0.50,
     val stopLossPercent: Double = 0.50,
     val timeProfitDte: Int = 14,
     // Trade execution (tick-by-tick price improvement)
     val driftProtectionPct: Double = 0.01,
-    val floorCreditBuffer: Double = 0.50,
     val executionTimeoutMinutes: Long = 15,
     val ticksBeforePriceAdjust: Int = 5,
     val maxLegBidAskSpreadPct: Double = 0.30,
@@ -44,6 +45,7 @@ data class ScannerConfig(
     // Kill switches (can be overridden at runtime via API)
     val scannerPaused: Boolean = false,
     val monitorPaused: Boolean = false,
+    val tradingEnabled: Boolean = true,
     // Cache TTLs
     val ivHistoryDays: Int = 365,
     val ivCacheTtlMinutes: Long = 60,

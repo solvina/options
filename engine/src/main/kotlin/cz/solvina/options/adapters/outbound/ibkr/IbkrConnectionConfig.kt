@@ -13,6 +13,7 @@ data class IbkrConnectionConfig(
     val autoReconnect: Boolean = true,
     val reconnectIntervalMs: Long = 10_000,
     val paperAccount: Boolean = false,
+    val useLiveMarketData: Boolean = false,
 ) {
     override fun toString(): String =
         "IbkrConnectionConfig(host='$host', port=$port, clientId=$clientId, " +

@@ -37,6 +37,14 @@ export type AccountOverviewDto = {
      * All positions in the IBKR account (stocks, options, futures, etc.)
      */
     accountPositions: Array<AccountPositionDto>;
+    /**
+     * Number of non-terminal open IBKR orders
+     */
+    openOrderCount: number;
+    /**
+     * Open (non-terminal) orders currently on the IBKR account
+     */
+    openOrders: Array<OpenOrderDto>;
 };
 
 export type OpenPositionDto = {
@@ -74,9 +82,28 @@ export type OpenPositionDto = {
     openedAt: string;
     ivRankAtEntry?: number | null;
     underlyingPriceAtEntry?: number | null;
+    /**
+     * (creditPerShare - currentSpreadValue) × quantity × 100; null until first monitor check
+     */
+    unrealizedPnL?: number | null;
+};
+
+export type ClosePositionRequestDto = {
+    /**
+     * IBKR contract ID
+     */
+    conId: number;
+    /**
+     * Current position size (negative = short). Closing order will use the opposite action.
+     */
+    quantity: number;
 };
 
 export type AccountPositionDto = {
+    /**
+     * IBKR contract ID (used for closing orders)
+     */
+    conId: number;
     /**
      * IBKR account ID
      */
@@ -107,6 +134,28 @@ export type AccountPositionDto = {
      * Average cost per share or per contract
      */
     avgCost: number;
+    /**
+     * Unrealized P&L from IBKR (USD)
+     */
+    unrealizedPnL?: number | null;
+};
+
+export type OpenOrderDto = {
+    orderId: number;
+    symbol: string;
+    /**
+     * BUY or SELL
+     */
+    action: string;
+    /**
+     * LMT, MKT, etc.
+     */
+    orderType: string;
+    limitPrice?: number | null;
+    /**
+     * PreSubmitted, Submitted, PendingSubmit, etc.
+     */
+    status: string;
 };
 
 export type GetAccountOverviewData = {
@@ -124,3 +173,44 @@ export type GetAccountOverviewResponses = {
 };
 
 export type GetAccountOverviewResponse = GetAccountOverviewResponses[keyof GetAccountOverviewResponses];
+
+export type ClosePositionData = {
+    body: ClosePositionRequestDto;
+    path?: never;
+    query?: never;
+    url: '/account/positions/close';
+};
+
+export type ClosePositionResponses = {
+    /**
+     * Close order submitted
+     */
+    204: void;
+};
+
+export type ClosePositionResponse = ClosePositionResponses[keyof ClosePositionResponses];
+
+export type CancelOrderData = {
+    body?: never;
+    path: {
+        orderId: number;
+    };
+    query?: never;
+    url: '/orders/{orderId}';
+};
+
+export type CancelOrderErrors = {
+    /**
+     * Order not found
+     */
+    404: unknown;
+};
+
+export type CancelOrderResponses = {
+    /**
+     * Cancel request sent
+     */
+    204: void;
+};
+
+export type CancelOrderResponse = CancelOrderResponses[keyof CancelOrderResponses];

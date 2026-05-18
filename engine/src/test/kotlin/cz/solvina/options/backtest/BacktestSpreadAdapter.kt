@@ -1,5 +1,6 @@
 package cz.solvina.options.backtest
 
+import cz.solvina.options.domain.features.spread.SpreadPage
 import cz.solvina.options.domain.features.spread.SpreadPort
 import cz.solvina.options.domain.features.spread.model.BullPutSpread
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
@@ -34,6 +35,16 @@ class BacktestSpreadAdapter : SpreadPort {
     override suspend fun findOpen(): List<BullPutSpread> = store.filter { it.status == SpreadStatus.OPEN }
 
     override suspend fun findAll(): List<BullPutSpread> = store.toList()
+
+    override suspend fun findPage(
+        status: SpreadStatus?,
+        page: Int,
+        size: Int,
+    ): SpreadPage {
+        val filtered = if (status == null) store.toList() else store.filter { it.status == status }
+        val paged = filtered.drop(page * size).take(size)
+        return SpreadPage(paged, filtered.size.toLong(), (filtered.size + size - 1) / size, page, size)
+    }
 
     override suspend fun countByStatus(status: SpreadStatus): Long = store.count { it.status == status }.toLong()
 

@@ -2,6 +2,7 @@ package cz.solvina.options.domain.features.order
 
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
+import cz.solvina.options.domain.models.Symbol
 
 /**
  * Port for non-blocking, tick-aware combo order execution.
@@ -38,4 +39,7 @@ interface OrderExecutionPort {
         newCredit: Money,
         qty: Int,
     ): Int
+
+    /** Returns the set of underlying symbols that have at least one open order on the broker. */
+    suspend fun getSymbolsWithOpenOrders(): Set<Symbol>
 }

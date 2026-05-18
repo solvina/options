@@ -9,6 +9,7 @@ import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import cz.solvina.options.domain.features.connection.ConnectionPort
 import io.github.oshai.kotlinlogging.KotlinLogging
 import jakarta.annotation.PreDestroy
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.springframework.boot.context.event.ApplicationReadyEvent
 import org.springframework.context.event.EventListener
@@ -25,6 +26,7 @@ class IbkrLifecycleAdapter(
     private val contractRegistry: IbkrContractRegistry,
     private val marketDataRegistry: IbkrMarketDataRegistry,
     private val orderRegistry: IbkrOrderRegistry,
+    private val recoveryService: StartupRecoveryService,
 ) {
     @EventListener(ApplicationReadyEvent::class)
     fun onApplicationReady() {
@@ -35,6 +37,10 @@ class IbkrLifecycleAdapter(
                     .onSuccess { connected ->
                         if (connected) {
                             logger.info { "Successfully connected to IBKR" }
+                            // Brief pause so IBKR sends back initial openOrder callbacks before we query
+                            delay(3_000)
+                            runCatching { recoveryService.recover() }
+                                .onFailure { e -> logger.warn(e) { "Startup recovery failed: ${e.message}" } }
                         } else {
                             logger.warn { "Could not connect to IBKR at startup — watchdog will keep retrying" }
                         }

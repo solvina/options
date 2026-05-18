@@ -20,6 +20,16 @@ export type SpreadDto = {
     closedAt?: string | null;
     closeReason?: string | null;
     closePricePerShare?: number | null;
+    currentSpreadValue?: number | null;
+    currentPnl?: number | null;
+};
+
+export type PagedSpreadsDto = {
+    content: Array<SpreadDto>;
+    totalElements: number;
+    totalPages: number;
+    page: number;
+    size: number;
 };
 
 export type ScannerStatusDto = {
@@ -36,16 +46,18 @@ export type ListSpreadsData = {
     body?: never;
     path?: never;
     query?: {
-        status?: 'OPEN' | 'CLOSED_PROFIT' | 'CLOSED_STOP' | 'CLOSED_TIME' | 'CLOSED_MANUAL';
+        status?: 'OPEN' | 'CLOSING' | 'CLOSED_PROFIT' | 'CLOSED_STOP' | 'CLOSED_TIME' | 'CLOSED_MANUAL';
+        page?: number;
+        size?: number;
     };
     url: '/spreads';
 };
 
 export type ListSpreadsResponses = {
     /**
-     * List of spread positions
+     * Paginated spread positions
      */
-    200: Array<SpreadDto>;
+    200: PagedSpreadsDto;
 };
 
 export type ListSpreadsResponse = ListSpreadsResponses[keyof ListSpreadsResponses];
@@ -103,6 +115,31 @@ export type SoftCloseSpreadResponses = {
 };
 
 export type SoftCloseSpreadResponse = SoftCloseSpreadResponses[keyof SoftCloseSpreadResponses];
+
+export type RefreshSpreadPnlData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/spreads/{id}/refresh-pnl';
+};
+
+export type RefreshSpreadPnlErrors = {
+    /**
+     * Spread not found
+     */
+    404: unknown;
+};
+
+export type RefreshSpreadPnlResponses = {
+    /**
+     * Updated spread with fresh P&L
+     */
+    200: SpreadDto;
+};
+
+export type RefreshSpreadPnlResponse = RefreshSpreadPnlResponses[keyof RefreshSpreadPnlResponses];
 
 export type ForceCloseSpreadData = {
     body?: never;

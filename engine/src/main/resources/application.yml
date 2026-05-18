@@ -18,7 +18,32 @@ spring:
         dialect: org.hibernate.dialect.PostgreSQLDialect
 
 ibkr:
-  instruments: {}
+  exchanges:
+    US:
+      timezone: America/New_York
+      open: "09:30"
+      close: "16:00"
+    EU:
+      timezone: Europe/Berlin
+      open: "09:00"
+      close: "17:30"
+  instruments:
+    ASML:
+      currency: EUR
+      optionExchange: DTB
+      marketExchange: EU
+    SAP:
+      currency: EUR
+      optionExchange: DTB
+      marketExchange: EU
+    SIE:
+      currency: EUR
+      optionExchange: DTB
+      marketExchange: EU
+    ALV:
+      currency: EUR
+      optionExchange: DTB
+      marketExchange: EU
   connection:
     host: 100.65.216.36
     port: 7497
@@ -32,8 +57,7 @@ ibkr:
 
 scanner:
   trading-enabled: true            # paper trading active with live data subscription
-  watchlist: [ SPY, QQQ, AAPL, MSFT, AMZN, IWM,DIA,TSLA, NVDA, META, GOOGL,XLF,XLE,XLV,AMD,UNH ]
-  iv-rank-threshold: 30
+  iv-rank-threshold: 45
   min-dte: 30
   max-dte: 50
   preferred-dte: 45
@@ -43,25 +67,27 @@ scanner:
   strike-band-percent: 0.20
   candidate-strike-count: 7
   spread-width-usd: 5.0
-  min-credit-per-share: 0.30
+  min-credit-per-share: 0.50
   max-risk-percent: 0.025
   max-open-spreads: 5
   take-profit-percent: 0.50
-  stop-loss-percent: 0.50
+  stop-loss-percent: 1.00
   time-profit-dte: 14
   drift-protection-pct: 0.01
-  floor-credit-buffer: 0.50
   execution-timeout-minutes: 15
   ticks-before-price-adjust: 5
   max-leg-bid-ask-spread-pct: 0.30
   order-chase-timeout-minutes: 5
   order-chase-max-retries: 3
   order-chase-price-step: 0.03
-  cron: "0 */15 3-16 * * MON-FRI"
+  cron: "0 */15 9-22 * * MON-FRI"
   monitor-delay-ms: 60000
   iv-history-days: 365
   iv-cache-ttl-minutes: 60
   option-params-cache-ttl-hours: 24
+
+app:
+  timezone: Europe/Prague
 
 server:
   port: 8081

@@ -118,19 +118,26 @@ class IbkrMarketDataRegistry(
         code: Int,
         msg: String,
     ) {
+        // 200 = no security definition / ambiguous — could indicate options not authorized on the account.
         // 354 = no live subscription, 10197 = competing live session.
-        // IBKR does NOT send tickSnapshotEnd in either case, so complete the deferred ourselves.
-        // The caller sees an empty snapshot (delta=NaN) and can fall back to analytical pricing.
-        if (code == 354 || code == 10197) {
+        // IBKR does NOT send tickSnapshotEnd in any of these cases, so complete the deferred ourselves.
+        // The caller sees an empty snapshot (delta=NaN) and falls back to analytical pricing.
+        if (code == 200 || code == 354 || code == 10197) {
             pendingMarketData.remove(id)?.let { request ->
-                logger.debug { "Market data $id: code $code, completing with available snapshot" }
+                // 200 at WARN: repeated 200s on option market data may indicate account permissions issue.
+                if (code == 200) {
+                    logger.warn { "Market data $id: code 200 (no security definition), falling back to analytical pricing" }
+                } else {
+                    logger.debug { "Market data $id: code $code, completing with available snapshot" }
+                }
                 request.deferred.complete(request.snapshot)
             }
             return
         }
+        // 10090 = no subscription for BID_ASK on this exchange; subscription-independent ticks still come.
         // 10167 = informational: IBKR is switching to delayed market data.
-        // Actual tick data (and tickSnapshotEnd) will still arrive — do not touch the deferred.
-        if (code == 10167) return
+        // In both cases tick data and tickSnapshotEnd will still arrive — do not touch the deferred.
+        if (code == 10090 || code == 10167) return
         val ex = RuntimeException("IBKR error [code=$code]: $msg")
         pendingMarketData.remove(id)?.deferred?.completeExceptionally(ex)
         pendingContinuousMarketData.remove(id)?.let { logger.warn { "Continuous market data $id errored: $msg" } }

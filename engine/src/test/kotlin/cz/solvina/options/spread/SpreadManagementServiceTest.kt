@@ -11,6 +11,7 @@ import cz.solvina.options.domain.features.spread.SpreadPort
 import cz.solvina.options.domain.features.spread.model.BullPutSpread
 import cz.solvina.options.domain.features.spread.model.SpreadLeg
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
+import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
 import cz.solvina.options.domain.models.OptionType
@@ -20,6 +21,7 @@ import io.mockk.coVerify
 import io.mockk.mockk
 import io.mockk.slot
 import kotlinx.coroutines.test.runTest
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import java.math.BigDecimal
 import java.time.Clock
@@ -42,6 +44,12 @@ class SpreadManagementServiceTest {
         )
 
     private val config = ScannerConfig(watchlist = listOf("SPY"))
+    private val universePort = mockk<UniversePort>(relaxed = true)
+
+    @BeforeEach
+    fun setUp() {
+        coEvery { universePort.get(any()) } returns null
+    }
 
     private val filledOrder = LegOrder(orderId = 99, status = OrderStatus.FILLED)
 
@@ -89,6 +97,7 @@ class SpreadManagementServiceTest {
                 spreadPort = spreadPort,
                 marketDataPort = marketDataPort,
                 orderPort = orderPort,
+                universePort = universePort,
                 config = config,
                 clock = clockAtEntry,
             ).checkExits()
@@ -135,6 +144,7 @@ class SpreadManagementServiceTest {
                 spreadPort = spreadPort,
                 marketDataPort = marketDataPort,
                 orderPort = orderPort,
+                universePort = universePort,
                 config = config,
                 clock = clockAtEntry,
             ).checkExits()
@@ -169,6 +179,7 @@ class SpreadManagementServiceTest {
                 spreadPort = spreadPort,
                 marketDataPort = marketDataPort,
                 orderPort = orderPort,
+                universePort = universePort,
                 config = config,
                 clock = clock,
             ).checkExits()
@@ -188,16 +199,18 @@ class SpreadManagementServiceTest {
             // TP=$0.50, SL=$3.00; spread value=$0.60 — no exit
             coEvery { marketDataPort.getOptionMid(soldContract) } returns Money(BigDecimal("0.70"))
             coEvery { marketDataPort.getOptionMid(boughtContract) } returns Money(BigDecimal("0.10"))
+            coEvery { spreadPort.update(any()) } answers { firstArg() }
 
             SpreadManagementService(
                 spreadPort = spreadPort,
                 marketDataPort = marketDataPort,
                 orderPort = orderPort,
+                universePort = universePort,
                 config = config,
                 clock = clockAtEntry,
             ).checkExits()
 
             coVerify(exactly = 0) { orderPort.placeAndAwaitFill(any(), any(), any(), any()) }
-            coVerify(exactly = 0) { spreadPort.update(any()) }
+            coVerify(exactly = 1) { spreadPort.update(match { it.status == SpreadStatus.OPEN }) }
         }
 }

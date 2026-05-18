@@ -34,6 +34,7 @@ import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 
 private val logger = KotlinLogging.logger {}
+private val tradeLogger = KotlinLogging.logger("TRADES")
 
 @Service
 class TradeExecutionService(
@@ -58,6 +59,12 @@ class TradeExecutionService(
                     "${request.soldContract.strike}P/${request.boughtContract.strike}P " +
                     "exp=${request.soldContract.expiry} " +
                     "credit≈\$${request.targetCredit} ivRank=${"%.1f".format(request.ivRankAtEntry)}%"
+            }
+            tradeLogger.info {
+                "DIAGNOSTIC ${request.underlyingSymbol}  ${request.soldContract.strike}P/${request.boughtContract.strike}P" +
+                    "  exp=${request.soldContract.expiry}  credit=\$${request.targetCredit}  iv_rank=${"%.1f".format(
+                        request.ivRankAtEntry,
+                    )}%"
             }
             return TradeExecutionResult(ExecutionOutcome.DIAGNOSTIC_SKIPPED)
         }
@@ -98,7 +105,13 @@ class TradeExecutionService(
                 return TradeExecutionResult(ExecutionOutcome.ORDER_REJECTED)
             }
         // Stamp the real orderId now that we have it
-        pendingSpread = spreadPort.update(pendingSpread.copy(soldLeg = pendingSpread.soldLeg.copy(orderId = currentOrderId), boughtLeg = pendingSpread.boughtLeg.copy(orderId = currentOrderId)))
+        pendingSpread =
+            spreadPort.update(
+                pendingSpread.copy(
+                    soldLeg = pendingSpread.soldLeg.copy(orderId = currentOrderId),
+                    boughtLeg = pendingSpread.boughtLeg.copy(orderId = currentOrderId),
+                ),
+            )
         var currentCredit = request.targetCredit
         var ticksSinceAdjust = 0
         var outcome = ExecutionOutcome.TIMED_OUT
@@ -254,9 +267,17 @@ class TradeExecutionService(
                 "[${request.underlyingSymbol}] FILLED — " +
                     "gross=\$$currentCredit fees=\$$feePerShare net=\$$netCredit orderId=$currentOrderId spread saved"
             }
+            tradeLogger.info {
+                "ENTRY  ${request.underlyingSymbol}  ${request.soldContract.strike}P/${request.boughtContract.strike}P" +
+                    "  exp=${request.soldContract.expiry}  credit=\$$netCredit  iv_rank=${"%.1f".format(request.ivRankAtEntry)}%" +
+                    "  underlying=${request.underlyingPriceAtEntry}  order=$currentOrderId"
+            }
             return TradeExecutionResult(ExecutionOutcome.FILLED, netCredit, currentOrderId)
         }
 
+        tradeLogger.info {
+            "ABORTED ${request.underlyingSymbol}  ${request.soldContract.strike}P/${request.boughtContract.strike}P  reason=${outcome.name}"
+        }
         spreadPort.update(pendingSpread.copy(status = SpreadStatus.CLOSED_MANUAL, closeReason = outcome.name.lowercase()))
         return TradeExecutionResult(outcome)
     }
@@ -278,7 +299,13 @@ class TradeExecutionService(
             id = null,
             symbol = request.underlyingSymbol,
             soldLeg = SpreadLeg(contract = request.soldContract, action = LegAction.SELL, premium = Money(soldPremium), orderId = orderId),
-            boughtLeg = SpreadLeg(contract = request.boughtContract, action = LegAction.BUY, premium = Money(request.boughtMid), orderId = orderId),
+            boughtLeg =
+                SpreadLeg(
+                    contract = request.boughtContract,
+                    action = LegAction.BUY,
+                    premium = Money(request.boughtMid),
+                    orderId = orderId,
+                ),
             creditPerShare = credit,
             maxRiskPerShare = request.maxRiskPerShare,
             quantity = request.quantity,

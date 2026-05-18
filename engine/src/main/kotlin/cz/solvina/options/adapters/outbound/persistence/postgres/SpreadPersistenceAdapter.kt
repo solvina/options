@@ -3,6 +3,7 @@ package cz.solvina.options.adapters.outbound.persistence.postgres
 import cz.solvina.options.adapters.outbound.persistence.postgres.entity.SpreadPositionEntity
 import cz.solvina.options.adapters.outbound.persistence.postgres.repository.SpreadPositionRepository
 import cz.solvina.options.domain.features.order.LegAction
+import cz.solvina.options.domain.features.spread.SpreadPage
 import cz.solvina.options.domain.features.spread.SpreadPort
 import cz.solvina.options.domain.features.spread.model.BullPutSpread
 import cz.solvina.options.domain.features.spread.model.SpreadLeg
@@ -13,6 +14,8 @@ import cz.solvina.options.domain.models.OptionType
 import cz.solvina.options.domain.models.Symbol
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.springframework.data.domain.PageRequest
+import org.springframework.data.domain.Sort
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
 
@@ -38,12 +41,34 @@ class SpreadPersistenceAdapter(
 
     override suspend fun findOpen(): List<BullPutSpread> =
         withContext(Dispatchers.IO) {
-            repository.findByStatus(SpreadStatus.OPEN.name).map { it.toDomain() }
+            repository.findByStatusOrderByOpenedAtDesc(SpreadStatus.OPEN.name).map { it.toDomain() }
         }
 
     override suspend fun findAll(): List<BullPutSpread> =
         withContext(Dispatchers.IO) {
-            repository.findAll().map { it.toDomain() }
+            repository.findAllByOrderByOpenedAtDesc().map { it.toDomain() }
+        }
+
+    override suspend fun findPage(
+        status: SpreadStatus?,
+        page: Int,
+        size: Int,
+    ): SpreadPage =
+        withContext(Dispatchers.IO) {
+            val pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "openedAt"))
+            val result =
+                if (status != null) {
+                    repository.findByStatus(status.name, pageable)
+                } else {
+                    repository.findAllBy(pageable)
+                }
+            SpreadPage(
+                content = result.content.map { it.toDomain() },
+                totalElements = result.totalElements,
+                totalPages = result.totalPages,
+                page = result.number,
+                size = result.size,
+            )
         }
 
     override suspend fun countByStatus(status: SpreadStatus): Long =
@@ -53,12 +78,12 @@ class SpreadPersistenceAdapter(
 
     override suspend fun findByStatus(status: SpreadStatus): List<BullPutSpread> =
         withContext(Dispatchers.IO) {
-            repository.findByStatus(status.name).map { it.toDomain() }
+            repository.findByStatusOrderByOpenedAtDesc(status.name).map { it.toDomain() }
         }
 
     private fun BullPutSpread.toEntity(): SpreadPositionEntity =
         SpreadPositionEntity(
-            id = id ?: java.util.UUID.randomUUID(),
+            id = id,
             symbol = symbol.value,
             status = status.name,
             soldStrike = soldLeg.contract.strike,
@@ -75,6 +100,7 @@ class SpreadPersistenceAdapter(
             closedAt = closedAt,
             closeReason = closeReason,
             closePricePerShare = closePricePerShare,
+            lastSpreadValue = lastSpreadValue,
         )
 
     private fun SpreadPositionEntity.toDomain(): BullPutSpread {
@@ -83,7 +109,7 @@ class SpreadPersistenceAdapter(
         val soldContract = OptionContract(sym, expiry, soldStrike, OptionType.PUT)
         val boughtContract = OptionContract(sym, expiry, boughtStrike, OptionType.PUT)
         return BullPutSpread(
-            id = id,
+            id = requireNotNull(id) { "entity must have id after persistence" },
             symbol = sym,
             soldLeg = SpreadLeg(soldContract, LegAction.SELL, Money(BigDecimal.ZERO), soldOrderId ?: 0),
             boughtLeg = SpreadLeg(boughtContract, LegAction.BUY, Money(BigDecimal.ZERO), boughtOrderId ?: 0),
@@ -97,6 +123,7 @@ class SpreadPersistenceAdapter(
             closedAt = closedAt,
             closeReason = closeReason,
             closePricePerShare = closePricePerShare,
+            lastSpreadValue = lastSpreadValue,
         )
     }
 }

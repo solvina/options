@@ -65,6 +65,7 @@ class IbkrPositionsRegistry {
                 optionRight = right,
                 quantity = quantity,
                 avgCost = BigDecimal(avgCost).setScale(4, RoundingMode.HALF_UP),
+                conId = contract.conid(),
             ),
         )
     }

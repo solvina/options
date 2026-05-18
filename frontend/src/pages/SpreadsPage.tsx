@@ -4,9 +4,11 @@ import {
   listSpreadsOptions,
   softCloseSpreadMutation,
   forceCloseSpreadMutation,
+  refreshSpreadPnlMutation,
 } from '../generated/spreads/@tanstack/react-query.gen'
-import type { SpreadDto } from '../generated/spreads/types.gen'
+import type { SpreadDto, PagedSpreadsDto } from '../generated/spreads/types.gen'
 import { SpreadStatusBadge } from '../components/spreads/SpreadStatusBadge'
+import { useSortable, sorted, SortTh } from '../lib/sort'
 
 const STATUS_FILTERS = ['ALL', 'OPEN', 'CLOSED_PROFIT', 'CLOSED_STOP', 'CLOSED_TIME', 'CLOSED_MANUAL'] as const
 type StatusFilter = (typeof STATUS_FILTERS)[number]
@@ -20,6 +22,17 @@ function dte(expiryDate: string): number {
 
 function fmt(val: number | null | undefined, decimals = 2) {
   return val == null ? '—' : val.toFixed(decimals)
+}
+
+function PnlCell({ pnl, credit }: { pnl: number | null | undefined; credit: number | null | undefined }) {
+  if (pnl == null || credit == null || credit === 0) return <td className="px-3 py-2 text-muted-foreground tabular-nums">—</td>
+  const pct = (pnl / credit) * 100
+  const color = pnl >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'
+  return (
+    <td className={`px-3 py-2 tabular-nums font-medium ${color}`}>
+      {pnl >= 0 ? '+' : ''}{pnl.toFixed(4)} ({pct >= 0 ? '+' : ''}{pct.toFixed(0)}%)
+    </td>
+  )
 }
 
 function SpreadRow({ spread }: { spread: SpreadDto }) {
@@ -37,6 +50,10 @@ function SpreadRow({ spread }: { spread: SpreadDto }) {
       qc.invalidateQueries({ queryKey: ['listSpreads'] })
     },
   })
+  const refreshPnl = useMutation({
+    ...refreshSpreadPnlMutation(),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['listSpreads'] }),
+  })
 
   const daysToExpiry = spread.expiryDate ? dte(spread.expiryDate.toString()) : null
 
@@ -52,6 +69,19 @@ function SpreadRow({ spread }: { spread: SpreadDto }) {
       <td className="px-3 py-2">{spread.quantity}</td>
       <td className="px-3 py-2">
         <SpreadStatusBadge status={spread.status ?? ''} />
+      </td>
+      <PnlCell pnl={spread.currentPnl != null ? Number(spread.currentPnl) : null} credit={Number(spread.creditPerShare)} />
+      <td className="px-1 py-2">
+        {spread.status === 'OPEN' && (
+          <button
+            onClick={() => refreshPnl.mutate({ path: { id: spread.id! } })}
+            disabled={refreshPnl.isPending}
+            title="Refresh P&L"
+            className="text-muted-foreground hover:text-foreground disabled:opacity-40 text-xs px-1"
+          >
+            {refreshPnl.isPending ? '…' : '↺'}
+          </button>
+        )}
       </td>
       <td className="px-3 py-2 text-muted-foreground text-xs">
         {spread.openedAt ? new Date(spread.openedAt).toLocaleDateString() : '—'}
@@ -103,13 +133,34 @@ function SpreadRow({ spread }: { spread: SpreadDto }) {
 
 export function SpreadsPage() {
   const [filter, setFilter] = useState<StatusFilter>('ALL')
+  const [page, setPage] = useState(0)
+  const { sort, toggle } = useSortable('openedAt', 'desc')
 
   const { data, isLoading, isError } = useQuery({
-    ...listSpreadsOptions({ query: filter === 'ALL' ? {} : { status: filter } }),
+    ...listSpreadsOptions({
+      query: { ...(filter !== 'ALL' ? { status: filter } : {}), page, size: 25 },
+    }),
     refetchInterval: 30_000,
   })
 
-  const spreads = (data ?? []) as SpreadDto[]
+  const paged = data as PagedSpreadsDto | undefined
+  const spreads = paged?.content ?? []
+  const totalPages = paged?.totalPages ?? 0
+  const totalElements = paged?.totalElements ?? 0
+
+  const sortedSpreads = sorted(spreads as SpreadDto[], sort, (s, k) => {
+    if (k === 'dte') return s.expiryDate ? dte(s.expiryDate.toString()) : null
+    if (k === 'pnl') return s.currentPnl != null ? Number(s.currentPnl) : null
+    if (k === 'openedAt') return s.openedAt ? new Date(s.openedAt).getTime() : null
+    return (s as Record<string, unknown>)[k]
+  })
+
+  function changeFilter(f: StatusFilter) {
+    setFilter(f)
+    setPage(0)
+  }
+
+  const thClass = 'px-3 py-2 text-left'
 
   return (
     <div>
@@ -119,7 +170,7 @@ export function SpreadsPage() {
         {STATUS_FILTERS.map((s) => (
           <button
             key={s}
-            onClick={() => setFilter(s)}
+            onClick={() => changeFilter(s)}
             className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
               filter === s
                 ? 'bg-primary text-primary-foreground'
@@ -127,11 +178,6 @@ export function SpreadsPage() {
             }`}
           >
             {s === 'ALL' ? 'All' : s.replace('CLOSED_', '').replace('_', ' ')}
-            {s !== 'ALL' && data != null && (
-              <span className="ml-1 opacity-60">
-                ({spreads.filter((sp) => sp.status === s).length})
-              </span>
-            )}
           </button>
         ))}
       </div>
@@ -144,30 +190,57 @@ export function SpreadsPage() {
       )}
 
       {spreads.length > 0 && (
-        <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border bg-muted/50 text-muted-foreground text-xs uppercase tracking-wide">
-                <th className="px-3 py-2 text-left">Symbol</th>
-                <th className="px-3 py-2 text-left">Sold</th>
-                <th className="px-3 py-2 text-left">Bought</th>
-                <th className="px-3 py-2 text-left">Expiry</th>
-                <th className="px-3 py-2 text-left">DTE</th>
-                <th className="px-3 py-2 text-left">Credit</th>
-                <th className="px-3 py-2 text-left">Max Risk</th>
-                <th className="px-3 py-2 text-left">Qty</th>
-                <th className="px-3 py-2 text-left">Status</th>
-                <th className="px-3 py-2 text-left">Opened</th>
-                <th className="px-3 py-2 text-left">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {spreads.map((spread) => (
-                <SpreadRow key={spread.id} spread={spread} />
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <>
+          <div className="overflow-x-auto rounded-lg border border-border">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border bg-muted/50 text-muted-foreground text-xs uppercase tracking-wide">
+                  <SortTh label="Symbol" col="symbol" sort={sort} onSort={toggle} className={thClass} />
+                  <th className={thClass}>Sold</th>
+                  <th className={thClass}>Bought</th>
+                  <SortTh label="Expiry" col="expiryDate" sort={sort} onSort={toggle} className={thClass} />
+                  <SortTh label="DTE" col="dte" sort={sort} onSort={toggle} className={thClass} />
+                  <SortTh label="Credit" col="creditPerShare" sort={sort} onSort={toggle} className={thClass} />
+                  <th className={thClass}>Max Risk</th>
+                  <th className={thClass}>Qty</th>
+                  <th className={thClass}>Status</th>
+                  <SortTh label="P&L" col="pnl" sort={sort} onSort={toggle} className={thClass} />
+                  <th className="px-1 py-2"></th>
+                  <SortTh label="Opened" col="openedAt" sort={sort} onSort={toggle} className={thClass} />
+                  <th className={thClass}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedSpreads.map((spread) => (
+                  <SpreadRow key={spread.id} spread={spread} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="flex items-center gap-2 mt-3 text-sm">
+            <button
+              onClick={() => setPage((p) => p - 1)}
+              disabled={page === 0}
+              className="px-3 py-1 rounded bg-muted text-muted-foreground hover:text-foreground disabled:opacity-40"
+            >
+              &larr;
+            </button>
+            <span className="text-muted-foreground">
+              {page + 1} / {totalPages}
+            </span>
+            <button
+              onClick={() => setPage((p) => p + 1)}
+              disabled={page >= totalPages - 1}
+              className="px-3 py-1 rounded bg-muted text-muted-foreground hover:text-foreground disabled:opacity-40"
+            >
+              &rarr;
+            </button>
+            <span className="text-muted-foreground text-xs ml-1">
+              {totalElements} total
+            </span>
+          </div>
+        </>
       )}
     </div>
   )

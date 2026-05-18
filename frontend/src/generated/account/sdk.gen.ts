@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { GetAccountOverviewData, GetAccountOverviewResponses } from './types.gen';
+import type { CancelOrderData, CancelOrderErrors, CancelOrderResponses, ClosePositionData, ClosePositionResponses, GetAccountOverviewData, GetAccountOverviewResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean> = Options2<TData, ThrowOnError> & {
     /**
@@ -22,3 +22,20 @@ export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends 
  * Get account overview with all positions
  */
 export const getAccountOverview = <ThrowOnError extends boolean = false>(options?: Options<GetAccountOverviewData, ThrowOnError>) => (options?.client ?? client).get<GetAccountOverviewResponses, unknown, ThrowOnError>({ url: '/account', ...options });
+
+/**
+ * Close (kill) an IBKR position with a market order
+ */
+export const closePosition = <ThrowOnError extends boolean = false>(options: Options<ClosePositionData, ThrowOnError>) => (options.client ?? client).post<ClosePositionResponses, unknown, ThrowOnError>({
+    url: '/account/positions/close',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Cancel an open IBKR order
+ */
+export const cancelOrder = <ThrowOnError extends boolean = false>(options: Options<CancelOrderData, ThrowOnError>) => (options.client ?? client).delete<CancelOrderResponses, CancelOrderErrors, ThrowOnError>({ url: '/orders/{orderId}', ...options });

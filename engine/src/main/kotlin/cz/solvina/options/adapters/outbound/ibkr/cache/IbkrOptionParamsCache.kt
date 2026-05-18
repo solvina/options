@@ -11,7 +11,6 @@ import org.springframework.stereotype.Component
 import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.CopyOnWriteArraySet
 
 private val logger = KotlinLogging.logger {}
 
@@ -20,9 +19,12 @@ class IbkrOptionParamsCache(
     private val registry: IbkrContractRegistry,
     private val client: EClientSocket,
     private val contractCache: IbkrContractCache,
+    private val contractFactory: cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory,
     private val scannerConfig: ScannerConfig,
 ) {
     private val cache = ConcurrentHashMap<Symbol, OptionParams>()
+
+    fun getCached(symbol: Symbol): OptionParams? = cache[symbol]
 
     suspend fun getOrFetch(symbol: Symbol): OptionParams {
         val cached = cache[symbol]
@@ -34,13 +36,14 @@ class IbkrOptionParamsCache(
         logger.debug { "[$symbol] Fetching option params" }
         val underlyingConId = contractCache.getOrFetchUnderlyingConId(symbol)
 
+        val configuredExchange = contractFactory.defFor(symbol).optionExchange
+
         val reqId = registry.nextReqId()
         val deferred = CompletableDeferred<OptionParams>()
         registry.pendingOptionParams[reqId] =
             PendingOptionParamsRequest(
                 deferred = deferred,
-                expirations = CopyOnWriteArraySet(),
-                strikes = CopyOnWriteArraySet(),
+                exchange = configuredExchange,
             )
 
         client.reqSecDefOptParams(reqId, symbol.value, "", "STK", underlyingConId)

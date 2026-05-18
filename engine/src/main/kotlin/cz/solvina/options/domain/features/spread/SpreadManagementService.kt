@@ -7,10 +7,12 @@ import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.features.scanner.ScannerConfig
 import cz.solvina.options.domain.features.spread.model.BullPutSpread
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
+import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.models.Money
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
+import java.math.RoundingMode
 import java.time.Clock
 import java.time.Instant
 import java.time.LocalDate
@@ -18,12 +20,14 @@ import java.time.temporal.ChronoUnit
 import java.util.UUID
 
 private val logger = KotlinLogging.logger {}
+private val tradeLogger = KotlinLogging.logger("TRADES")
 
 @Service
 class SpreadManagementService(
     private val spreadPort: SpreadPort,
     private val marketDataPort: MarketDataPort,
     private val orderPort: OrderPort,
+    private val universePort: UniversePort,
     private val config: ScannerConfig,
     private val clock: Clock,
 ) {
@@ -72,19 +76,21 @@ class SpreadManagementService(
     private suspend fun forceCloseSpread(
         spread: BullPutSpread,
         estimatedSpreadValue: BigDecimal,
+        closeStatus: SpreadStatus = SpreadStatus.CLOSED_MANUAL,
+        closeReason: String = "MANUAL_FORCE",
     ): BullPutSpread {
-        logger.info { "[${spread.symbol}] Force-closing at market" }
+        logger.info { "[${spread.symbol}] Force-closing at market (reason=$closeReason)" }
         orderPort.placeMarketOrder(spread.soldLeg.contract, LegAction.BUY, spread.quantity)
         orderPort.placeMarketOrder(spread.boughtLeg.contract, LegAction.SELL, spread.quantity)
         val updated =
             spread.copy(
-                status = SpreadStatus.CLOSED_MANUAL,
+                status = closeStatus,
                 closedAt = Instant.now(clock),
-                closeReason = "MANUAL_FORCE",
+                closeReason = closeReason,
                 closePricePerShare = estimatedSpreadValue,
             )
         spreadPort.update(updated)
-        logger.info { "[${spread.symbol}] Force-closed. Estimated value \$$estimatedSpreadValue" }
+        logger.info { "[${spread.symbol}] Force-closed. status=$closeStatus value=\$$estimatedSpreadValue" }
         return updated
     }
 
@@ -112,27 +118,44 @@ class SpreadManagementService(
         val boughtMid = marketDataPort.getOptionMid(spread.boughtLeg.contract)
         val currentSpreadValue = soldMid.amount.subtract(boughtMid.amount)
 
-        val tpThreshold = spread.creditPerShare.multiply(BigDecimal.ONE.subtract(BigDecimal(config.takeProfitPercent)))
-        val slThreshold = spread.creditPerShare.add(spread.creditPerShare.multiply(BigDecimal(config.stopLossPercent)))
+        val inst = universePort.get(spread.symbol)
+        val takeProfitPercent = inst?.takeProfitPercent ?: config.takeProfitPercent
+        val stopLossPercent = inst?.stopLossPercent ?: config.stopLossPercent
+        val timeProfitDte = inst?.timeProfitDte ?: config.timeProfitDte
+
+        val tpThreshold = spread.creditPerShare.multiply(BigDecimal.ONE.subtract(BigDecimal(takeProfitPercent)))
+        val slThreshold = spread.creditPerShare.add(spread.creditPerShare.multiply(BigDecimal(stopLossPercent)))
 
         logger.debug {
             "[${spread.symbol}] spread value=\$$currentSpreadValue credit=\$${"%.4f".format(spread.creditPerShare)} " +
                 "TP≤\$${"%.4f".format(tpThreshold)} SL≥\$${"%.4f".format(slThreshold)} DTE=$dte"
         }
 
-        val (closeStatus, reason) =
+        val exitSignal: Pair<SpreadStatus, String>? =
             when {
                 currentSpreadValue <= tpThreshold ->
                     SpreadStatus.CLOSED_PROFIT to "TP: spread value \$$currentSpreadValue ≤ \$$tpThreshold"
                 currentSpreadValue >= slThreshold ->
                     SpreadStatus.CLOSED_STOP to "SL: spread value \$$currentSpreadValue ≥ \$$slThreshold"
-                dte <= config.timeProfitDte ->
-                    SpreadStatus.CLOSED_TIME to "DTE: $dte ≤ ${config.timeProfitDte}"
-                else -> return
+                dte <= timeProfitDte ->
+                    SpreadStatus.CLOSED_TIME to "DTE: $dte ≤ $timeProfitDte"
+                else -> null
             }
+
+        if (exitSignal == null) {
+            spreadPort.update(spread.copy(lastSpreadValue = currentSpreadValue))
+            return
+        }
+
+        val (closeStatus, reason) = exitSignal
 
         logger.info { "[${spread.symbol}] Closing spread — $reason" }
         closeSpread(spread, closeStatus, soldMid, boughtMid, currentSpreadValue)
+    }
+
+    private fun roundToTick(price: BigDecimal): BigDecimal {
+        val tick = if (price < BigDecimal("3.00")) BigDecimal("0.01") else BigDecimal("0.05")
+        return price.divide(tick, 0, RoundingMode.HALF_UP).multiply(tick).setScale(2)
     }
 
     private suspend fun closeSpread(
@@ -142,40 +165,66 @@ class SpreadManagementService(
         boughtMid: Money,
         currentSpreadValue: BigDecimal,
     ) {
-        // Buy back sold put
+        val roundedSoldMid = Money(roundToTick(soldMid.amount))
+        val roundedBoughtMid = Money(roundToTick(boughtMid.amount))
+
+        // Mark CLOSING immediately so the scanner won't re-enter this symbol while orders are in flight
+        val closing =
+            spread.copy(
+                status = SpreadStatus.CLOSING,
+                closeReason = closeStatus.name,
+                closePricePerShare = currentSpreadValue,
+            )
+        spreadPort.update(closing)
+
         val buyBackOrder =
             orderPort.placeAndAwaitFill(
                 contract = spread.soldLeg.contract,
                 action = LegAction.BUY,
-                limitPrice = soldMid,
+                limitPrice = roundedSoldMid,
                 qty = spread.quantity,
             )
         if (buyBackOrder.status != OrderStatus.FILLED) {
-            logger.warn { "[${spread.symbol}] Buy-back of sold put did not fill, skipping close" }
+            logger.warn {
+                "[${spread.symbol}] Buy-back of sold put did not fill after chase — left as CLOSING; use Kill button or manual close"
+            }
+            tradeLogger.info {
+                "CLOSING ${spread.symbol}  ${spread.soldLeg.contract.strike}P/${spread.boughtLeg.contract.strike}P  reason=buy_back_unfilled"
+            }
             return
         }
 
-        // Sell back bought put
         val sellBackOrder =
             orderPort.placeAndAwaitFill(
                 contract = spread.boughtLeg.contract,
                 action = LegAction.SELL,
-                limitPrice = boughtMid,
+                limitPrice = roundedBoughtMid,
                 qty = spread.quantity,
             )
         if (sellBackOrder.status != OrderStatus.FILLED) {
-            logger.warn { "[${spread.symbol}] Sell-back of bought put did not fill, spread NOT closed" }
+            logger.warn {
+                "[${spread.symbol}] Sell-back of bought put did not fill after chase — left as CLOSING; sold leg already closed, long put remains"
+            }
+            tradeLogger.info {
+                "CLOSING ${spread.symbol}  ${spread.soldLeg.contract.strike}P/${spread.boughtLeg.contract.strike}P  reason=sell_back_unfilled"
+            }
             return
         }
 
-        val updated =
-            spread.copy(
+        spreadPort.update(
+            closing.copy(
                 status = closeStatus,
                 closedAt = Instant.now(clock),
                 closeReason = closeStatus.name,
-                closePricePerShare = currentSpreadValue,
-            )
-        spreadPort.update(updated)
+            ),
+        )
         logger.info { "[${spread.symbol}] Spread closed: $closeStatus at \$$currentSpreadValue" }
+        tradeLogger.info {
+            "EXIT   ${spread.symbol}  ${spread.soldLeg.contract.strike}P/${spread.boughtLeg.contract.strike}P" +
+                "  exp=${spread.soldLeg.contract.expiry}  reason=${closeStatus.name}  value=\$$currentSpreadValue" +
+                "  credit=\$${spread.creditPerShare}  pnl=\$${spread.creditPerShare.subtract(
+                    currentSpreadValue,
+                ).multiply(BigDecimal("100")).multiply(BigDecimal(spread.quantity))}"
+        }
     }
 }

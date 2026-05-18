@@ -4,7 +4,7 @@ import cz.solvina.options.domain.features.account.AccountPort
 import cz.solvina.options.domain.features.execution.TradeExecutionPort
 import cz.solvina.options.domain.features.spread.SpreadPort
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
-import cz.solvina.options.domain.features.watchlist.WatchlistPort
+import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -21,7 +21,7 @@ private val logger = KotlinLogging.logger {}
 
 @Service
 class ScannerService(
-    private val watchlistPort: WatchlistPort,
+    private val universePort: UniversePort,
     private val candidateSelector: ScanCandidateSelector,
     private val accountPort: AccountPort,
     private val executionPort: TradeExecutionPort,
@@ -54,10 +54,13 @@ class ScannerService(
                 logger.info { "Net liquidation not yet available, skipping scan" }
                 return
             }
-        val openSpreads = spreadPort.findOpen() + spreadPort.findByStatus(SpreadStatus.PENDING)
+        val openSpreads =
+            spreadPort.findOpen() +
+                spreadPort.findByStatus(SpreadStatus.PENDING) +
+                spreadPort.findByStatus(SpreadStatus.CLOSING)
         val symbolsWithOpenSpread = openSpreads.map { it.symbol }.toSet()
 
-        val watchlist = watchlistPort.getActiveSymbols()
+        val watchlist = universePort.getActiveSymbols()
         for (symbol in watchlist) {
             if (symbolsWithOpenSpread.contains(symbol) || executionPort.isInFlight(symbol)) {
                 logger.debug { "[$symbol] Already has open or in-flight spread, skipping" }
@@ -70,7 +73,10 @@ class ScannerService(
         logger.info { "Scanner run complete" }
     }
 
-    private suspend fun scanSymbol(symbol: Symbol, totalCapital: Money) {
+    private suspend fun scanSymbol(
+        symbol: Symbol,
+        totalCapital: Money,
+    ) {
         val request = candidateSelector.select(symbol, totalCapital) ?: return
         ivRanksSnapshot[symbol.value] = request.ivRankAtEntry
         scope.launch { executionPort.execute(request) }

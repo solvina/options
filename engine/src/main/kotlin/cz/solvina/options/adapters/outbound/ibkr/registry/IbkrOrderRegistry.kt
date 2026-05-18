@@ -12,6 +12,7 @@ private val logger = KotlinLogging.logger {}
 @Component
 class IbkrOrderRegistry {
     internal val pendingOrderStatus = ConcurrentHashMap<Int, CompletableDeferred<OrderStatus>>()
+    private val selfCancelledOrders = ConcurrentHashMap.newKeySet<Int>()
     private val orderIdCounter = AtomicInteger(1)
 
     fun seedOrderId(id: Int) {
@@ -20,6 +21,10 @@ class IbkrOrderRegistry {
     }
 
     fun nextOrderId(): Int = orderIdCounter.getAndIncrement()
+
+    fun markSelfCancelled(orderId: Int) {
+        selfCancelledOrders.add(orderId)
+    }
 
     fun onOrderStatus(
         orderId: Int,
@@ -38,6 +43,27 @@ class IbkrOrderRegistry {
         code: Int,
         msg: String,
     ) {
+        // 201 = order rejected, 202 = order cancelled — business outcomes, not technical failures.
+        // Paper-account "guaranteed-to-lose" limit is expected and logged at WARN.
+        // Any other 201 (permissions, risk limits, etc.) is unexpected and logged at ERROR.
+        // 399 = "order will not be placed until market opens" — just a timing warning; order is queued
+        if (code == 399) {
+            logger.info { "Order $id after-hours warning [code=399]: $msg" }
+            return
+        }
+        if (code == 201 || code == 202) {
+            val isPaperAccountLimit =
+                msg.contains("Guaranteed-to-Lose", ignoreCase = true) ||
+                    msg.contains("guaranteed-loss", ignoreCase = true)
+            val isSelfCancelled = selfCancelledOrders.remove(id)
+            when {
+                isSelfCancelled -> logger.debug { "Order $id self-cancelled for repricing [code=$code]" }
+                isPaperAccountLimit -> logger.warn { "Order $id rejected/cancelled [code=$code]: $msg" }
+                else -> logger.error { "Order $id rejected [code=$code] — unexpected reason (check account permissions): $msg" }
+            }
+            pendingOrderStatus.remove(id)?.complete(OrderStatus.CANCELLED)
+            return
+        }
         pendingOrderStatus.remove(id)?.completeExceptionally(RuntimeException("IBKR error [code=$code]: $msg"))
     }
 

@@ -15,7 +15,21 @@ interface SpreadPort {
 
     suspend fun findAll(): List<BullPutSpread>
 
+    suspend fun findPage(
+        status: SpreadStatus?,
+        page: Int,
+        size: Int,
+    ): SpreadPage
+
     suspend fun countByStatus(status: SpreadStatus): Long
 
     suspend fun findByStatus(status: SpreadStatus): List<BullPutSpread>
 }
+
+data class SpreadPage(
+    val content: List<BullPutSpread>,
+    val totalElements: Long,
+    val totalPages: Int,
+    val page: Int,
+    val size: Int,
+)

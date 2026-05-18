@@ -21,8 +21,10 @@ internal data class PendingContractRequest(
 
 internal data class PendingOptionParamsRequest(
     val deferred: CompletableDeferred<OptionParams>,
-    val expirations: CopyOnWriteArraySet<LocalDate>,
-    val strikes: CopyOnWriteArraySet<BigDecimal>,
+    val strikesByExpiry: ConcurrentHashMap<LocalDate, CopyOnWriteArraySet<BigDecimal>> = ConcurrentHashMap(),
+    var exchange: String = "SMART",
+    var tradingClass: String = "",
+    var multiplier: String = "100",
 )
 
 @Component
@@ -48,27 +50,41 @@ class IbkrContractRegistry(
 
     fun onSecurityDefinitionOptionalParameter(
         reqId: Int,
+        exchange: String,
+        tradingClass: String,
+        multiplier: String,
         expirations: Set<String>,
         strikes: Set<Double>,
     ) {
         val request = pendingOptionParams[reqId] ?: return
+        if (request.exchange == "SMART" && exchange.isNotBlank()) request.exchange = exchange
+        if (request.tradingClass.isEmpty() && tradingClass.isNotBlank()) request.tradingClass = tradingClass
+        if (multiplier.isNotBlank()) request.multiplier = multiplier
+        // Skip strikes from secondary exchanges to avoid cross-exchange strike contamination
+        // (e.g., FTA has finer strike spacing than EUREX; merging causes "not found" errors)
+        if (exchange != request.exchange) return
+        val parsedStrikes = strikes.filter { it > 0 }.map { BigDecimal(it.toString()) }
         expirations.forEach { expStr ->
             runCatching {
                 LocalDate.parse(expStr, DateTimeFormatter.ofPattern("yyyyMMdd"))
-            }.getOrNull()?.let { request.expirations.add(it) }
-        }
-        strikes.forEach { s ->
-            if (s > 0) request.strikes.add(BigDecimal(s.toString()))
+            }.getOrNull()?.let { expiry ->
+                request.strikesByExpiry.getOrPut(expiry) { CopyOnWriteArraySet() }.addAll(parsedStrikes)
+            }
         }
     }
 
     fun onSecurityDefinitionOptionalParameterEnd(reqId: Int) {
         val request = pendingOptionParams.remove(reqId) ?: return
+        val strikesByExpiry = request.strikesByExpiry.mapValues { it.value.toSet() }
         request.deferred.complete(
             OptionParams(
-                expirations = request.expirations.toSet(),
-                strikes = request.strikes.toSet(),
+                expirations = strikesByExpiry.keys,
+                strikes = strikesByExpiry.values.flatten().toSet(),
+                strikesByExpiry = strikesByExpiry,
                 fetchedAt = java.time.Instant.now(),
+                exchange = request.exchange,
+                tradingClass = request.tradingClass,
+                multiplier = request.multiplier,
             ),
         )
     }

@@ -16,3 +16,7 @@ ibkr:
     ASML:
       currency: EUR
       exchange: AEB
+      optionExchange: EUREX
+      marketTimezone: Europe/Amsterdam
+      marketOpen: "09:00"
+      marketClose: "17:30"

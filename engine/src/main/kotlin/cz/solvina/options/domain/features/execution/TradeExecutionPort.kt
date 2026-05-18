@@ -6,5 +6,6 @@ import cz.solvina.options.domain.models.Symbol
 
 interface TradeExecutionPort {
     suspend fun execute(request: TradeExecutionRequest): TradeExecutionResult
+
     fun isInFlight(symbol: Symbol): Boolean
 }

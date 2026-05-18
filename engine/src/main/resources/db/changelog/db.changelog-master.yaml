@@ -1,3 +1,9 @@
 databaseChangeLog:
   - include:
       file: db/changelog/v1__spread_positions.yaml
+  - include:
+      file: db/changelog/v2__spread_positions_indexes.yaml
+  - include:
+      file: db/changelog/v3__spread_last_value.yaml
+  - include:
+      file: db/changelog/v4__instrument_universe.yaml

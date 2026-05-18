@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { ForceCloseSpreadData, ForceCloseSpreadErrors, ForceCloseSpreadResponses, GetScannerStatusData, GetScannerStatusResponses, GetSpreadByIdData, GetSpreadByIdErrors, GetSpreadByIdResponses, ListSpreadsData, ListSpreadsResponses, PauseMonitorData, PauseMonitorResponses, PauseScannerData, PauseScannerResponses, ResumeMonitorData, ResumeMonitorResponses, ResumeScannerData, ResumeScannerResponses, SoftCloseSpreadData, SoftCloseSpreadErrors, SoftCloseSpreadResponses, TriggerScanData, TriggerScanResponses } from './types.gen';
+import type { ForceCloseSpreadData, ForceCloseSpreadErrors, ForceCloseSpreadResponses, GetScannerStatusData, GetScannerStatusResponses, GetSpreadByIdData, GetSpreadByIdErrors, GetSpreadByIdResponses, ListSpreadsData, ListSpreadsResponses, PauseMonitorData, PauseMonitorResponses, PauseScannerData, PauseScannerResponses, RefreshSpreadPnlData, RefreshSpreadPnlErrors, RefreshSpreadPnlResponses, ResumeMonitorData, ResumeMonitorResponses, ResumeScannerData, ResumeScannerResponses, SoftCloseSpreadData, SoftCloseSpreadErrors, SoftCloseSpreadResponses, TriggerScanData, TriggerScanResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean> = Options2<TData, ThrowOnError> & {
     /**
@@ -32,6 +32,11 @@ export const getSpreadById = <ThrowOnError extends boolean = false>(options: Opt
  * Soft-close a spread at mid price (limit orders)
  */
 export const softCloseSpread = <ThrowOnError extends boolean = false>(options: Options<SoftCloseSpreadData, ThrowOnError>) => (options.client ?? client).post<SoftCloseSpreadResponses, SoftCloseSpreadErrors, ThrowOnError>({ url: '/spreads/{id}/close', ...options });
+
+/**
+ * Recompute and persist current P&L for a spread (ad-hoc, hits market data)
+ */
+export const refreshSpreadPnl = <ThrowOnError extends boolean = false>(options: Options<RefreshSpreadPnlData, ThrowOnError>) => (options.client ?? client).post<RefreshSpreadPnlResponses, RefreshSpreadPnlErrors, ThrowOnError>({ url: '/spreads/{id}/refresh-pnl', ...options });
 
 /**
  * Force-close a spread at market price

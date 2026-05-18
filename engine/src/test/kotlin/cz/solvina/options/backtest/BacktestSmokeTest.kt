@@ -1,11 +1,13 @@
 package cz.solvina.options.backtest
 
 import cz.solvina.options.domain.features.execution.TradeExecutionService
+import cz.solvina.options.domain.features.scanner.ScanCandidateSelector
 import cz.solvina.options.domain.features.scanner.ScannerConfig
 import cz.solvina.options.domain.features.scanner.ScannerService
 import cz.solvina.options.domain.features.spread.SpreadManagementService
+import cz.solvina.options.domain.features.universe.InstrumentConfig
+import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.features.volatility.IvRankService
-import cz.solvina.options.domain.features.watchlist.WatchlistPort
 import cz.solvina.options.domain.models.Symbol
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -66,10 +68,21 @@ class BacktestSmokeTest {
         val marketTickAdapter = BacktestMarketTickAdapter(clock, marketAdapter)
         val orderExecutionAdapter = BacktestOrderExecutionAdapter()
 
-        val watchlistPort =
-            object : WatchlistPort {
+        val universePort =
+            object : UniversePort {
                 override fun getWatchlist() = listOf(Symbol("SPY"))
+
+                override fun getActiveSymbols() = listOf(Symbol("SPY"))
+
+                override suspend fun getAll(): List<InstrumentConfig> = listOf(InstrumentConfig(Symbol("SPY")))
+
+                override suspend fun get(symbol: Symbol): InstrumentConfig? = null
+
+                override suspend fun save(config: InstrumentConfig): InstrumentConfig = config
+
+                override suspend fun delete(symbol: Symbol) = Unit
             }
+
         val ivRankService = IvRankService(historicalAdapter, config, clock)
 
         val executionService =
@@ -77,20 +90,34 @@ class BacktestSmokeTest {
                 marketTickPort = marketTickAdapter,
                 orderExecutionPort = orderExecutionAdapter,
                 spreadPort = spreadAdapter,
-                accountPort = accountAdapter,
+                validator =
+                    cz.solvina.options.domain.features.execution.PreTradeValidator(
+                        spreadPort = spreadAdapter,
+                        orderExecutionPort = orderExecutionAdapter,
+                        accountPort = accountAdapter,
+                        config = config,
+                    ),
                 config = config,
                 clock = clock,
                 scope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
             )
 
-        val scanner =
-            ScannerService(
-                watchlistPort = watchlistPort,
+        val candidateSelector =
+            ScanCandidateSelector(
                 volatilityPort = ivRankService,
                 marketDataPort = marketAdapter,
                 optionChainPort = optionChainAdapter,
+                universePort = universePort,
+                config = config,
+                clock = clock,
+            )
+
+        val scanner =
+            ScannerService(
+                universePort = universePort,
+                candidateSelector = candidateSelector,
                 accountPort = accountAdapter,
-                executionService = executionService,
+                executionPort = executionService,
                 spreadPort = spreadAdapter,
                 config = config,
                 clock = clock,
@@ -101,6 +128,7 @@ class BacktestSmokeTest {
                 spreadPort = spreadAdapter,
                 marketDataPort = marketAdapter,
                 orderPort = orderAdapter,
+                universePort = universePort,
                 config = config,
                 clock = clock,
             )

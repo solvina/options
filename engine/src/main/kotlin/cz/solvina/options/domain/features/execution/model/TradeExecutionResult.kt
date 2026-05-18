@@ -29,4 +29,10 @@ enum class ExecutionOutcome {
 
     /** Pre-trade check: available funds < maxRiskPerContract. */
     CAPITAL_REJECTED,
+
+    /** Broker rejected the order (e.g. paper-account "guaranteed-to-lose" limit, error 201). */
+    ORDER_REJECTED,
+
+    /** Trading is disabled via scanner.trading-enabled=false; execution skipped intentionally. */
+    DIAGNOSTIC_SKIPPED,
 }

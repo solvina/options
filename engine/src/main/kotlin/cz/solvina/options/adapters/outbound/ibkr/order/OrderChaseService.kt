@@ -86,6 +86,7 @@ class OrderChaseService(
     }
 
     private suspend fun cancelAndWait(orderId: Int) {
+        registry.markSelfCancelled(orderId)
         client.cancelOrder(orderId, OrderCancel())
         runCatching {
             withTimeout(10_000L) {

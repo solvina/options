@@ -24,6 +24,8 @@ import com.ib.client.SoftDollarTier
 import com.ib.client.TickAttrib
 import com.ib.client.TickAttribBidAsk
 import com.ib.client.TickAttribLast
+import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOpenOrdersRegistry
+import cz.solvina.options.adapters.outbound.ibkr.account.IbkrPnlRegistry
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrPositionsRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrAccountRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrContractRegistry
@@ -44,6 +46,8 @@ class IbkrEWrapper(
     private val orderRegistry: IbkrOrderRegistry,
     private val accountRegistry: IbkrAccountRegistry,
     private val positionsRegistry: IbkrPositionsRegistry,
+    private val openOrdersRegistry: IbkrOpenOrdersRegistry,
+    private val pnlRegistry: IbkrPnlRegistry,
 ) : EWrapper {
     override fun tickPrice(
         tickerId: Int,
@@ -120,7 +124,7 @@ class IbkrEWrapper(
         parentId: Int,
         lastFillPrice: Double,
         clientId: Int,
-        whyHeld: String,
+        whyHeld: String?,
         mktCapPrice: Double,
     ) {
         logger.debug { "orderStatus: orderId=$orderId, status=$status, filled=$filled" }
@@ -134,10 +138,12 @@ class IbkrEWrapper(
         orderState: OrderState,
     ) {
         logger.debug { "openOrder: orderId=$orderId, symbol=${contract.symbol()}" }
+        openOrdersRegistry.onOpenOrder(orderId, contract, order, orderState)
     }
 
     override fun openOrderEnd() {
         logger.debug { "openOrderEnd" }
+        openOrdersRegistry.onOpenOrderEnd()
     }
 
     override fun updateAccountValue(
@@ -411,7 +417,7 @@ class IbkrEWrapper(
         errorMsg: String,
         advancedOrderRejectJson: String?,
     ) {
-        if (errorCode in listOf(2104, 2106, 2158)) {
+        if (errorCode in listOf(2104, 2106, 2108, 2119, 2158, 2161, 10090, 10167)) {
             logger.info { "IBKR info [id=$id, code=$errorCode]: $errorMsg" }
         } else {
             logger.error { "IBKR error [id=$id, code=$errorCode]: $errorMsg" }
@@ -432,6 +438,7 @@ class IbkrEWrapper(
         marketDataRegistry.cancelAllPending(cause)
         orderRegistry.cancelAllPending(cause)
         positionsRegistry.cancelPending()
+        openOrdersRegistry.cancelPending()
         accountRegistry.onDisconnect()
     }
 
@@ -478,10 +485,10 @@ class IbkrEWrapper(
         expirations: MutableSet<String>,
         strikes: MutableSet<Double>,
     ) {
-        logger.debug {
-            "securityDefinitionOptionalParameter: reqId=$reqId, exchange=$exchange, expirations=${expirations.size}, strikes=${strikes.size}"
+        logger.info {
+            "securityDefinitionOptionalParameter: reqId=$reqId, exchange=$exchange, tradingClass=$tradingClass, multiplier=$multiplier, expirations=${expirations.size}, strikes=${strikes.size}"
         }
-        contractRegistry.onSecurityDefinitionOptionalParameter(reqId, expirations, strikes)
+        contractRegistry.onSecurityDefinitionOptionalParameter(reqId, exchange, tradingClass, multiplier, expirations, strikes)
     }
 
     override fun securityDefinitionOptionalParameterEnd(reqId: Int) {
@@ -541,7 +548,7 @@ class IbkrEWrapper(
     override fun tickReqParams(
         tickerId: Int,
         minTick: Double,
-        bboExchange: String,
+        bboExchange: String?,
         snapshotPermissions: Int,
     ) {
         logger.trace { "tickReqParams: tickerId=$tickerId" }
@@ -637,7 +644,7 @@ class IbkrEWrapper(
         realizedPnL: Double,
         value: Double,
     ) {
-        logger.debug { "pnlSingle: reqId=$reqId" }
+        pnlRegistry.onPnlSingle(reqId, unrealizedPnL)
     }
 
     override fun historicalTicks(

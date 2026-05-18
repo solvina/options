@@ -1,0 +1,149 @@
+openapi: 3.0.3
+info:
+  title: Options Engine - Universe API
+  description: Instrument universe management — watchlist with per-symbol trade parameter overrides
+  version: 1.0.0
+
+paths:
+  /universe:
+    get:
+      tags:
+        - Universe
+      summary: List all instruments in the universe
+      operationId: listUniverse
+      responses:
+        '200':
+          description: All instruments with their parameter overrides
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/InstrumentConfigDto'
+
+  /universe/{symbol}:
+    put:
+      tags:
+        - Universe
+      summary: Create or update an instrument in the universe
+      operationId: saveInstrument
+      parameters:
+        - name: symbol
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstrumentConfigDto'
+      responses:
+        '200':
+          description: Saved instrument config
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstrumentConfigDto'
+
+    delete:
+      tags:
+        - Universe
+      summary: Remove an instrument from the universe
+      operationId: deleteInstrument
+      parameters:
+        - name: symbol
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Removed
+
+  /universe/{symbol}/toggle:
+    patch:
+      tags:
+        - Universe
+      summary: Toggle enabled/disabled for an instrument
+      operationId: toggleInstrument
+      parameters:
+        - name: symbol
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Updated instrument config
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstrumentConfigDto'
+        '404':
+          description: Symbol not found
+
+components:
+  schemas:
+    InstrumentConfigDto:
+      type: object
+      required:
+        - symbol
+        - enabled
+      properties:
+        symbol:
+          type: string
+          example: SPY
+        enabled:
+          type: boolean
+        ivRankThreshold:
+          type: number
+          format: double
+          nullable: true
+          description: Override IV rank entry threshold (%). Null = use global default.
+        minDte:
+          type: integer
+          nullable: true
+        maxDte:
+          type: integer
+          nullable: true
+        preferredDte:
+          type: integer
+          nullable: true
+        targetDelta:
+          type: number
+          format: double
+          nullable: true
+        deltaMin:
+          type: number
+          format: double
+          nullable: true
+        deltaMax:
+          type: number
+          format: double
+          nullable: true
+        spreadWidthUsd:
+          type: number
+          nullable: true
+        minCreditPerShare:
+          type: number
+          nullable: true
+        maxRiskPercent:
+          type: number
+          format: double
+          nullable: true
+        takeProfitPercent:
+          type: number
+          format: double
+          nullable: true
+        stopLossPercent:
+          type: number
+          format: double
+          nullable: true
+        timeProfitDte:
+          type: integer
+          nullable: true
+        notes:
+          type: string
+          nullable: true

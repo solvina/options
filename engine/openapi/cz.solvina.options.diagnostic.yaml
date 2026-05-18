@@ -1,0 +1,238 @@
+openapi: 3.0.3
+info:
+  title: Options Engine - Diagnostic API
+  description: Live data health probes for pre-live verification
+  version: 1.0.0
+
+paths:
+  /diagnostic/data-health:
+    get:
+      tags:
+        - Diagnostic
+      summary: Latest cached diagnostic reports for all watchlist symbols + account
+      operationId: getDataHealth
+      responses:
+        '200':
+          description: Diagnostic health snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataHealthDto'
+
+  /diagnostic/probe/{symbol}:
+    post:
+      tags:
+        - Diagnostic
+      summary: Run a full data probe for one symbol (hits TWS live)
+      operationId: probeSymbol
+      parameters:
+        - name: symbol
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Fresh probe result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SymbolHealthDto'
+
+  /diagnostic/probe-account:
+    post:
+      tags:
+        - Diagnostic
+      summary: Run account/positions/orders probe (hits TWS live)
+      operationId: probeAccount
+      responses:
+        '200':
+          description: Fresh account probe result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountHealthDto'
+
+components:
+  schemas:
+    DataHealthDto:
+      type: object
+      properties:
+        symbols:
+          type: array
+          items:
+            $ref: '#/components/schemas/SymbolHealthDto'
+        account:
+          $ref: '#/components/schemas/AccountHealthDto'
+          nullable: true
+        watchlist:
+          type: array
+          items:
+            type: string
+          description: All watchlist symbols, used by frontend to fire probes on first run
+
+    SymbolHealthDto:
+      type: object
+      properties:
+        symbol:
+          type: string
+        probedAt:
+          type: string
+          format: date-time
+          nullable: true
+        contractResolution:
+          $ref: '#/components/schemas/ContractResolutionDto'
+        optionParams:
+          $ref: '#/components/schemas/OptionParamsDto'
+        historicalData:
+          $ref: '#/components/schemas/HistoricalDataDto'
+        spot:
+          $ref: '#/components/schemas/SpotDto'
+        optionSamples:
+          type: array
+          items:
+            $ref: '#/components/schemas/OptionMidSampleDto'
+        tickStream:
+          $ref: '#/components/schemas/TickStreamDto'
+          nullable: true
+        errors:
+          type: array
+          items:
+            type: string
+
+    ContractResolutionDto:
+      type: object
+      properties:
+        stockConId:
+          type: integer
+          nullable: true
+        durationMs:
+          type: integer
+          format: int64
+        error:
+          type: string
+          nullable: true
+
+    OptionParamsDto:
+      type: object
+      properties:
+        strikeCount:
+          type: integer
+        availableExpiries:
+          type: array
+          items:
+            type: string
+            format: date
+        error:
+          type: string
+          nullable: true
+
+    HistoricalDataDto:
+      type: object
+      properties:
+        barCount:
+          type: integer
+        ivPopulated:
+          type: boolean
+        currentIv:
+          type: number
+          nullable: true
+        ivRank:
+          type: number
+          nullable: true
+        error:
+          type: string
+          nullable: true
+
+    SpotDto:
+      type: object
+      properties:
+        price:
+          type: number
+          nullable: true
+        source:
+          type: string
+          enum: [LIVE, HISTORICAL_FALLBACK, BS_FALLBACK, UNAVAILABLE]
+        durationMs:
+          type: integer
+          format: int64
+        error:
+          type: string
+          nullable: true
+
+    OptionMidSampleDto:
+      type: object
+      properties:
+        strike:
+          type: number
+        expiry:
+          type: string
+          format: date
+        bid:
+          type: number
+          nullable: true
+        ask:
+          type: number
+          nullable: true
+        mid:
+          type: number
+        delta:
+          type: number
+          nullable: true
+        impliedVol:
+          type: number
+          nullable: true
+        source:
+          type: string
+          enum: [LIVE, HISTORICAL_FALLBACK, BS_FALLBACK, UNAVAILABLE]
+        durationMs:
+          type: integer
+          format: int64
+
+    TickStreamDto:
+      type: object
+      properties:
+        ticksReceived:
+          type: integer
+        lastBid:
+          type: number
+          nullable: true
+        lastAsk:
+          type: number
+          nullable: true
+        lastDelta:
+          type: number
+          nullable: true
+        windowMs:
+          type: integer
+          format: int64
+        error:
+          type: string
+          nullable: true
+
+    AccountHealthDto:
+      type: object
+      properties:
+        probedAt:
+          type: string
+          format: date-time
+          nullable: true
+        netLiquidation:
+          type: number
+          nullable: true
+        availableFunds:
+          type: number
+          nullable: true
+        accountError:
+          type: string
+          nullable: true
+        positionCount:
+          type: integer
+        positionsError:
+          type: string
+          nullable: true
+        openOrderCount:
+          type: integer
+        openOrdersError:
+          type: string
+          nullable: true

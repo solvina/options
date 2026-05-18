@@ -1,0 +1,18 @@
+databaseChangeLog:
+  - changeSet:
+      id: v2__spread_positions_indexes
+      author: vseliga
+      changes:
+        - createIndex:
+            indexName: idx_spread_positions_status
+            tableName: spread_positions
+            columns:
+              - column:
+                  name: status
+        - createIndex:
+            indexName: idx_spread_positions_opened_at
+            tableName: spread_positions
+            columns:
+              - column:
+                  name: opened_at
+                  descending: true
