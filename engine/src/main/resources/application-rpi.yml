@@ -7,16 +7,31 @@ spring:
 
 scanner:
   watchlist: [ SPY, QQQ, AAPL, MSFT, AMZN, IWM, DIA, TSLA, NVDA, META, GOOGL, XLF, XLE, XLV, AMD, UNH, ASML ]
+  cron: "0 */15 3-15 * * MON-FRI"   # covers EU morning (03:00 ET = 09:00 CEST) through US close (15:00 ET)
 
 ibkr:
   connection:
     host: localhost   # IB Gateway runs in Docker on the same RPi, mapped to host:7497
     paper-account: true
+    use-live-market-data: false   # request type 3 (delayed) so symbols without live option data still get bid/ask
   instruments:
     ASML:
       currency: EUR
       exchange: AEB
       optionExchange: EUREX
+      marketExchange: EU
       marketTimezone: Europe/Amsterdam
       marketOpen: "09:00"
       marketClose: "17:30"
+    SAP:
+      currency: EUR
+      optionExchange: EUREX   # base config has DTB but IBKR returns EUREX
+      marketExchange: EU
+    SIE:
+      currency: EUR
+      optionExchange: EUREX   # base config has DTB but IBKR returns EUREX
+      marketExchange: EU
+    ALV:
+      currency: EUR
+      optionExchange: EUREX   # base config has DTB but IBKR returns EUREX
+      marketExchange: EU
