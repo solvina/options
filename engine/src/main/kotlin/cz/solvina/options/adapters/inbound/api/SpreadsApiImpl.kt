@@ -1,13 +1,20 @@
 package cz.solvina.options.adapters.inbound.api
 
 import cz.solvina.options.domain.features.market.MarketDataPort
+import cz.solvina.options.domain.features.spread.SpreadAnalyticsService
 import cz.solvina.options.domain.features.spread.SpreadManagementService
 import cz.solvina.options.domain.features.spread.SpreadPort
 import cz.solvina.options.domain.features.spread.model.BullPutSpread
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
 import `cz.solvina.options.spreads`.api.SpreadsApi
+import `cz.solvina.options.spreads`.dto.AnalyticsSummaryDto
+import `cz.solvina.options.spreads`.dto.IvBucketBreakdownDto
 import `cz.solvina.options.spreads`.dto.PagedSpreadsDto
+import `cz.solvina.options.spreads`.dto.PnlTimelinePointDto
+import `cz.solvina.options.spreads`.dto.SpreadAnalyticsDto
 import `cz.solvina.options.spreads`.dto.SpreadDto
+import `cz.solvina.options.spreads`.dto.StatusBreakdownDto
+import `cz.solvina.options.spreads`.dto.SymbolBreakdownDto
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
@@ -23,6 +30,7 @@ private val logger = KotlinLogging.logger {}
 class SpreadsApiImpl(
     private val spreadPort: SpreadPort,
     private val spreadManagementService: SpreadManagementService,
+    private val spreadAnalyticsService: SpreadAnalyticsService,
     private val marketDataPort: MarketDataPort,
 ) : SpreadsApi {
     override suspend fun listSpreads(
@@ -73,6 +81,62 @@ class SpreadsApiImpl(
             is SpreadManagementService.ManualCloseResult.AlreadyClosed -> ResponseEntity.status(HttpStatus.CONFLICT).build()
         }
 
+    override suspend fun getSpreadAnalytics(): ResponseEntity<SpreadAnalyticsDto> {
+        val a = spreadAnalyticsService.compute()
+        return ResponseEntity.ok(
+            SpreadAnalyticsDto(
+                summary =
+                    AnalyticsSummaryDto(
+                        totalTrades = a.summary.totalTrades,
+                        openTrades = a.summary.openTrades,
+                        winRate = a.summary.winRate.toBigDecimal(),
+                        totalRealizedPnl = a.summary.totalRealizedPnl,
+                        avgPnlPerTrade = a.summary.avgPnlPerTrade,
+                        avgHoldDays = a.summary.avgHoldDays.toBigDecimal(),
+                    ),
+                byStatus =
+                    a.byStatus.map { s ->
+                        StatusBreakdownDto(
+                            status = s.status,
+                            count = s.count,
+                            totalPnl = s.totalPnl,
+                            avgPnl = s.avgPnl,
+                            avgHoldDays = s.avgHoldDays.toBigDecimal(),
+                        )
+                    },
+                bySymbol =
+                    a.bySymbol.map { s ->
+                        SymbolBreakdownDto(
+                            symbol = s.symbol,
+                            count = s.count,
+                            wins = s.wins,
+                            winRate = s.winRate.toBigDecimal(),
+                            totalPnl = s.totalPnl,
+                            avgPnl = s.avgPnl,
+                            avgCreditRatio = s.avgCreditRatio.toBigDecimal(),
+                        )
+                    },
+                byEntryIvBucket =
+                    a.byEntryIvBucket.map { b ->
+                        IvBucketBreakdownDto(
+                            bucket = b.bucket,
+                            count = b.count,
+                            winRate = b.winRate.toBigDecimal(),
+                            avgPnl = b.avgPnl,
+                        )
+                    },
+                pnlTimeline =
+                    a.pnlTimeline.map { p ->
+                        PnlTimelinePointDto(
+                            date = p.date,
+                            dailyPnl = p.dailyPnl,
+                            cumulativePnl = p.cumulativePnl,
+                        )
+                    },
+            ),
+        )
+    }
+
     override suspend fun forceCloseSpread(id: UUID): ResponseEntity<SpreadDto> =
         when (val result = spreadManagementService.forceClose(id)) {
             is SpreadManagementService.ManualCloseResult.Closed -> ResponseEntity.ok(result.spread.toDto())
@@ -109,6 +173,8 @@ class SpreadsApiImpl(
             closePricePerShare = closePricePerShare,
             currentSpreadValue = currentSpreadValue,
             currentPnl = currentPnl,
+            underlyingPriceAtExit = underlyingPriceAtExit,
+            ivRankAtExit = ivRankAtExit,
         )
     }
 }

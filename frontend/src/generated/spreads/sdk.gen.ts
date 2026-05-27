@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { ForceCloseSpreadData, ForceCloseSpreadErrors, ForceCloseSpreadResponses, GetScannerStatusData, GetScannerStatusResponses, GetSpreadByIdData, GetSpreadByIdErrors, GetSpreadByIdResponses, ListSpreadsData, ListSpreadsResponses, PauseMonitorData, PauseMonitorResponses, PauseScannerData, PauseScannerResponses, RefreshSpreadPnlData, RefreshSpreadPnlErrors, RefreshSpreadPnlResponses, ResumeMonitorData, ResumeMonitorResponses, ResumeScannerData, ResumeScannerResponses, SoftCloseSpreadData, SoftCloseSpreadErrors, SoftCloseSpreadResponses, TriggerScanData, TriggerScanResponses } from './types.gen';
+import type { ForceCloseSpreadData, ForceCloseSpreadErrors, ForceCloseSpreadResponses, GetScannerStatusData, GetScannerStatusResponses, GetSpreadAnalyticsData, GetSpreadAnalyticsResponses, GetSpreadByIdData, GetSpreadByIdErrors, GetSpreadByIdResponses, ListSpreadsData, ListSpreadsResponses, PauseMonitorData, PauseMonitorResponses, PauseScannerData, PauseScannerResponses, RefreshSpreadPnlData, RefreshSpreadPnlErrors, RefreshSpreadPnlResponses, ResumeMonitorData, ResumeMonitorResponses, ResumeScannerData, ResumeScannerResponses, SoftCloseSpreadData, SoftCloseSpreadErrors, SoftCloseSpreadResponses, TriggerScanData, TriggerScanResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean> = Options2<TData, ThrowOnError> & {
     /**
@@ -22,6 +22,11 @@ export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends 
  * List spread positions
  */
 export const listSpreads = <ThrowOnError extends boolean = false>(options?: Options<ListSpreadsData, ThrowOnError>) => (options?.client ?? client).get<ListSpreadsResponses, unknown, ThrowOnError>({ url: '/spreads', ...options });
+
+/**
+ * Aggregate performance analytics across all spread trades
+ */
+export const getSpreadAnalytics = <ThrowOnError extends boolean = false>(options?: Options<GetSpreadAnalyticsData, ThrowOnError>) => (options?.client ?? client).get<GetSpreadAnalyticsResponses, unknown, ThrowOnError>({ url: '/spreads/analytics', ...options });
 
 /**
  * Get a spread position by ID

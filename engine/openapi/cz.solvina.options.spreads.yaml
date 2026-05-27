@@ -38,6 +38,20 @@ paths:
               schema:
                 $ref: '#/components/schemas/PagedSpreadsDto'
 
+  /spreads/analytics:
+    get:
+      tags:
+        - Spreads
+      summary: Aggregate performance analytics across all spread trades
+      operationId: getSpreadAnalytics
+      responses:
+        '200':
+          description: Analytics data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpreadAnalyticsDto'
+
   /spreads/{id}:
     get:
       tags:
@@ -258,6 +272,12 @@ components:
         currentPnl:
           type: number
           nullable: true
+        underlyingPriceAtExit:
+          type: number
+          nullable: true
+        ivRankAtExit:
+          type: number
+          nullable: true
 
     PagedSpreadsDto:
       type: object
@@ -276,6 +296,105 @@ components:
           type: integer
         size:
           type: integer
+
+    SpreadAnalyticsDto:
+      type: object
+      required: [summary, byStatus, bySymbol, byEntryIvBucket, pnlTimeline]
+      properties:
+        summary:
+          $ref: '#/components/schemas/AnalyticsSummaryDto'
+        byStatus:
+          type: array
+          items:
+            $ref: '#/components/schemas/StatusBreakdownDto'
+        bySymbol:
+          type: array
+          items:
+            $ref: '#/components/schemas/SymbolBreakdownDto'
+        byEntryIvBucket:
+          type: array
+          items:
+            $ref: '#/components/schemas/IvBucketBreakdownDto'
+        pnlTimeline:
+          type: array
+          items:
+            $ref: '#/components/schemas/PnlTimelinePointDto'
+
+    AnalyticsSummaryDto:
+      type: object
+      required: [totalTrades, openTrades, winRate, totalRealizedPnl, avgPnlPerTrade, avgHoldDays]
+      properties:
+        totalTrades:
+          type: integer
+        openTrades:
+          type: integer
+        winRate:
+          type: number
+        totalRealizedPnl:
+          type: number
+        avgPnlPerTrade:
+          type: number
+        avgHoldDays:
+          type: number
+
+    StatusBreakdownDto:
+      type: object
+      required: [status, count, totalPnl, avgPnl, avgHoldDays]
+      properties:
+        status:
+          type: string
+        count:
+          type: integer
+        totalPnl:
+          type: number
+        avgPnl:
+          type: number
+        avgHoldDays:
+          type: number
+
+    SymbolBreakdownDto:
+      type: object
+      required: [symbol, count, wins, winRate, totalPnl, avgPnl, avgCreditRatio]
+      properties:
+        symbol:
+          type: string
+        count:
+          type: integer
+        wins:
+          type: integer
+        winRate:
+          type: number
+        totalPnl:
+          type: number
+        avgPnl:
+          type: number
+        avgCreditRatio:
+          type: number
+
+    IvBucketBreakdownDto:
+      type: object
+      required: [bucket, count, winRate, avgPnl]
+      properties:
+        bucket:
+          type: string
+        count:
+          type: integer
+        winRate:
+          type: number
+        avgPnl:
+          type: number
+
+    PnlTimelinePointDto:
+      type: object
+      required: [date, dailyPnl, cumulativePnl]
+      properties:
+        date:
+          type: string
+          format: date
+        dailyPnl:
+          type: number
+        cumulativePnl:
+          type: number
 
     ScannerStatusDto:
       type: object

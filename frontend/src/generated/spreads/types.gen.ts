@@ -22,6 +22,8 @@ export type SpreadDto = {
     closePricePerShare?: number | null;
     currentSpreadValue?: number | null;
     currentPnl?: number | null;
+    underlyingPriceAtExit?: number | null;
+    ivRankAtExit?: number | null;
 };
 
 export type PagedSpreadsDto = {
@@ -30,6 +32,54 @@ export type PagedSpreadsDto = {
     totalPages: number;
     page: number;
     size: number;
+};
+
+export type SpreadAnalyticsDto = {
+    summary: AnalyticsSummaryDto;
+    byStatus: Array<StatusBreakdownDto>;
+    bySymbol: Array<SymbolBreakdownDto>;
+    byEntryIvBucket: Array<IvBucketBreakdownDto>;
+    pnlTimeline: Array<PnlTimelinePointDto>;
+};
+
+export type AnalyticsSummaryDto = {
+    totalTrades: number;
+    openTrades: number;
+    winRate: number;
+    totalRealizedPnl: number;
+    avgPnlPerTrade: number;
+    avgHoldDays: number;
+};
+
+export type StatusBreakdownDto = {
+    status: string;
+    count: number;
+    totalPnl: number;
+    avgPnl: number;
+    avgHoldDays: number;
+};
+
+export type SymbolBreakdownDto = {
+    symbol: string;
+    count: number;
+    wins: number;
+    winRate: number;
+    totalPnl: number;
+    avgPnl: number;
+    avgCreditRatio: number;
+};
+
+export type IvBucketBreakdownDto = {
+    bucket: string;
+    count: number;
+    winRate: number;
+    avgPnl: number;
+};
+
+export type PnlTimelinePointDto = {
+    date: string;
+    dailyPnl: number;
+    cumulativePnl: number;
 };
 
 export type ScannerStatusDto = {
@@ -61,6 +111,22 @@ export type ListSpreadsResponses = {
 };
 
 export type ListSpreadsResponse = ListSpreadsResponses[keyof ListSpreadsResponses];
+
+export type GetSpreadAnalyticsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/spreads/analytics';
+};
+
+export type GetSpreadAnalyticsResponses = {
+    /**
+     * Analytics data
+     */
+    200: SpreadAnalyticsDto;
+};
+
+export type GetSpreadAnalyticsResponse = GetSpreadAnalyticsResponses[keyof GetSpreadAnalyticsResponses];
 
 export type GetSpreadByIdData = {
     body?: never;

@@ -3,8 +3,8 @@
 import { type DefaultError, type InfiniteData, infiniteQueryOptions, queryOptions, type UseMutationOptions } from '@tanstack/react-query';
 
 import { client } from '../client.gen';
-import { forceCloseSpread, getScannerStatus, getSpreadById, listSpreads, type Options, pauseMonitor, pauseScanner, refreshSpreadPnl, resumeMonitor, resumeScanner, softCloseSpread, triggerScan } from '../sdk.gen';
-import type { ForceCloseSpreadData, ForceCloseSpreadResponse, GetScannerStatusData, GetScannerStatusResponse, GetSpreadByIdData, GetSpreadByIdResponse, ListSpreadsData, ListSpreadsResponse, PauseMonitorData, PauseMonitorResponse, PauseScannerData, PauseScannerResponse, RefreshSpreadPnlData, RefreshSpreadPnlResponse, ResumeMonitorData, ResumeMonitorResponse, ResumeScannerData, ResumeScannerResponse, SoftCloseSpreadData, SoftCloseSpreadResponse, TriggerScanData } from '../types.gen';
+import { forceCloseSpread, getScannerStatus, getSpreadAnalytics, getSpreadById, listSpreads, type Options, pauseMonitor, pauseScanner, refreshSpreadPnl, resumeMonitor, resumeScanner, softCloseSpread, triggerScan } from '../sdk.gen';
+import type { ForceCloseSpreadData, ForceCloseSpreadResponse, GetScannerStatusData, GetScannerStatusResponse, GetSpreadAnalyticsData, GetSpreadAnalyticsResponse, GetSpreadByIdData, GetSpreadByIdResponse, ListSpreadsData, ListSpreadsResponse, PauseMonitorData, PauseMonitorResponse, PauseScannerData, PauseScannerResponse, RefreshSpreadPnlData, RefreshSpreadPnlResponse, ResumeMonitorData, ResumeMonitorResponse, ResumeScannerData, ResumeScannerResponse, SoftCloseSpreadData, SoftCloseSpreadResponse, TriggerScanData } from '../types.gen';
 
 export type QueryKey<TOptions extends Options> = [
     Pick<TOptions, 'baseUrl' | 'body' | 'headers' | 'path' | 'query'> & {
@@ -111,6 +111,24 @@ export const listSpreadsInfiniteOptions = (options?: Options<ListSpreadsData>) =
         return data;
     },
     queryKey: listSpreadsInfiniteQueryKey(options)
+});
+
+export const getSpreadAnalyticsQueryKey = (options?: Options<GetSpreadAnalyticsData>) => createQueryKey('getSpreadAnalytics', options);
+
+/**
+ * Aggregate performance analytics across all spread trades
+ */
+export const getSpreadAnalyticsOptions = (options?: Options<GetSpreadAnalyticsData>) => queryOptions<GetSpreadAnalyticsResponse, DefaultError, GetSpreadAnalyticsResponse, ReturnType<typeof getSpreadAnalyticsQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await getSpreadAnalytics({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: getSpreadAnalyticsQueryKey(options)
 });
 
 export const getSpreadByIdQueryKey = (options: Options<GetSpreadByIdData>) => createQueryKey('getSpreadById', options);

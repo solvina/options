@@ -6,6 +6,7 @@ const navItems = [
   { to: '/spreads', label: 'Spreads' },
   { to: '/account', label: 'Account' },
   { to: '/scanner', label: 'Scanner' },
+  { to: '/analytics', label: 'Analytics' },
   { to: '/universe', label: 'Universe' },
   { to: '/diagnostic', label: 'Diagnostics' },
 ]
