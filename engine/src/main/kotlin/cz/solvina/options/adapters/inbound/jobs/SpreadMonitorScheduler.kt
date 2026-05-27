@@ -44,9 +44,8 @@ class SpreadMonitorScheduler(
         val now = ZonedDateTime.now(ET)
         val dow = now.dayOfWeek
         if (dow == DayOfWeek.SATURDAY || dow == DayOfWeek.SUNDAY) return false
-        val hour = now.hour
-        val minute = now.minute
-        val minuteOfDay = hour * 60 + minute
-        return minuteOfDay in (9 * 60 + 30)..(16 * 60)
+        val minuteOfDay = now.hour * 60 + now.minute
+        // EU opens 09:00 CEST = 03:00 ET; US closes 16:00 ET
+        return minuteOfDay in (3 * 60)..(16 * 60)
     }
 }
