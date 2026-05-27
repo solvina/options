@@ -8,4 +8,6 @@ interface TradeExecutionPort {
     suspend fun execute(request: TradeExecutionRequest): TradeExecutionResult
 
     fun isInFlight(symbol: Symbol): Boolean
+
+    fun isCoolingDown(symbol: Symbol): Boolean
 }

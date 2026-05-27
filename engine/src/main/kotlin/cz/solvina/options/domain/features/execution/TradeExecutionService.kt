@@ -47,6 +47,7 @@ class TradeExecutionService(
     private val scope: CoroutineScope,
 ) : TradeExecutionPort {
     private val inFlightSymbols = ConcurrentHashMap<Symbol, Unit>()
+    private val cooldownUntil = ConcurrentHashMap<Symbol, Instant>()
 
     // -------------------------------------------------------------------------
     // Public API
@@ -82,6 +83,8 @@ class TradeExecutionService(
     }
 
     override fun isInFlight(symbol: Symbol): Boolean = inFlightSymbols.containsKey(symbol)
+
+    override fun isCoolingDown(symbol: Symbol): Boolean = cooldownUntil[symbol]?.let { Instant.now(clock).isBefore(it) } ?: false
 
     // -------------------------------------------------------------------------
     // Execution loop
@@ -279,6 +282,9 @@ class TradeExecutionService(
             "ABORTED ${request.underlyingSymbol}  ${request.soldContract.strike}P/${request.boughtContract.strike}P  reason=${outcome.name}"
         }
         spreadPort.update(pendingSpread.copy(status = SpreadStatus.CLOSED_MANUAL, closeReason = outcome.name.lowercase()))
+        val cooldownExpiry = Instant.now(clock).plusSeconds(config.entryCooldownMinutes * 60)
+        cooldownUntil[request.underlyingSymbol] = cooldownExpiry
+        logger.info { "[${request.underlyingSymbol}] Entry cooldown set — won't retry until $cooldownExpiry (${config.entryCooldownMinutes} min)" }
         return TradeExecutionResult(outcome)
     }
 

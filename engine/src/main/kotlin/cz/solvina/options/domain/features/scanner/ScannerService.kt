@@ -66,6 +66,10 @@ class ScannerService(
                 logger.debug { "[$symbol] Already has open or in-flight spread, skipping" }
                 continue
             }
+            if (executionPort.isCoolingDown(symbol)) {
+                logger.debug { "[$symbol] Entry cooldown active, skipping" }
+                continue
+            }
             runCatching { scanSymbol(symbol, totalCapital) }
                 .onFailure { e -> logger.error(e) { "[$symbol] Error during scan: ${e.message}" } }
         }
