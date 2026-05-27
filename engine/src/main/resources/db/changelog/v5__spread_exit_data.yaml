@@ -1,0 +1,18 @@
+databaseChangeLog:
+  - changeSet:
+      id: v5__spread_exit_data
+      author: vseliga
+      changes:
+        - addColumn:
+            tableName: spread_positions
+            columns:
+              - column:
+                  name: underlying_price_at_exit
+                  type: NUMERIC(10,2)
+                  constraints:
+                    nullable: true
+              - column:
+                  name: iv_rank_at_exit
+                  type: NUMERIC(5,2)
+                  constraints:
+                    nullable: true

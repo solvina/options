@@ -21,4 +21,6 @@ data class BullPutSpread(
     val closeReason: String? = null,
     val closePricePerShare: BigDecimal? = null,
     val lastSpreadValue: BigDecimal? = null,
+    val underlyingPriceAtExit: BigDecimal? = null,
+    val ivRankAtExit: BigDecimal? = null,
 )

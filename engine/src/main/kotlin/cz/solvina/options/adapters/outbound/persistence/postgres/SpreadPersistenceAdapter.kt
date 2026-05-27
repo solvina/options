@@ -101,6 +101,8 @@ class SpreadPersistenceAdapter(
             closeReason = closeReason,
             closePricePerShare = closePricePerShare,
             lastSpreadValue = lastSpreadValue,
+            underlyingPriceAtExit = underlyingPriceAtExit,
+            ivRankAtExit = ivRankAtExit,
         )
 
     private fun SpreadPositionEntity.toDomain(): BullPutSpread {
@@ -124,6 +126,8 @@ class SpreadPersistenceAdapter(
             closeReason = closeReason,
             closePricePerShare = closePricePerShare,
             lastSpreadValue = lastSpreadValue,
+            underlyingPriceAtExit = underlyingPriceAtExit,
+            ivRankAtExit = ivRankAtExit,
         )
     }
 }

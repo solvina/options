@@ -51,4 +51,8 @@ class SpreadPositionEntity(
     var closePricePerShare: BigDecimal? = null,
     @Column(name = "last_spread_value", precision = 10, scale = 4)
     var lastSpreadValue: BigDecimal? = null,
+    @Column(name = "underlying_price_at_exit", precision = 10, scale = 2)
+    var underlyingPriceAtExit: BigDecimal? = null,
+    @Column(name = "iv_rank_at_exit", precision = 5, scale = 2)
+    var ivRankAtExit: BigDecimal? = null,
 )
