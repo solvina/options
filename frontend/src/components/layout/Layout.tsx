@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { ConnectionBadge } from './ConnectionBadge'
 import { cn } from '../../lib/utils'
@@ -8,6 +9,7 @@ const navGroups = [
     items: [
       { to: '/spreads/positions', label: 'Positions' },
       { to: '/spreads/analytics', label: 'Analytics' },
+      { to: '/scanner', label: 'Scanner' },
     ],
   },
   {
@@ -20,13 +22,32 @@ const navGroups = [
   {
     label: 'Maintenance',
     items: [
-      { to: '/scanner', label: 'Scanner' },
       { to: '/universe', label: 'Universe' },
       { to: '/account', label: 'Account' },
       { to: '/diagnostic', label: 'Diagnostics' },
     ],
   },
 ]
+
+function Clock() {
+  const [now, setNow] = useState(() => new Date())
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 1000)
+    return () => clearInterval(id)
+  }, [])
+
+  const fmt = (tz: string) =>
+    now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: tz })
+
+  return (
+    <div className="flex items-center gap-3 text-xs tabular-nums text-muted-foreground font-mono">
+      <span><span className="text-foreground/50 mr-1">CET</span>{fmt('Europe/Prague')}</span>
+      <span className="w-px h-3 bg-border" />
+      <span><span className="text-foreground/50 mr-1">ET</span>{fmt('America/New_York')}</span>
+    </div>
+  )
+}
 
 export function Layout() {
   return (
@@ -59,7 +80,10 @@ export function Layout() {
             ))}
           </nav>
         </div>
-        <ConnectionBadge />
+        <div className="flex items-center gap-4">
+          <Clock />
+          <ConnectionBadge />
+        </div>
       </header>
       <main className="flex-1 p-6">
         <Outlet />
