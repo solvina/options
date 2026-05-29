@@ -187,4 +187,58 @@ class FlagScannerService(
             flagExecutionService.execute(request)
         }
     }
+
+    // -------------------------------------------------------------------------
+    // Monitoring
+    // -------------------------------------------------------------------------
+
+    data class SymbolScannerStatus(
+        val symbol: String,
+        val subscriptionActive: Boolean,
+        val candlesBuffered: Int,
+        val lastCandleAt: java.time.Instant?,
+        val patternState: String,
+        val poleHeightPct: Double?,
+        val flagBars: Int?,
+        val flagRetracementPct: Double?,
+    )
+
+    fun getScannerStatus(): List<SymbolScannerStatus> =
+        subscriptions.keys.map { symbol ->
+            val buffer = buffers[symbol]
+            val lastCandle = buffer?.snapshot()?.lastOrNull()
+            val state = detectors[symbol]?.state ?: PatternState.Idle
+            SymbolScannerStatus(
+                symbol = symbol.value,
+                subscriptionActive = subscriptions[symbol]?.isActive == true,
+                candlesBuffered = buffer?.size ?: 0,
+                lastCandleAt = lastCandle?.time,
+                patternState = state.label(),
+                poleHeightPct = state.pole()?.let { round1(it.height / it.startBar.close * 100) },
+                flagBars = state.flag()?.bars?.size,
+                flagRetracementPct = state.flag()?.let { round1(it.retracement * 100) },
+            )
+        }.sortedBy { it.symbol }
+
+    private fun PatternState.label(): String = when (this) {
+        is PatternState.Idle -> "Idle"
+        is PatternState.FlagpoleDetected -> "Pole (${consolidationBars} consol. bars)"
+        is PatternState.FlagForming -> "Flag forming (${flag.bars.size} bars)"
+        is PatternState.BreakoutReady -> "BREAKOUT READY"
+    }
+
+    private fun PatternState.pole(): Flagpole? = when (this) {
+        is PatternState.FlagpoleDetected -> pole
+        is PatternState.FlagForming -> pole
+        is PatternState.BreakoutReady -> pole
+        else -> null
+    }
+
+    private fun PatternState.flag(): Flag? = when (this) {
+        is PatternState.FlagForming -> flag
+        is PatternState.BreakoutReady -> flag
+        else -> null
+    }
+
+    private fun round1(v: Double): Double = Math.round(v * 10.0) / 10.0
 }

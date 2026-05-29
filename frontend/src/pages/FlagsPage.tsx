@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   listFlagsOptions,
@@ -56,6 +56,140 @@ function PnlSpan({ val }: { val: number | null | undefined }) {
   const n = val == null ? null : Number(val)
   const cls = n == null ? 'text-muted-foreground' : n > 0 ? 'text-green-600 dark:text-green-400' : n < 0 ? 'text-red-500 dark:text-red-400' : ''
   return <span className={`tabular-nums font-medium ${cls}`}>{fmtMoney(n)}</span>
+}
+
+// ─────────────────────────────────────────────
+// Scanner status panel
+// ─────────────────────────────────────────────
+
+type SymbolScannerStatus = {
+  symbol: string
+  subscriptionActive: boolean
+  candlesBuffered: number
+  lastCandleAt: string | null
+  patternState: string
+  poleHeightPct: number | null
+  flagBars: number | null
+  flagRetracementPct: number | null
+}
+
+function staleness(lastCandleAt: string | null): 'fresh' | 'stale' | 'none' {
+  if (!lastCandleAt) return 'none'
+  const ageMs = Date.now() - new Date(lastCandleAt).getTime()
+  return ageMs < 15 * 60_000 ? 'fresh' : 'stale'
+}
+
+function StateChip({ state }: { state: string }) {
+  const isBreakout = state.startsWith('BREAKOUT')
+  const isFlag = state.startsWith('Flag')
+  const isPole = state.startsWith('Pole')
+  const cls = isBreakout
+    ? 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300 font-semibold'
+    : isFlag
+    ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300'
+    : isPole
+    ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300'
+    : 'bg-muted text-muted-foreground'
+  return (
+    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs ${cls}`}>
+      {state}
+    </span>
+  )
+}
+
+function ScannerStatusPanel() {
+  const [statuses, setStatuses] = useState<SymbolScannerStatus[]>([])
+  const [lastRefresh, setLastRefresh] = useState<Date | null>(null)
+  const [error, setError] = useState(false)
+
+  const refresh = useCallback(async () => {
+    try {
+      const res = await fetch('/api/flags/scanner/status')
+      if (!res.ok) throw new Error()
+      setStatuses(await res.json())
+      setLastRefresh(new Date())
+      setError(false)
+    } catch {
+      setError(true)
+    }
+  }, [])
+
+  useEffect(() => {
+    refresh()
+    const id = setInterval(refresh, 10_000)
+    return () => clearInterval(id)
+  }, [refresh])
+
+  return (
+    <div className="rounded-lg border border-border bg-card p-5 space-y-3">
+      <div className="flex items-center justify-between">
+        <h2 className="text-base font-semibold">Candle Scanner</h2>
+        <span className="text-xs text-muted-foreground">
+          {error ? (
+            <span className="text-destructive">fetch error</span>
+          ) : lastRefresh ? (
+            `updated ${lastRefresh.toLocaleTimeString()}`
+          ) : 'loading…'}
+        </span>
+      </div>
+
+      {statuses.length === 0 && !error && (
+        <p className="text-sm text-muted-foreground">No active subscriptions.</p>
+      )}
+
+      {statuses.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border text-muted-foreground text-xs uppercase tracking-wide">
+                <th className="pb-1 text-left">Symbol</th>
+                <th className="pb-1 text-left">Stream</th>
+                <th className="pb-1 text-right">Candles</th>
+                <th className="pb-1 text-left pl-4">Last bar</th>
+                <th className="pb-1 text-left pl-4">Pattern</th>
+                <th className="pb-1 text-right">Pole %</th>
+                <th className="pb-1 text-right">Flag bars</th>
+                <th className="pb-1 text-right">Retrace %</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {statuses.map((s) => {
+                const stale = staleness(s.lastCandleAt)
+                const dot = !s.subscriptionActive
+                  ? '🔴'
+                  : stale === 'none'
+                  ? '🟡'
+                  : stale === 'stale'
+                  ? '🟡'
+                  : '🟢'
+                const lastBarLabel = s.lastCandleAt
+                  ? new Date(s.lastCandleAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+                  : '—'
+                return (
+                  <tr key={s.symbol} className="hover:bg-muted/30 transition-colors">
+                    <td className="py-1.5 font-medium">{s.symbol}</td>
+                    <td className="py-1.5">{dot}</td>
+                    <td className="py-1.5 text-right tabular-nums">{s.candlesBuffered}</td>
+                    <td className="py-1.5 pl-4 text-muted-foreground tabular-nums">{lastBarLabel}</td>
+                    <td className="py-1.5 pl-4"><StateChip state={s.patternState} /></td>
+                    <td className="py-1.5 text-right tabular-nums text-muted-foreground">
+                      {s.poleHeightPct != null ? `${s.poleHeightPct}%` : '—'}
+                    </td>
+                    <td className="py-1.5 text-right tabular-nums text-muted-foreground">
+                      {s.flagBars ?? '—'}
+                    </td>
+                    <td className="py-1.5 text-right tabular-nums text-muted-foreground">
+                      {s.flagRetracementPct != null ? `${s.flagRetracementPct}%` : '—'}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
 }
 
 // ─────────────────────────────────────────────
@@ -329,6 +463,9 @@ export function FlagsPage() {
       {/* Config panel */}
       {configLoading && <p className="text-muted-foreground text-sm">Loading config…</p>}
       {config && <ConfigPanel config={config} />}
+
+      {/* Scanner status */}
+      <ScannerStatusPanel />
 
       {/* Status filter */}
       <div className="flex flex-wrap gap-1">
