@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   listFlagsOptions,
@@ -69,66 +69,86 @@ type StatusFilter = (typeof STATUS_FILTERS)[number]
 // Config panel
 // ─────────────────────────────────────────────
 
+type ConfigForm = Omit<FlagTradingConfigDto, 'enabled'>
+
 function ConfigPanel({ config }: { config: FlagTradingConfigDto }) {
   const qc = useQueryClient()
-  const [form, setForm] = useState<FlagTradingConfigDto>(config)
+
+  // Numeric fields — separate from the enabled toggle
+  const [form, setForm] = useState<ConfigForm>({
+    riskPerTrade: config.riskPerTrade,
+    maxOpenPositions: config.maxOpenPositions,
+    entryBlockMinutesBeforeClose: config.entryBlockMinutesBeforeClose,
+    eodLiqMinutesBeforeClose: config.eodLiqMinutesBeforeClose,
+  })
   const [dirty, setDirty] = useState(false)
+
+  // Optimistic enabled state: set immediately on click, cleared when server confirms
+  const [optimisticEnabled, setOptimisticEnabled] = useState<boolean | null>(null)
+  const isEnabled = optimisticEnabled ?? config.enabled
+
+  // Sync form fields if server data changes while form is clean
+  useEffect(() => {
+    if (!dirty) {
+      setForm({
+        riskPerTrade: config.riskPerTrade,
+        maxOpenPositions: config.maxOpenPositions,
+        entryBlockMinutesBeforeClose: config.entryBlockMinutesBeforeClose,
+        eodLiqMinutesBeforeClose: config.eodLiqMinutesBeforeClose,
+      })
+    }
+  }, [config, dirty])
+
+  const invalidate = () => qc.invalidateQueries({ queryKey: ['getFlagConfig'] })
 
   const update = useMutation({
     ...updateFlagConfigMutation(),
-    onSuccess: () => {
-      setDirty(false)
-      qc.invalidateQueries({ queryKey: ['getFlagConfig'] })
-    },
+    onSuccess: () => { setDirty(false); invalidate() },
   })
 
   const pause = useMutation({
     ...pauseFlagScannerMutation(),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['getFlagConfig'] }),
+    onMutate: () => setOptimisticEnabled(false),
+    onSettled: () => { setOptimisticEnabled(null); invalidate() },
   })
 
   const resume = useMutation({
     ...resumeFlagScannerMutation(),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['getFlagConfig'] }),
+    onMutate: () => setOptimisticEnabled(true),
+    onSettled: () => { setOptimisticEnabled(null); invalidate() },
   })
 
-  function change<K extends keyof FlagTradingConfigDto>(key: K, value: FlagTradingConfigDto[K]) {
+  function change<K extends keyof ConfigForm>(key: K, value: ConfigForm[K]) {
     setForm((prev) => ({ ...prev, [key]: value }))
     setDirty(true)
   }
 
   function save() {
-    update.mutate({ body: form })
+    update.mutate({ body: { ...form, enabled: config.enabled } })
   }
 
-  const isEnabled = config.enabled
+  const toggling = pause.isPending || resume.isPending
 
   return (
     <div className="rounded-lg border border-border bg-card p-5 space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="text-base font-semibold">Scanner Config</h2>
-        {/* Prominent enable/disable toggle */}
+        {/* Toggle — flips immediately, confirmed by server in background */}
         <div className="flex items-center gap-3">
-          <span className={`text-sm font-medium ${isEnabled ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
+          <span className={`text-sm font-medium transition-colors ${isEnabled ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
             {isEnabled ? '● Active' : '○ Paused'}
           </span>
-          {isEnabled ? (
-            <button
-              onClick={() => pause.mutate({})}
-              disabled={pause.isPending}
-              className="px-3 py-1.5 text-sm rounded-md bg-red-500/10 text-red-600 hover:bg-red-500/20 dark:text-red-400 transition-colors disabled:opacity-50"
-            >
-              {pause.isPending ? 'Pausing…' : 'Pause Scanner'}
-            </button>
-          ) : (
-            <button
-              onClick={() => resume.mutate({})}
-              disabled={resume.isPending}
-              className="px-3 py-1.5 text-sm rounded-md bg-green-500/10 text-green-600 hover:bg-green-500/20 dark:text-green-400 transition-colors disabled:opacity-50"
-            >
-              {resume.isPending ? 'Resuming…' : 'Resume Scanner'}
-            </button>
-          )}
+          <button
+            onClick={() => isEnabled ? pause.mutate({}) : resume.mutate({})}
+            disabled={toggling}
+            className={`px-3 py-1.5 text-sm rounded-md transition-colors disabled:opacity-40 ${
+              isEnabled
+                ? 'bg-red-500/10 text-red-600 hover:bg-red-500/20 dark:text-red-400'
+                : 'bg-green-500/10 text-green-600 hover:bg-green-500/20 dark:text-green-400'
+            }`}
+          >
+            {toggling ? '…' : isEnabled ? 'Pause' : 'Resume'}
+          </button>
         </div>
       </div>
 
@@ -182,7 +202,15 @@ function ConfigPanel({ config }: { config: FlagTradingConfigDto }) {
       {dirty && (
         <div className="flex gap-2 justify-end">
           <button
-            onClick={() => { setForm(config); setDirty(false) }}
+            onClick={() => {
+              setForm({
+                riskPerTrade: config.riskPerTrade,
+                maxOpenPositions: config.maxOpenPositions,
+                entryBlockMinutesBeforeClose: config.entryBlockMinutesBeforeClose,
+                eodLiqMinutesBeforeClose: config.eodLiqMinutesBeforeClose,
+              })
+              setDirty(false)
+            }}
             className="px-3 py-1.5 text-sm rounded-md border border-border hover:bg-accent transition-colors"
           >
             Reset
