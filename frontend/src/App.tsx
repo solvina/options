@@ -14,14 +14,16 @@ function App() {
     <BrowserRouter>
       <Routes>
         <Route element={<Layout />}>
-          <Route index element={<Navigate to="/spreads" replace />} />
-          <Route path="/spreads" element={<SpreadsPage />} />
+          <Route index element={<Navigate to="/spreads/positions" replace />} />
+          <Route path="/spreads" element={<Navigate to="/spreads/positions" replace />} />
+          <Route path="/spreads/positions" element={<SpreadsPage />} />
+          <Route path="/spreads/analytics" element={<AnalyticsPage />} />
           <Route path="/account" element={<AccountPage />} />
           <Route path="/scanner" element={<ScannerPage />} />
-          <Route path="/analytics" element={<AnalyticsPage />} />
           <Route path="/universe" element={<UniversePage />} />
           <Route path="/diagnostic" element={<DiagnosticPage />} />
-          <Route path="/flags" element={<FlagsPage />} />
+          <Route path="/flags/positions" element={<FlagsPage />} />
+          <Route path="/flags" element={<Navigate to="/flags/positions" replace />} />
           <Route path="/flags/analytics" element={<FlagAnalyticsPage />} />
         </Route>
       </Routes>

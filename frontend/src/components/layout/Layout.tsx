@@ -6,14 +6,14 @@ const navGroups = [
   {
     label: 'Spreads',
     items: [
-      { to: '/spreads', label: 'Positions' },
-      { to: '/analytics', label: 'Analytics' },
+      { to: '/spreads/positions', label: 'Positions' },
+      { to: '/spreads/analytics', label: 'Analytics' },
     ],
   },
   {
     label: 'Flags',
     items: [
-      { to: '/flags', label: 'Positions' },
+      { to: '/flags/positions', label: 'Positions' },
       { to: '/flags/analytics', label: 'Analytics' },
     ],
   },
