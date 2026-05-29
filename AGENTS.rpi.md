@@ -7,12 +7,22 @@
 
 ## What This System Is
 
-An automated **Bull Put Spread** options trading engine. It:
+An automated options/equities trading engine running two independent strategies:
+
+### Strategy 1 — Bull Put Spread (options)
 1. Scans a watchlist for high-IV symbols every 15 min during market hours.
 2. Enters a bull-put spread when IV rank > threshold (~45%) and ~45 DTE.
 3. Exits at 50% profit, 2× max-loss stop, or ≤ 14 DTE.
 
-Currently running in **paper trading mode** with **delayed market data** on a paper IBKR account.
+### Strategy 2 — Bull Flag Momentum (equities, intraday)
+1. Subscribes to 5-second real-time IBKR bars for watchlist symbols at startup.
+2. Aggregates into 5-minute candles; detects flagpole + consolidation patterns using ATR/volume.
+3. On breakout above the flag's resistance line: places a bracket order (stop-market BUY + stop-loss SELL + limit profit-target SELL via OCA group).
+4. Auto-liquidates open positions before exchange close (`eodLiqMinutesBeforeClose`, default 15 min).
+5. Kill switch: `POST /flags/scanner/pause` persists to DB and survives restarts.
+
+Currently running in **paper trading mode** with **live market data** on a paper IBKR account
+(paper account with a live data subscription — `use-live-market-data=true`).
 
 ---
 
@@ -20,7 +30,7 @@ Currently running in **paper trading mode** with **delayed market data** on a pa
 
 ```
 /home/solvina/options/          ← everything lives here
-├── engine.jar                  ← Spring Boot fat JAR (deployed by deploy.sh)
+├── engine.jar                  ← Spring Boot fat JAR (deployed by deploy.sh or manual scp)
 ├── engine.env                  ← Engine env vars (NOT in git). Optional — usually empty.
 ├── .env.rpi                    ← Docker Compose secrets (IBKR credentials). NOT in git.
 ├── docker-compose.yml          ← Deployed copy of docker-compose.rpi.yml from git
@@ -88,6 +98,12 @@ journalctl -u options-engine -n 100
 
 # Since a specific time
 journalctl -u options-engine --since "2026-05-27 09:00:00"
+
+# Flag strategy events only (trades, bar subscriptions, breakouts)
+journalctl -u options-engine | grep -i "flag\|bar\|breakout\|bracket"
+
+# Spread strategy events only
+journalctl -u options-engine | grep -i "spread\|scanner\|execution"
 
 # nginx
 journalctl -fu nginx
@@ -195,6 +211,14 @@ rsync -a --delete dist/ solvina@100.65.216.36:~/options/frontend/
 # nginx serves static files directly — no restart needed unless nginx.conf changed
 ```
 
+**Important:** When adding a new API client in the frontend, register its base URL in
+`frontend/src/main.tsx`. Every generated client under `src/generated/*/client.gen.ts` needs:
+```ts
+import { client as fooClient } from './generated/foo/client.gen'
+fooClient.setConfig({ baseUrl: '/api' })
+```
+Forgetting this causes API calls to use `undefined` as baseUrl → all requests fail silently.
+
 ---
 
 ## Database Access
@@ -221,6 +245,20 @@ ORDER BY opened_at DESC;
 
 -- Open spreads
 SELECT * FROM spread_positions WHERE status = 'OPEN';
+
+-- All flag positions (most recent first)
+SELECT id, symbol, status,
+       entry_price, stop_loss_price, profit_target_price,
+       shares, risk_amount, realized_pnl,
+       opened_at, closed_at, close_reason
+FROM flag_positions
+ORDER BY opened_at DESC;
+
+-- Open flag positions
+SELECT * FROM flag_positions WHERE status IN ('PENDING', 'OPEN');
+
+-- Flag strategy config (single row, id=1)
+SELECT * FROM flag_trading_config;
 
 -- Liquibase migration log
 SELECT id, description, date_executed FROM databasechangelog ORDER BY orderexecuted;
@@ -261,6 +299,7 @@ as env vars if needed, e.g.:
 ```
 SCANNER_TRADING_ENABLED=false
 IBKR_CONNECTION_ENABLED=false
+FLAG_WATCHLIST=SPY,QQQ,AAPL,MSFT,NVDA
 ```
 
 ---
@@ -278,11 +317,30 @@ The engine starts with `--spring.profiles.active=rpi`. Two layers apply:
    - `scanner.cron=0 */15 3-15 * * MON-FRI` — 03:00–15:00 ET covers EUREX (09:00 CEST) to US close
    - EU instrument overrides: ASML (`AEB`/`EUREX`), SAP/SIE/ALV (`EUREX` not `DTB`)
 
-To temporarily disable trading without redeploying, set `scanner.tradingEnabled=false`:
+### Flag strategy YAML config (not user-editable at runtime)
+
+```yaml
+flag:
+  watchlist: [SPY, QQQ, AAPL, MSFT, NVDA]   # overridden by universe watchlist if populated
+  atr-period: 14
+  atr-multiplier: 2.0                         # pole height must be > 2× ATR
+  volume-ma-period: 20
+  volume-spike-multiplier: 1.5               # pole bar must have > 1.5× avg volume
+  pole-min-bars: 5
+  pole-max-bars: 10
+  flag-min-bars: 5
+  flag-max-bars: 20
+  max-retracement-pct: 0.50
+  historical-bootstrap-days: 3
+```
+
+Runtime settings (risk limits, kill switch) are stored in the `flag_trading_config` DB table
+and editable via the UI at `/flags/positions` or `PUT /api/flags/config`.
+
+To temporarily disable the flag scanner without redeploying:
 ```bash
-# Add to /home/solvina/options/engine.env:
-echo "SCANNER_TRADING_ENABLED=false" >> ~/options/engine.env
-sudo systemctl restart options-engine
+curl -s -X POST http://localhost:8081/options/flags/scanner/pause
+# or via UI: Flags → Positions → Scanner Config → Pause button
 ```
 
 ---
@@ -291,35 +349,27 @@ sudo systemctl restart options-engine
 
 Base: `http://localhost:8081/options/` (internal) or `http://100.65.216.36/api/` (via nginx)
 
+### Spreads
+
 ```bash
-# Health / connection status
-curl -s http://localhost:8081/options/health | jq
-
-# Account overview
-curl -s http://localhost:8081/options/account | jq
-
 # Open spreads
 curl -s 'http://localhost:8081/options/spreads?status=OPEN' | jq
 
-# All spreads
+# All spreads (paginated)
 curl -s http://localhost:8081/options/spreads | jq
 
-# Analytics
+# Spread analytics
 curl -s http://localhost:8081/options/spreads/analytics | jq
 
 # Scanner status (IV ranks, pause state)
 curl -s http://localhost:8081/options/scanner/status | jq
 
-# Pause scanner (no new entries)
+# Pause/resume scanner
 curl -s -X POST http://localhost:8081/options/scanner/pause
-
-# Resume scanner
 curl -s -X POST http://localhost:8081/options/scanner/resume
 
-# Pause monitor (no automatic exits)
+# Pause/resume monitor (automatic exits)
 curl -s -X POST http://localhost:8081/options/monitor/pause
-
-# Resume monitor
 curl -s -X POST http://localhost:8081/options/monitor/resume
 
 # Manual close a spread (limit order at mid)
@@ -328,9 +378,69 @@ curl -s -X POST http://localhost:8081/options/spreads/<UUID>/close
 # Force close a spread (market order)
 curl -s -X POST http://localhost:8081/options/spreads/<UUID>/close-force
 
-# Trigger a scan immediately (fire-and-forget, returns 202)
+# Trigger a scan immediately
 curl -s -X POST http://localhost:8081/options/scanner/run
 ```
+
+### Flags
+
+```bash
+# All flag positions (paginated)
+curl -s http://localhost:8081/options/flags | jq
+
+# Open/pending only
+curl -s 'http://localhost:8081/options/flags?status=OPEN' | jq
+
+# Single position
+curl -s http://localhost:8081/options/flags/<UUID> | jq
+
+# Flag analytics
+curl -s http://localhost:8081/options/flags/analytics | jq
+
+# Flag trading config (risk limits, kill switch)
+curl -s http://localhost:8081/options/flags/config | jq
+
+# Update config (riskPerTrade, maxOpenPositions, entryBlockMinutes, eodLiqMinutes, enabled)
+curl -s -X PUT -H "Content-Type: application/json" \
+  -d '{"riskPerTrade":100,"maxOpenPositions":3,"enabled":true,"entryBlockMinutesBeforeClose":120,"eodLiqMinutesBeforeClose":15}' \
+  http://localhost:8081/options/flags/config | jq
+
+# Pause/resume flag scanner (persists to DB, survives restarts)
+curl -s -X POST http://localhost:8081/options/flags/scanner/pause
+curl -s -X POST http://localhost:8081/options/flags/scanner/resume
+
+# Manually close a flag position (works for PENDING and OPEN)
+curl -s -X POST http://localhost:8081/options/flags/<UUID>/close | jq
+```
+
+### Other
+
+```bash
+# Health / connection status
+curl -s http://localhost:8081/options/health | jq
+
+# Account overview
+curl -s http://localhost:8081/options/account | jq
+```
+
+---
+
+## Frontend URL Structure
+
+```
+http://100.65.216.36/                        → redirects to /spreads/positions
+http://100.65.216.36/spreads/positions       → Spread positions table
+http://100.65.216.36/spreads/analytics       → Spread P&L analytics
+http://100.65.216.36/scanner                 → Scanner config & status
+http://100.65.216.36/flags/positions         → Flag positions + scanner config
+http://100.65.216.36/flags/analytics         → Flag P&L analytics
+http://100.65.216.36/universe                → Universe/watchlist management
+http://100.65.216.36/account                 → Account overview
+http://100.65.216.36/diagnostic              → IBKR diagnostic probe
+http://100.65.216.36/grafana/                → Grafana log explorer
+```
+
+Old `/spreads` and `/flags` URLs redirect automatically.
 
 ---
 
@@ -353,14 +463,36 @@ Port 7497 = paper account relay. Port 4003 = live account relay (not used).
   using `IvRankService.currentIv`. Expected and handled.
 - **Error 200 (no security definition)**: Contract not found — usually wrong exchange.
   EUREX symbols need `optionExchange=EUREX` (not `DTB`). Fixed in `application-rpi.yml`.
+- **Error 420 (invalid real-time query)**: `reqRealTimeBars` requires a live streaming
+  market data subscription for the stock's primary exchange. EU symbols (ASML on AEB,
+  SAP/SIE/ALV on XETRA) will fail with this error unless the account has the relevant
+  exchange subscription. The subscription is automatically skipped for those symbols and
+  logged as a warning — no action needed unless you add the subscription.
 - Paper account has a **max 50 positions** limit and cannot place BAG/combo orders the same
   way as live. The engine places individual legs sequentially if BAG fails.
+
+### Flag scanner — `reqRealTimeBars` notes
+
+- Only works with **live** market data subscriptions — no delayed fallback exists for 5-sec bars.
+- `useRTH=true` is set, so bars only arrive during regular trading hours for each exchange.
+- The flag scanner watchlist defaults to the Universe table contents; falls back to
+  `flag.watchlist` in `application.yml` if Universe is empty.
+- If a symbol's subscription fails (error 420), the stream errors, is caught and logged,
+  and the scanner simply doesn't trade that symbol. All other symbols are unaffected.
 
 ### IB Gateway daily restart
 
 IB Gateway auto-restarts around 23:45 ET. The engine's auto-reconnect watchdog
 (`ibkr.connection.reconnect-interval-ms=10000`) handles this automatically — it retries
 every 10 seconds until the gateway is back (~2–3 min).
+
+**Flag scanner after reconnect**: the `FlagScannerService` subscribes at `ApplicationReadyEvent`
+only. After an IBKR reconnect, bar subscriptions need to be re-established. The engine
+currently restarts the flag scanner on reconnect via the existing reconnect flow — if bar
+streams are not resuming after a reconnect, restart the engine:
+```bash
+sudo systemctl restart options-engine
+```
 
 ### VNC access (IB Gateway UI)
 
@@ -439,7 +571,7 @@ Usually caused by:
 2. `use-live-market-data=true` but paper account has no live subscription → set to `false`.
 3. Historical data pacing limit (IBKR allows ~60 requests/10 min) → wait and retry.
 
-### Scanner not firing
+### Spread scanner not firing
 
 ```bash
 # Check if cron is active (should be "0 */15 3-15 * * MON-FRI")
@@ -450,9 +582,30 @@ curl -s http://localhost:8081/options/scanner/status | jq '.scannerPaused'
 curl -s http://localhost:8081/options/scanner/status | jq '.tradingEnabled'
 ```
 
+### Flag scanner not trading
+
+```bash
+# Check if enabled (DB-backed)
+curl -s http://localhost:8081/options/flags/config | jq '.enabled'
+# Check if bar streams are running (look for "Subscribing to 5-sec real-time bars")
+journalctl -u options-engine | grep "real-time bars"
+# Check for error 420 (no data subscription for that exchange)
+journalctl -u options-engine | grep "420"
+# Check for breakout signals (look for "BreakoutReady" or "Submitting bracket")
+journalctl -u options-engine | grep -i "breakout\|bracket\|flag.*entry"
+```
+
+### Flag position stuck in OPEN / PENDING
+
+```bash
+# Get open flag positions
+curl -s 'http://localhost:8081/options/flags?status=OPEN' | jq '.[].id'
+# Manual close (cancels bracket orders + market sell for OPEN, cancel only for PENDING)
+curl -s -X POST http://localhost:8081/options/flags/<UUID>/close | jq
+```
+
 ### Spread stuck in OPEN after market close
 
-Manually close it:
 ```bash
 # Get the spread ID
 curl -s 'http://localhost:8081/options/spreads?status=OPEN' | jq '.[].id'
@@ -484,9 +637,15 @@ Loki is pre-provisioned as a datasource. Log queries use LogQL:
 ```
 {unit="options-engine"}                         # all engine logs
 {unit="options-engine"} |= "ERROR"              # errors only
-{unit="options-engine"} |= "CLOSED_PROFIT"      # winning exits
-{unit="options-engine"} |= "symbol"             # symbol-level events
+{unit="options-engine"} |= "CLOSED_PROFIT"      # winning spread exits
+{unit="options-engine"} |= "ENTRY_FILLED"       # flag entries confirmed
+{unit="options-engine"} |= "CLOSED_STOP"        # flag stop-losses
+{unit="options-engine"} |= "eod_liquidation"    # flag EOD auto-close
 ```
+
+Dedicated loggers:
+- `FLAG_TRADES` — structured flag trade lifecycle events (ENTRY_PENDING, ENTRY_FILLED, CLOSED_*)
+- `SPREAD_TRADES` — spread lifecycle events
 
 ---
 
@@ -530,3 +689,4 @@ at `~/projects/options/`. If you need to inspect the source from the RPi, clone 
 | `docker compose ... down -v` | Destroys named volumes including `ibkr_settings` and `loki-data`. |
 | `ibkr_settings` Docker volume | IB Gateway login state. Recreating it logs out and triggers 2FA. |
 | `/etc/nginx/sites-enabled/default` | deploy.sh removes it; don't re-enable (conflicts with `options`). |
+| `flag_trading_config` row id=1 | Single-row config table — never delete, only UPDATE. |
