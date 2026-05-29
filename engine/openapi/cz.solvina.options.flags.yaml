@@ -229,6 +229,23 @@ components:
         currentPrice:
           type: number
           nullable: true
+        strategyName:
+          type: string
+        actualEntryPrice:
+          type: number
+          nullable: true
+        highestPriceSeen:
+          type: number
+          nullable: true
+        lowestPriceSeen:
+          type: number
+          nullable: true
+        maxFavorableExcursion:
+          type: number
+          nullable: true
+        maxAdverseExcursion:
+          type: number
+          nullable: true
 
     PagedFlagsDto:
       type: object

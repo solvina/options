@@ -12,6 +12,7 @@ private val logger = KotlinLogging.logger {}
 @Component
 class IbkrOrderRegistry {
     internal val pendingOrderStatus = ConcurrentHashMap<Int, CompletableDeferred<OrderStatus>>()
+    private val fillPrices = ConcurrentHashMap<Int, java.math.BigDecimal>()
     private val selfCancelledOrders = ConcurrentHashMap.newKeySet<Int>()
     private val orderIdCounter = AtomicInteger(1)
 
@@ -29,14 +30,20 @@ class IbkrOrderRegistry {
     fun onOrderStatus(
         orderId: Int,
         status: String,
+        avgFillPrice: Double = 0.0,
     ) {
         val deferred = pendingOrderStatus[orderId] ?: return
         when (status.lowercase()) {
-            "filled" -> deferred.complete(OrderStatus.FILLED)
+            "filled" -> {
+                if (avgFillPrice > 0.0) fillPrices[orderId] = java.math.BigDecimal(avgFillPrice).setScale(4, java.math.RoundingMode.HALF_UP)
+                deferred.complete(OrderStatus.FILLED)
+            }
             "cancelled", "inactive", "apicancelled", "rejected" -> deferred.complete(OrderStatus.CANCELLED)
             else -> logger.debug { "Order $orderId status: $status (waiting for terminal status)" }
         }
     }
+
+    fun consumeFillPrice(orderId: Int): java.math.BigDecimal? = fillPrices.remove(orderId)
 
     fun onError(
         id: Int,

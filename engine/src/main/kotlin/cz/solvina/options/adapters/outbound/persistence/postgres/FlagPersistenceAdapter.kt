@@ -86,6 +86,12 @@ class FlagPersistenceAdapter(
             closeReason = closeReason,
             closePriceActual = closePriceActual,
             realizedPnl = realizedPnl,
+            strategyName = strategyName,
+            actualEntryPrice = actualEntryPrice,
+            highestPriceSeen = highestPriceSeen,
+            lowestPriceSeen = lowestPriceSeen,
+            maxFavorableExcursion = maxFavorableExcursion,
+            maxAdverseExcursion = maxAdverseExcursion,
         )
 
     private fun FlagPositionEntity.toDomain(): FlagPosition =
@@ -110,5 +116,11 @@ class FlagPersistenceAdapter(
             closeReason = closeReason,
             closePriceActual = closePriceActual,
             realizedPnl = realizedPnl,
+            strategyName = strategyName,
+            actualEntryPrice = actualEntryPrice,
+            highestPriceSeen = highestPriceSeen,
+            lowestPriceSeen = lowestPriceSeen,
+            maxFavorableExcursion = maxFavorableExcursion,
+            maxAdverseExcursion = maxAdverseExcursion,
         )
 }

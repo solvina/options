@@ -366,9 +366,36 @@ function ConfigPanel({ config }: { config: FlagTradingConfigDto }) {
 // Position row
 // ─────────────────────────────────────────────
 
+function FlagDetailRow({ position }: { position: FlagPositionDto }) {
+  const slippage = position.actualEntryPrice != null
+    ? Number(position.actualEntryPrice) - Number(position.entryPrice)
+    : null
+  return (
+    <tr className="bg-muted/20 border-b border-border">
+      <td colSpan={13} className="px-4 py-2">
+        <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-muted-foreground">
+          <span>Strategy: <span className="text-foreground font-medium">{position.strategyName ?? 'bull_flag'}</span></span>
+          {position.actualEntryPrice != null && (
+            <span>Actual fill: <span className="text-foreground font-medium">${fmt(position.actualEntryPrice, 4)}</span>
+              {slippage != null && <span className={slippage < 0 ? 'text-green-500' : slippage > 0 ? 'text-red-500' : ''}> ({slippage > 0 ? '+' : ''}{fmt(slippage, 4)} slippage)</span>}
+            </span>
+          )}
+          {position.highestPriceSeen != null && <span>High seen: <span className="text-foreground font-medium">${fmt(position.highestPriceSeen, 4)}</span></span>}
+          {position.lowestPriceSeen != null && <span>Low seen: <span className="text-foreground font-medium">${fmt(position.lowestPriceSeen, 4)}</span></span>}
+          {position.maxFavorableExcursion != null && <span>MFE: <span className="text-green-600 dark:text-green-400 font-medium">{fmtMoney(position.maxFavorableExcursion)}</span></span>}
+          {position.maxAdverseExcursion != null && <span>MAE: <span className="text-red-500 font-medium">-${fmt(position.maxAdverseExcursion)}</span></span>}
+          {position.flagpoleHeight != null && <span>Pole: <span className="text-foreground font-medium">${fmt(position.flagpoleHeight, 2)}</span></span>}
+          {position.flagRetracement != null && <span>Retrace: <span className="text-foreground font-medium">{fmt(Number(position.flagRetracement) * 100, 1)}%</span></span>}
+        </div>
+      </td>
+    </tr>
+  )
+}
+
 function FlagRow({ position }: { position: FlagPositionDto }) {
   const qc = useQueryClient()
   const [confirming, setConfirming] = useState(false)
+  const [expanded, setExpanded] = useState(false)
 
   const closePos = useMutation({
     ...closeFlagPositionMutation(),
@@ -382,7 +409,8 @@ function FlagRow({ position }: { position: FlagPositionDto }) {
   const isCloseable = position.status === 'PENDING' || position.status === 'OPEN'
 
   return (
-    <tr className="border-b border-border hover:bg-muted/30 transition-colors">
+    <>
+    <tr className="border-b border-border hover:bg-muted/30 transition-colors cursor-pointer" onClick={() => setExpanded(e => !e)}>
       <td className="px-3 py-2 font-mono font-medium text-sm">{position.symbol}</td>
       <td className="px-3 py-2"><StatusBadge status={position.status} /></td>
       <td className="px-3 py-2 tabular-nums text-sm">{fmt(position.entryPrice, 4)}</td>
@@ -426,6 +454,8 @@ function FlagRow({ position }: { position: FlagPositionDto }) {
         )}
       </td>
     </tr>
+    {expanded && <FlagDetailRow position={position} />}
+    </>
   )
 }
 

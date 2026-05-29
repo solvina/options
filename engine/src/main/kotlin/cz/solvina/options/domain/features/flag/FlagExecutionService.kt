@@ -4,6 +4,7 @@ import cz.solvina.options.domain.features.flag.config.FlagTradingConfig
 import cz.solvina.options.domain.features.flag.model.FlagPosition
 import cz.solvina.options.domain.features.flag.model.FlagStatus
 import cz.solvina.options.domain.features.order.OrderStatus
+import cz.solvina.options.domain.features.flag.EntryFill
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CoroutineScope
@@ -104,20 +105,20 @@ class FlagExecutionService(
 
         // Await parent fill in background
         scope.launch {
-            val entryStatus = runCatching { bracketOrderPort.awaitParentFill(ids.entryOrderId) }
+            val entryFill = runCatching { bracketOrderPort.awaitParentFill(ids.entryOrderId) }
                 .getOrElse { e ->
                     logger.warn(e) { "[${request.symbol}] Parent fill await failed: ${e.message}" }
-                    OrderStatus.CANCELLED
+                    EntryFill(OrderStatus.CANCELLED)
                 }
 
-            if (entryStatus != OrderStatus.FILLED) {
-                logger.info { "[${request.symbol}] Entry order not filled (status=$entryStatus) — marking cancelled" }
+            if (entryFill.status != OrderStatus.FILLED) {
+                logger.info { "[${request.symbol}] Entry order not filled (status=${entryFill.status}) — marking cancelled" }
                 flagPort.update(position.copy(status = FlagStatus.CLOSED_MANUAL, closeReason = "entry_not_filled", closedAt = Instant.now(clock)))
                 return@launch
             }
 
-            position = flagPort.update(position.copy(status = FlagStatus.OPEN))
-            tradeLogger.info { "ENTRY_FILLED ${request.symbol} entryOrder=${ids.entryOrderId} shares=$shares entry=${request.entryPrice}" }
+            position = flagPort.update(position.copy(status = FlagStatus.OPEN, actualEntryPrice = entryFill.avgPrice))
+            tradeLogger.info { "ENTRY_FILLED ${request.symbol} entryOrder=${ids.entryOrderId} shares=$shares entry=${request.entryPrice} actualFill=${entryFill.avgPrice}" }
 
             // Now watch both children — whichever fills first wins (OCA cancels the other)
             awaitChildOutcome(position, ids)

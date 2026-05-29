@@ -80,6 +80,22 @@ class FlagManagementService(
     // Helpers
     // -------------------------------------------------------------------------
 
+    // -------------------------------------------------------------------------
+    // Watermark tracking
+    // -------------------------------------------------------------------------
+
+    suspend fun updateWatermarks() {
+        val open = flagPort.findOpen()
+        for (position in open) {
+            val price = runCatching { marketDataPort.getUnderlyingPrice(position.symbol).amount }.getOrNull() ?: continue
+            val newHigh = position.highestPriceSeen?.max(price) ?: price
+            val newLow = position.lowestPriceSeen?.min(price) ?: price
+            if (newHigh != position.highestPriceSeen || newLow != position.lowestPriceSeen) {
+                flagPort.update(position.copy(highestPriceSeen = newHigh, lowestPriceSeen = newLow))
+            }
+        }
+    }
+
     private suspend fun performClose(
         position: FlagPosition,
         closeStatus: FlagStatus,
@@ -112,12 +128,24 @@ class FlagManagementService(
             }
         }
 
+        val shares = BigDecimal(position.shares)
+        val mfe = position.highestPriceSeen
+            ?.subtract(position.entryPrice)
+            ?.multiply(shares)
+            ?.setScale(2, RoundingMode.HALF_UP)
+        val mae = position.lowestPriceSeen
+            ?.let { position.entryPrice.subtract(it) }
+            ?.multiply(shares)
+            ?.setScale(2, RoundingMode.HALF_UP)
+
         val closed = position.copy(
             status = closeStatus,
             closedAt = Instant.now(clock),
             closeReason = reason,
             closePriceActual = closePriceActual,
             realizedPnl = realizedPnl,
+            maxFavorableExcursion = mfe,
+            maxAdverseExcursion = mae,
         )
         flagPort.update(closed)
         tradeLogger.info { "${closeStatus.name} ${position.symbol} reason=$reason pnl=${realizedPnl ?: "n/a"}" }

@@ -127,8 +127,8 @@ class IbkrEWrapper(
         whyHeld: String?,
         mktCapPrice: Double,
     ) {
-        logger.debug { "orderStatus: orderId=$orderId, status=$status, filled=$filled" }
-        orderRegistry.onOrderStatus(orderId, status)
+        logger.debug { "orderStatus: orderId=$orderId, status=$status, filled=$filled avgFill=$avgFillPrice" }
+        orderRegistry.onOrderStatus(orderId, status, avgFillPrice)
     }
 
     override fun openOrder(

@@ -1,0 +1,29 @@
+databaseChangeLog:
+  - changeSet:
+      id: v7__flag_position_journaling
+      author: solvina
+      changes:
+        - addColumn:
+            tableName: flag_positions
+            columns:
+              - column:
+                  name: strategy_name
+                  type: VARCHAR(64)
+                  defaultValue: 'bull_flag'
+                  constraints:
+                    nullable: false
+              - column:
+                  name: actual_entry_price
+                  type: NUMERIC(10,4)
+              - column:
+                  name: highest_price_seen
+                  type: NUMERIC(10,4)
+              - column:
+                  name: lowest_price_seen
+                  type: NUMERIC(10,4)
+              - column:
+                  name: max_favorable_excursion
+                  type: NUMERIC(12,2)
+              - column:
+                  name: max_adverse_excursion
+                  type: NUMERIC(12,2)

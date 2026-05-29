@@ -9,6 +9,7 @@ import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import cz.solvina.options.domain.features.flag.BracketOrderIds
 import cz.solvina.options.domain.features.flag.BracketOrderPort
+import cz.solvina.options.domain.features.flag.EntryFill
 import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -112,7 +113,11 @@ class IbkrBracketOrderAdapter(
     }
 
     // Parent is a DAY order — can't survive past a single trading session
-    override suspend fun awaitParentFill(orderId: Int): OrderStatus = awaitFill(orderId, PARENT_TIMEOUT_MS)
+    override suspend fun awaitParentFill(orderId: Int): EntryFill {
+        val status = awaitFill(orderId, PARENT_TIMEOUT_MS)
+        val avgPrice = registry.consumeFillPrice(orderId)
+        return EntryFill(status, avgPrice)
+    }
 
     // Children are GTC — give them a generous safety-net before treating as stuck
     override suspend fun awaitChildFill(orderId: Int): OrderStatus = awaitFill(orderId, CHILD_TIMEOUT_MS)

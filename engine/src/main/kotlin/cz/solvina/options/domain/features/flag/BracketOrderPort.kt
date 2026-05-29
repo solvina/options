@@ -10,6 +10,11 @@ data class BracketOrderIds(
     val profitTargetOrderId: Int,
 )
 
+data class EntryFill(
+    val status: OrderStatus,
+    val avgPrice: BigDecimal? = null,
+)
+
 interface BracketOrderPort {
     /**
      * Submits a native TWS bracket order:
@@ -30,8 +35,8 @@ interface BracketOrderPort {
     /** Cancels the given order. Safe to call on already-cancelled orders (no-throw). */
     suspend fun cancelOrder(orderId: Int)
 
-    /** Suspends until the parent entry order reaches a terminal state. */
-    suspend fun awaitParentFill(orderId: Int): OrderStatus
+    /** Suspends until the parent entry order reaches a terminal state. Returns fill status + actual avg price. */
+    suspend fun awaitParentFill(orderId: Int): EntryFill
 
     /** Suspends until a child order (SL or PT) reaches a terminal state. */
     suspend fun awaitChildFill(orderId: Int): OrderStatus

@@ -54,4 +54,16 @@ class FlagPositionEntity(
     var closePriceActual: BigDecimal? = null,
     @Column(name = "realized_pnl", precision = 10, scale = 2)
     var realizedPnl: BigDecimal? = null,
+    @Column(name = "strategy_name", nullable = false, length = 64)
+    var strategyName: String = "bull_flag",
+    @Column(name = "actual_entry_price", precision = 10, scale = 4)
+    var actualEntryPrice: BigDecimal? = null,
+    @Column(name = "highest_price_seen", precision = 10, scale = 4)
+    var highestPriceSeen: BigDecimal? = null,
+    @Column(name = "lowest_price_seen", precision = 10, scale = 4)
+    var lowestPriceSeen: BigDecimal? = null,
+    @Column(name = "max_favorable_excursion", precision = 12, scale = 2)
+    var maxFavorableExcursion: BigDecimal? = null,
+    @Column(name = "max_adverse_excursion", precision = 12, scale = 2)
+    var maxAdverseExcursion: BigDecimal? = null,
 )

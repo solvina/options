@@ -35,4 +35,11 @@ data class FlagPosition(
     val closeReason: String? = null,
     val closePriceActual: BigDecimal? = null,
     val realizedPnl: BigDecimal? = null,
+    // ---- Trade journaling ----
+    val strategyName: String = "bull_flag",
+    val actualEntryPrice: BigDecimal? = null,
+    val highestPriceSeen: BigDecimal? = null,
+    val lowestPriceSeen: BigDecimal? = null,
+    val maxFavorableExcursion: BigDecimal? = null,
+    val maxAdverseExcursion: BigDecimal? = null,
 )

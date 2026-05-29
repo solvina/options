@@ -158,6 +158,12 @@ class FlagsApiImpl(
             realizedPnl = realizedPnl,
             unrealizedPnl = unrealized,
             currentPrice = livePrice,
+            strategyName = strategyName,
+            actualEntryPrice = actualEntryPrice,
+            highestPriceSeen = highestPriceSeen,
+            lowestPriceSeen = lowestPriceSeen,
+            maxFavorableExcursion = maxFavorableExcursion,
+            maxAdverseExcursion = maxAdverseExcursion,
         )
     }
 

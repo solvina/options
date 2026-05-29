@@ -27,6 +27,12 @@ export type FlagPositionDto = {
     realizedPnl?: number | null;
     unrealizedPnl?: number | null;
     currentPrice?: number | null;
+    strategyName?: string;
+    actualEntryPrice?: number | null;
+    highestPriceSeen?: number | null;
+    lowestPriceSeen?: number | null;
+    maxFavorableExcursion?: number | null;
+    maxAdverseExcursion?: number | null;
 };
 
 export type PagedFlagsDto = {
