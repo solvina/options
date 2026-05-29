@@ -100,11 +100,12 @@ class FlagScannerService(
 
         val job =
             scope.launch {
-                // Bootstrap with historical 5-min bars
+                // Bootstrap with historical 5-min bars and replay through detector
                 runCatching {
                     val historical = equityHistoricalBarsPort.fetch5MinBars(symbol, strategyConfig.historicalBootstrapDays)
                     buffer.addAll(historical)
-                    logger.debug { "[${symbol.value}] Bootstrapped ${historical.size} historical 5-min bars" }
+                    historical.forEach { bar -> detector.onNewBar(bar) }
+                    logger.info { "[${symbol.value}] Bootstrapped ${historical.size} historical bars — pattern state: ${detector.state.label()}" }
                 }.onFailure { e ->
                     logger.warn { "[${symbol.value}] Historical bootstrap failed: ${e.message}" }
                 }
