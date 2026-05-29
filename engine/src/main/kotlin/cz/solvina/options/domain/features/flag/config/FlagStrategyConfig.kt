@@ -5,7 +5,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties
 /** Strategy parameters bound from application.yml under `flag:`. Not user-editable at runtime. */
 @ConfigurationProperties(prefix = "flag")
 data class FlagStrategyConfig(
-    val watchlist: List<String> = listOf("SPY", "QQQ", "AAPL", "MSFT", "NVDA"),
+    val usWatchlist: List<String> = listOf("SPY", "QQQ", "AAPL", "MSFT", "NVDA"),
+    val euWatchlist: List<String> = listOf("SAP", "ASML", "SIE", "ALV"),
     val atrPeriod: Int = 14,
     val atrMultiplier: Double = 2.0,
     val volumeMaPeriod: Int = 20,

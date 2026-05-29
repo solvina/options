@@ -13,6 +13,7 @@ import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
 import org.springframework.stereotype.Component
@@ -110,9 +111,11 @@ class IbkrBracketOrderAdapter(
         delay(200)
     }
 
-    override suspend fun awaitParentFill(orderId: Int): OrderStatus = awaitFill(orderId)
+    // Parent is a DAY order — can't survive past a single trading session
+    override suspend fun awaitParentFill(orderId: Int): OrderStatus = awaitFill(orderId, PARENT_TIMEOUT_MS)
 
-    override suspend fun awaitChildFill(orderId: Int): OrderStatus = awaitFill(orderId)
+    // Children are GTC — give them a generous safety-net before treating as stuck
+    override suspend fun awaitChildFill(orderId: Int): OrderStatus = awaitFill(orderId, CHILD_TIMEOUT_MS)
 
     override suspend fun submitMarketSell(
         symbol: Symbol,
@@ -137,12 +140,20 @@ class IbkrBracketOrderAdapter(
         return orderId
     }
 
-    private suspend fun awaitFill(orderId: Int): OrderStatus {
+    private suspend fun awaitFill(orderId: Int, timeoutMs: Long): OrderStatus {
         val deferred = registry.pendingOrderStatus[orderId] ?: return OrderStatus.CANCELLED
         return try {
-            deferred.await()
+            withTimeout(timeoutMs) { deferred.await() }
+        } catch (e: TimeoutCancellationException) {
+            logger.warn { "awaitFill($orderId) timed out after ${timeoutMs / 3_600_000}h — treating as CANCELLED" }
+            OrderStatus.CANCELLED
         } finally {
             registry.pendingOrderStatus.remove(orderId)
         }
+    }
+
+    companion object {
+        private const val PARENT_TIMEOUT_MS = 10L * 3_600_000   // 10 h — one trading session
+        private const val CHILD_TIMEOUT_MS  = 30L * 24 * 3_600_000  // 30 days — GTC safety net
     }
 }

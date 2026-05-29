@@ -39,7 +39,6 @@ class FlagManagementService(
      * all OPEN positions that should be liquidated before exchange close.
      */
     suspend fun checkEodLiquidation() {
-        val config = flagTradingConfigPort.get()
         val open = flagPort.findOpen()
         if (open.isEmpty()) return
 

@@ -6,8 +6,8 @@ import cz.solvina.options.domain.features.bars.EquityHistoricalBarsPort
 import cz.solvina.options.domain.features.bars.RealTimeBarsPort
 import cz.solvina.options.domain.features.flag.FlagExecutionService.ExecutionRequest
 import cz.solvina.options.domain.features.flag.config.FlagStrategyConfig
+import cz.solvina.options.domain.features.flag.config.FlagTradingConfig
 import cz.solvina.options.domain.features.flag.config.FlagTradingConfigPort
-import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
 import jakarta.annotation.PreDestroy
@@ -19,6 +19,10 @@ import org.springframework.boot.context.event.ApplicationReadyEvent
 import org.springframework.context.event.EventListener
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
+import java.time.DayOfWeek
+import java.time.LocalTime
+import java.time.ZoneId
+import java.time.ZonedDateTime
 import java.util.concurrent.ConcurrentHashMap
 
 private val logger = KotlinLogging.logger {}
@@ -30,7 +34,6 @@ class FlagScannerService(
     private val flagExecutionService: FlagExecutionService,
     private val flagPort: FlagPort,
     private val flagTradingConfigPort: FlagTradingConfigPort,
-    private val universePort: UniversePort,
     private val strategyConfig: FlagStrategyConfig,
     private val scope: CoroutineScope,
 ) {
@@ -54,15 +57,36 @@ class FlagScannerService(
     }
 
     private fun resolveWatchlist(): List<Symbol> {
-        // Use the full watchlist (all enabled symbols), not getActiveSymbols() which only returns
-        // currently-open markets. reqRealTimeBars uses useRTH=1, so IBKR delivers bars only during
-        // each symbol's own trading hours — no need to gate subscriptions by current market time.
-        val universeSymbols = runCatching { universePort.getWatchlist() }.getOrNull() ?: emptyList()
-        return if (universeSymbols.isNotEmpty()) {
-            universeSymbols
-        } else {
-            strategyConfig.watchlist.map { Symbol(it) }
-        }
+        val now = ZonedDateTime.now()
+        val eu = if (isEuMarketOpen(now)) strategyConfig.euWatchlist.map { Symbol(it) } else emptyList()
+        val us = if (isUsMarketOpen(now)) strategyConfig.usWatchlist.map { Symbol(it) } else emptyList()
+        val symbols = eu + us
+        if (eu.isNotEmpty()) logger.info { "Flag scanner: EU market open — scanning ${eu.map { it.value }}" }
+        if (us.isNotEmpty()) logger.info { "Flag scanner: US market open — scanning ${us.map { it.value }}" }
+        if (symbols.isEmpty()) logger.warn { "Flag scanner: no markets open at startup — no subscriptions created" }
+        return symbols
+    }
+
+    private fun isEuMarketOpen(now: ZonedDateTime): Boolean {
+        val t = now.withZoneSameInstant(ZoneId.of("Europe/Berlin"))
+        if (t.dayOfWeek == DayOfWeek.SATURDAY || t.dayOfWeek == DayOfWeek.SUNDAY) return false
+        val time = t.toLocalTime()
+        return !time.isBefore(LocalTime.of(9, 0)) && time.isBefore(LocalTime.of(17, 30))
+    }
+
+    private fun isUsMarketOpen(now: ZonedDateTime): Boolean {
+        val t = now.withZoneSameInstant(ZoneId.of("America/New_York"))
+        if (t.dayOfWeek == DayOfWeek.SATURDAY || t.dayOfWeek == DayOfWeek.SUNDAY) return false
+        val time = t.toLocalTime()
+        return !time.isBefore(LocalTime.of(9, 30)) && time.isBefore(LocalTime.of(16, 0))
+    }
+
+    private fun isEntryBlocked(symbol: Symbol, config: FlagTradingConfig): Boolean {
+        val isEu = strategyConfig.euWatchlist.contains(symbol.value)
+        val zone = if (isEu) ZoneId.of("Europe/Berlin") else ZoneId.of("America/New_York")
+        val closeTime = if (isEu) LocalTime.of(17, 30) else LocalTime.of(16, 0)
+        val now = ZonedDateTime.now(zone).toLocalTime()
+        return !now.isBefore(closeTime.minusMinutes(config.entryBlockMinutesBeforeClose.toLong()))
     }
 
     private fun subscribe(symbol: Symbol) {
@@ -124,6 +148,12 @@ class FlagScannerService(
 
             if (!config.enabled) {
                 logger.info { "[${symbol.value}] Breakout detected but scanner is paused — skipping" }
+                detectors[symbol]?.reset()
+                return@launch
+            }
+
+            if (isEntryBlocked(symbol, config)) {
+                logger.info { "[${symbol.value}] Entry blocked — within ${config.entryBlockMinutesBeforeClose} min of market close" }
                 detectors[symbol]?.reset()
                 return@launch
             }

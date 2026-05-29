@@ -88,7 +88,8 @@ scanner:
   option-params-cache-ttl-hours: 24
 
 flag:
-  watchlist: [SPY, QQQ, AAPL, MSFT, NVDA]
+  us-watchlist: [SPY, QQQ, AAPL, MSFT, NVDA]
+  eu-watchlist: [SAP, ASML, SIE, ALV]
   atr-period: 14
   atr-multiplier: 2.0
   volume-ma-period: 20
