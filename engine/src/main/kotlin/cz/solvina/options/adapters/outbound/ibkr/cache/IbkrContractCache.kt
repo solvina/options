@@ -111,6 +111,8 @@ class IbkrContractCache(
 
     fun isMissing(key: OptionContractKey): Boolean = key in missingContracts
 
+    fun getCachedOptionConId(key: OptionContractKey): Int? = optionConIds[key]
+
     private fun evictExpired() {
         val today = LocalDate.now()
         optionConIds.keys.removeIf { it.expiry.isBefore(today) }

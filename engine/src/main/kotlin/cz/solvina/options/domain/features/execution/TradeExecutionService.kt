@@ -22,6 +22,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
@@ -154,6 +155,16 @@ class TradeExecutionService(
             )
         }
 
+        // Time-based ladder: fires every priceAdjustIntervalSeconds regardless of market data stream health.
+        // This ensures the order chases toward the bid even when EUREX options data is not subscribed.
+        val timerJob: Job =
+            scope.launch {
+                while (true) {
+                    delay(config.priceAdjustIntervalSeconds * 1_000L)
+                    eventChannel.trySend(ExecutionEvent.Timer)
+                }
+            }
+
         launchFillWatcher(currentOrderId)
 
         try {
@@ -203,37 +214,22 @@ class TradeExecutionService(
                         is ExecutionEvent.Credit -> {
                             ticksSinceAdjust++
                             if (ticksSinceAdjust >= config.ticksBeforePriceAdjust) {
-                                val tickSize = minTickFor(currentCredit)
-                                val newCredit =
-                                    currentCredit
-                                        .subtract(tickSize)
-                                        .setScale(2, RoundingMode.HALF_DOWN)
-                                if (newCredit < request.floorCredit) {
-                                    logger.info {
-                                        "[${request.underlyingSymbol}] FLOOR_REACHED — " +
-                                            "next=\$$newCredit < floor=\$${ request.floorCredit}"
-                                    }
-                                    orderExecutionPort.cancelAndAwait(currentOrderId)
-                                    outcome = ExecutionOutcome.FLOOR_REACHED
-                                    break
-                                }
-                                val prevOrderId = currentOrderId
-                                currentOrderId =
-                                    orderExecutionPort.replaceComboWithNewPrice(
-                                        existingOrderId = prevOrderId,
-                                        soldContract = request.soldContract,
-                                        boughtContract = request.boughtContract,
-                                        newCredit = Money(newCredit),
-                                        qty = request.quantity,
-                                    )
-                                currentCredit = newCredit
                                 ticksSinceAdjust = 0
+                                val stepped = ladder(request, currentOrderId, currentCredit)
+                                if (stepped == null) { outcome = ExecutionOutcome.FLOOR_REACHED; break }
+                                currentCredit = stepped.first
+                                currentOrderId = stepped.second
                                 launchFillWatcher(currentOrderId)
-                                logger.info {
-                                    "[${request.underlyingSymbol}] Laddered to \$$currentCredit " +
-                                        "(orderId=$currentOrderId)"
-                                }
                             }
+                        }
+
+                        is ExecutionEvent.Timer -> {
+                            ticksSinceAdjust = 0
+                            val stepped = ladder(request, currentOrderId, currentCredit)
+                            if (stepped == null) { outcome = ExecutionOutcome.FLOOR_REACHED; break }
+                            currentCredit = stepped.first
+                            currentOrderId = stepped.second
+                            launchFillWatcher(currentOrderId)
                         }
                     }
                 }
@@ -250,6 +246,7 @@ class TradeExecutionService(
         } finally {
             underlyingJob.cancel()
             creditJob.cancel()
+            timerJob.cancel()
             fillJobs.forEach { it.cancel() }
             eventChannel.close()
         }
@@ -291,6 +288,29 @@ class TradeExecutionService(
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
+
+    private suspend fun ladder(
+        request: TradeExecutionRequest,
+        currentOrderId: Int,
+        currentCredit: BigDecimal,
+    ): Pair<BigDecimal, Int>? {
+        val tickSize = minTickFor(currentCredit)
+        val newCredit = currentCredit.subtract(tickSize).setScale(2, RoundingMode.HALF_DOWN)
+        if (newCredit < request.floorCredit) {
+            logger.info { "[${request.underlyingSymbol}] FLOOR_REACHED — next=\$$newCredit < floor=\$${request.floorCredit}" }
+            orderExecutionPort.cancelAndAwait(currentOrderId)
+            return null
+        }
+        val newOrderId = orderExecutionPort.replaceComboWithNewPrice(
+            existingOrderId = currentOrderId,
+            soldContract = request.soldContract,
+            boughtContract = request.boughtContract,
+            newCredit = Money(newCredit),
+            qty = request.quantity,
+        )
+        logger.info { "[${request.underlyingSymbol}] Laddered to \$$newCredit (orderId=$newOrderId)" }
+        return Pair(newCredit, newOrderId)
+    }
 
     private fun minTickFor(price: BigDecimal): BigDecimal = if (price < BigDecimal("3.00")) BigDecimal("0.01") else BigDecimal("0.05")
 
@@ -339,5 +359,7 @@ class TradeExecutionService(
             val status: OrderStatus,
             val orderId: Int,
         ) : ExecutionEvent
+
+        data object Timer : ExecutionEvent
     }
 }

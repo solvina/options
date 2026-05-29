@@ -41,6 +41,8 @@ class IbkrContractFactory(
             if (!tradingClass.isNullOrBlank()) tradingClass(tradingClass)
         }
 
+    fun conIdContract(conId: Int): Contract = Contract().apply { conid(conId) }
+
     fun bagContract(
         soldContract: OptionContract,
         soldConId: Int,

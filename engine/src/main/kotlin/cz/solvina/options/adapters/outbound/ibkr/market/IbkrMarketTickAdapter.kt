@@ -1,7 +1,10 @@
 package cz.solvina.options.adapters.outbound.ibkr.market
 
+import com.ib.client.Contract
 import com.ib.client.EClientSocket
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
+import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
+import cz.solvina.options.adapters.outbound.ibkr.cache.OptionContractKey
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.PendingContinuousMarketDataRequest
 import cz.solvina.options.adapters.outbound.ibkr.registry.PendingTickByTickRequest
@@ -28,6 +31,7 @@ class IbkrMarketTickAdapter(
     private val registry: IbkrMarketDataRegistry,
     private val client: EClientSocket,
     private val contractFactory: IbkrContractFactory,
+    private val contractCache: IbkrContractCache,
 ) : MarketTickPort {
     override fun streamUnderlyingPrice(symbol: Symbol): Flow<Double> =
         callbackFlow {
@@ -129,10 +133,13 @@ class IbkrMarketTickAdapter(
                 },
             )
 
-            client.reqTickByTickData(soldTickReqId, contractFactory.optionContract(soldContract), "BidAsk", 0, true)
-            client.reqTickByTickData(boughtTickReqId, contractFactory.optionContract(boughtContract), "BidAsk", 0, true)
-            client.reqMktData(soldGreeksReqId, contractFactory.optionContract(soldContract), "100", false, false, null)
-            client.reqMktData(boughtGreeksReqId, contractFactory.optionContract(boughtContract), "100", false, false, null)
+            val soldContract4Mkt = contractForMktData(soldContract)
+            val boughtContract4Mkt = contractForMktData(boughtContract)
+
+            client.reqTickByTickData(soldTickReqId, soldContract4Mkt, "BidAsk", 0, true)
+            client.reqTickByTickData(boughtTickReqId, boughtContract4Mkt, "BidAsk", 0, true)
+            client.reqMktData(soldGreeksReqId, soldContract4Mkt, "100", false, false, null)
+            client.reqMktData(boughtGreeksReqId, boughtContract4Mkt, "100", false, false, null)
 
             logger.debug {
                 "Started spread credit stream for " +
@@ -154,4 +161,13 @@ class IbkrMarketTickAdapter(
                 }
             }
         }
+
+    // Use the cached conId when available — avoids "ambiguous" error 200 for multi-exchange symbols (e.g. SAP on EUREX).
+    // Falls back to the generic contract spec if the conId wasn't resolved yet (unusual but safe).
+    private fun contractForMktData(contract: OptionContract): Contract {
+        val key = OptionContractKey(contract.symbol, contract.expiry, contract.strike, contract.type)
+        val conId = contractCache.getCachedOptionConId(key)
+        return if (conId != null) contractFactory.conIdContract(conId)
+               else contractFactory.optionContract(contract)
+    }
 }

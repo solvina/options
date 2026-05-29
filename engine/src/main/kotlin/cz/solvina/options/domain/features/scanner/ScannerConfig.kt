@@ -34,6 +34,7 @@ data class ScannerConfig(
     val driftProtectionPct: Double = 0.01,
     val executionTimeoutMinutes: Long = 15,
     val ticksBeforePriceAdjust: Int = 5,
+    val priceAdjustIntervalSeconds: Int = 30,
     val maxLegBidAskSpreadPct: Double = 0.30,
     // Order chase (used by SpreadManagementService close orders)
     val orderChaseTimeoutMinutes: Long = 5,

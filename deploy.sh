@@ -2,7 +2,7 @@
 # Deploy options engine + frontend to Raspberry Pi.
 #
 # Prerequisites on RPi (one-time):
-#   sudo apt install openjdk-21-jre-headless nginx
+#   sudo apt install openjdk-21-jre-headless nginx python3 python3-venv
 #   # Docker: https://docs.docker.com/engine/install/raspberry-pi-os/
 #   sudo usermod -aG docker solvina   # then re-login
 #   # Passwordless sudo for deploy commands:
@@ -46,6 +46,11 @@ scp "$SCRIPT_DIR/deploy/loki-config.yml" "$RPI_HOST:$DEPLOY_DIR/deploy/"
 scp "$SCRIPT_DIR/deploy/alloy-config.alloy" "$RPI_HOST:$DEPLOY_DIR/deploy/"
 rsync -a "$SCRIPT_DIR/deploy/grafana-provisioning/" "$RPI_HOST:$DEPLOY_DIR/deploy/grafana-provisioning/"
 
+echo "==> Uploading Telegram bot..."
+ssh "$RPI_HOST" "mkdir -p $DEPLOY_DIR/telegram-bot"
+rsync -a "$SCRIPT_DIR/telegram-bot/" "$RPI_HOST:$DEPLOY_DIR/telegram-bot/"
+scp "$SCRIPT_DIR/deploy/telegram-bot.service" "$RPI_HOST:$DEPLOY_DIR/"
+
 
 # ── 3. Remote setup ───────────────────────────────────────────────────────────
 
@@ -57,11 +62,18 @@ set -euo pipefail
 cd $DEPLOY_DIR
 docker compose --env-file .env.rpi up -d db ib-gateway loki grafana alloy
 
-# systemd service
+# options-engine systemd service
 sudo cp $DEPLOY_DIR/options-engine.service /etc/systemd/system/options-engine.service
+
+# telegram bot: create venv + install deps
+python3 -m venv $DEPLOY_DIR/telegram-bot/venv
+$DEPLOY_DIR/telegram-bot/venv/bin/pip install -q -r $DEPLOY_DIR/telegram-bot/requirements.txt
+
+# telegram-bot systemd service
+sudo cp $DEPLOY_DIR/telegram-bot.service /etc/systemd/system/telegram-bot.service
 sudo systemctl daemon-reload
-sudo systemctl enable options-engine
-sudo systemctl restart options-engine
+sudo systemctl enable options-engine telegram-bot
+sudo systemctl restart options-engine telegram-bot
 
 # nginx
 sudo mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled
@@ -73,6 +85,7 @@ sudo systemctl reload nginx
 
 echo "Services status:"
 sudo systemctl is-active options-engine && echo "  options-engine: running" || echo "  options-engine: FAILED"
+sudo systemctl is-active telegram-bot   && echo "  telegram-bot:   running" || echo "  telegram-bot:   FAILED"
 sudo systemctl is-active nginx          && echo "  nginx:          running" || echo "  nginx:          FAILED"
 docker compose --env-file $DEPLOY_DIR/.env.rpi ps --format "table {{.Name}}\t{{.Status}}" 2>/dev/null || true
 REMOTE
@@ -82,3 +95,4 @@ echo "Deploy complete."
 echo "  Frontend + API: http://$(echo $RPI_HOST | cut -d@ -f2)"
 echo "  Grafana:        http://$(echo $RPI_HOST | cut -d@ -f2)/grafana"
 echo "  App logs:       ssh $RPI_HOST 'journalctl -fu options-engine'"
+echo "  Bot logs:       ssh $RPI_HOST 'journalctl -fu telegram-bot'"

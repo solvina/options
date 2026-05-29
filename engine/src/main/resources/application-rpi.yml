@@ -7,13 +7,13 @@ spring:
 
 scanner:
   watchlist: [ SPY, QQQ, AAPL, MSFT, AMZN, IWM, DIA, TSLA, NVDA, META, GOOGL, XLF, XLE, XLV, AMD, UNH, ASML ]
-  cron: "0 */15 3-15 * * MON-FRI"   # covers EU morning (03:00 ET = 09:00 CEST) through US close (15:00 ET)
+  cron: "0 */15 3-16 * * MON-FRI"   # covers EU morning (03:00 ET = 09:00 CEST) through US close (16:00 ET = 22:00 CEST)
 
 ibkr:
   connection:
     host: localhost   # IB Gateway runs in Docker on the same RPi, mapped to host:7497
     paper-account: true
-    use-live-market-data: false   # request type 3 (delayed) so symbols without live option data still get bid/ask
+    use-live-market-data: true   # use live data for better options availability
   instruments:
     ASML:
       currency: EUR

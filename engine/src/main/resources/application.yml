@@ -67,20 +67,21 @@ scanner:
   strike-band-percent: 0.20
   candidate-strike-count: 7
   spread-width-usd: 5.0
-  min-credit-per-share: 0.50
+  min-credit-per-share: 0.35       # Conservative: 0.50 → 0.35 for better fill rates
   max-risk-percent: 0.025
   max-open-spreads: 5
   take-profit-percent: 0.50
   stop-loss-percent: 1.00
   time-profit-dte: 14
-  drift-protection-pct: 0.01
+  drift-protection-pct: 0.05       # Conservative: 0.01 → 0.05 (allow 5% movement, not 1%)
   execution-timeout-minutes: 15
   ticks-before-price-adjust: 5
-  max-leg-bid-ask-spread-pct: 0.30
-  order-chase-timeout-minutes: 5
-  order-chase-max-retries: 3
-  order-chase-price-step: 0.03
-  cron: "0 */15 9-22 * * MON-FRI"
+  price-adjust-interval-seconds: 30
+  max-leg-bid-ask-spread-pct: 0.15 # Conservative: 0.30 → 0.15 (only liquid options)
+  order-chase-timeout-minutes: 3   # Conservative: 5 → 3 (give up sooner, retry next scan)
+  order-chase-max-retries: 1       # Conservative: 3 → 1 (one attempt per order, not aggressive chasing)
+  order-chase-price-step: 0.01     # Conservative: 0.03 → 0.01 (gradual adjustments, avoid floor hits)
+  cron: "0 */15 3-15 * * MON-FRI"
   monitor-delay-ms: 60000
   iv-history-days: 365
   iv-cache-ttl-minutes: 60
