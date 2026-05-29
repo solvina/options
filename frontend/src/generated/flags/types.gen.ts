@@ -25,6 +25,8 @@ export type FlagPositionDto = {
     closeReason?: string | null;
     closePriceActual?: number | null;
     realizedPnl?: number | null;
+    unrealizedPnl?: number | null;
+    currentPrice?: number | null;
 };
 
 export type PagedFlagsDto = {

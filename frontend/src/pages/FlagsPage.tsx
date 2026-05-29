@@ -52,10 +52,10 @@ function fmtDate(iso: string | null | undefined): string {
   return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
-function PnlSpan({ val }: { val: number | null | undefined }) {
+function PnlSpan({ val, placeholder = '—' }: { val: number | null | undefined; placeholder?: string }) {
   const n = val == null ? null : Number(val)
   const cls = n == null ? 'text-muted-foreground' : n > 0 ? 'text-green-600 dark:text-green-400' : n < 0 ? 'text-red-500 dark:text-red-400' : ''
-  return <span className={`tabular-nums font-medium ${cls}`}>{fmtMoney(n)}</span>
+  return <span className={`tabular-nums font-medium ${cls}`}>{n == null ? placeholder : fmtMoney(n)}</span>
 }
 
 // ─────────────────────────────────────────────
@@ -390,6 +390,9 @@ function FlagRow({ position }: { position: FlagPositionDto }) {
       <td className="px-3 py-2 tabular-nums text-sm text-green-600 dark:text-green-400">{fmt(position.profitTargetPrice, 4)}</td>
       <td className="px-3 py-2 tabular-nums text-sm">{position.shares}</td>
       <td className="px-3 py-2 tabular-nums text-sm">${fmt(position.riskAmount)}</td>
+      <td className="px-3 py-2 tabular-nums text-sm" title={position.currentPrice != null ? `Current: $${fmt(position.currentPrice, 4)}` : undefined}>
+        <PnlSpan val={position.unrealizedPnl} placeholder={isCloseable ? '…' : '—'} />
+      </td>
       <td className="px-3 py-2 tabular-nums text-sm"><PnlSpan val={position.realizedPnl} /></td>
       <td className="px-3 py-2 text-muted-foreground text-xs">{fmtDate(position.openedAt)}</td>
       <td className="px-3 py-2 text-muted-foreground text-xs">{fmtDate(position.closedAt)}</td>
@@ -500,7 +503,8 @@ export function FlagsPage() {
                 <th className="px-3 py-2 text-left">Target</th>
                 <th className="px-3 py-2 text-left">Shares</th>
                 <th className="px-3 py-2 text-left">Risk</th>
-                <th className="px-3 py-2 text-left">P&amp;L</th>
+                <th className="px-3 py-2 text-left">Unreal. P&amp;L</th>
+                <th className="px-3 py-2 text-left">Real. P&amp;L</th>
                 <th className="px-3 py-2 text-left">Opened</th>
                 <th className="px-3 py-2 text-left">Closed</th>
                 <th className="px-3 py-2 text-left"></th>
@@ -509,7 +513,7 @@ export function FlagsPage() {
             <tbody>
               {positions.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="px-3 py-8 text-center text-muted-foreground text-sm">
+                  <td colSpan={12} className="px-3 py-8 text-center text-muted-foreground text-sm">
                     No positions found.
                   </td>
                 </tr>

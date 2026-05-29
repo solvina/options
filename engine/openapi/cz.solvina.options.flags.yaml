@@ -223,6 +223,12 @@ components:
         realizedPnl:
           type: number
           nullable: true
+        unrealizedPnl:
+          type: number
+          nullable: true
+        currentPrice:
+          type: number
+          nullable: true
 
     PagedFlagsDto:
       type: object

@@ -16,6 +16,7 @@ import cz.solvina.options.domain.features.flag.config.FlagTradingConfig
 import cz.solvina.options.domain.features.flag.config.FlagTradingConfigPort
 import cz.solvina.options.domain.features.flag.model.FlagPosition
 import cz.solvina.options.domain.features.flag.model.FlagStatus
+import cz.solvina.options.domain.features.market.MarketDataPort
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
@@ -30,6 +31,7 @@ class FlagsApiImpl(
     private val flagManagementService: FlagManagementService,
     private val flagAnalyticsService: FlagAnalyticsService,
     private val flagTradingConfigPort: FlagTradingConfigPort,
+    private val marketDataPort: MarketDataPort,
 ) : FlagsApi {
 
     override suspend fun listFlags(
@@ -39,9 +41,11 @@ class FlagsApiImpl(
     ): ResponseEntity<PagedFlagsDto> {
         val flagStatus = status?.let { FlagStatus.valueOf(it) }
         val result = flagPort.findPage(flagStatus, page, size)
+        val dtos = mutableListOf<FlagPositionDto>()
+        for (p in result.content) dtos.add(p.toDto())
         return ResponseEntity.ok(
             PagedFlagsDto(
-                content = result.content.map { it.toDto() },
+                content = dtos,
                 totalElements = result.totalElements,
                 totalPages = result.totalPages,
                 page = result.page,
@@ -122,8 +126,16 @@ class FlagsApiImpl(
             is FlagManagementService.ManualCloseResult.AlreadyClosed -> ResponseEntity.status(HttpStatus.CONFLICT).build()
         }
 
-    private fun FlagPosition.toDto(): FlagPositionDto =
-        FlagPositionDto(
+    private suspend fun FlagPosition.toDto(): FlagPositionDto {
+        val livePrice = if (status == FlagStatus.OPEN || status == FlagStatus.PENDING) {
+            runCatching { marketDataPort.getUnderlyingPrice(symbol).amount }.getOrNull()
+        } else null
+        val unrealized = livePrice?.let { price ->
+            price.subtract(entryPrice)
+                .multiply(java.math.BigDecimal(shares))
+                .setScale(2, java.math.RoundingMode.HALF_UP)
+        }
+        return FlagPositionDto(
             id = requireNotNull(id),
             symbol = symbol.value,
             status = FlagPositionDto.Status.valueOf(status.name),
@@ -144,7 +156,10 @@ class FlagsApiImpl(
             closeReason = closeReason,
             closePriceActual = closePriceActual,
             realizedPnl = realizedPnl,
+            unrealizedPnl = unrealized,
+            currentPrice = livePrice,
         )
+    }
 
     private fun FlagTradingConfig.toDto(): FlagTradingConfigDto =
         FlagTradingConfigDto(
