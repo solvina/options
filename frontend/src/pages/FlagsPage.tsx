@@ -386,11 +386,12 @@ function FlagRow({ position }: { position: FlagPositionDto }) {
       <td className="px-3 py-2 font-mono font-medium text-sm">{position.symbol}</td>
       <td className="px-3 py-2"><StatusBadge status={position.status} /></td>
       <td className="px-3 py-2 tabular-nums text-sm">{fmt(position.entryPrice, 4)}</td>
+      <td className="px-3 py-2 tabular-nums text-sm text-muted-foreground">{position.currentPrice != null ? fmt(position.currentPrice, 4) : '—'}</td>
       <td className="px-3 py-2 tabular-nums text-sm text-red-500">{fmt(position.stopLossPrice, 4)}</td>
       <td className="px-3 py-2 tabular-nums text-sm text-green-600 dark:text-green-400">{fmt(position.profitTargetPrice, 4)}</td>
       <td className="px-3 py-2 tabular-nums text-sm">{position.shares}</td>
       <td className="px-3 py-2 tabular-nums text-sm">${fmt(position.riskAmount)}</td>
-      <td className="px-3 py-2 tabular-nums text-sm" title={position.currentPrice != null ? `Current: $${fmt(position.currentPrice, 4)}` : undefined}>
+      <td className="px-3 py-2 tabular-nums text-sm">
         <PnlSpan val={position.unrealizedPnl} placeholder={isCloseable ? '…' : '—'} />
       </td>
       <td className="px-3 py-2 tabular-nums text-sm"><PnlSpan val={position.realizedPnl} /></td>
@@ -499,6 +500,7 @@ export function FlagsPage() {
                 <th className="px-3 py-2 text-left">Symbol</th>
                 <th className="px-3 py-2 text-left">Status</th>
                 <th className="px-3 py-2 text-left">Entry</th>
+                <th className="px-3 py-2 text-left">Current</th>
                 <th className="px-3 py-2 text-left">Stop</th>
                 <th className="px-3 py-2 text-left">Target</th>
                 <th className="px-3 py-2 text-left">Shares</th>
@@ -513,7 +515,7 @@ export function FlagsPage() {
             <tbody>
               {positions.length === 0 ? (
                 <tr>
-                  <td colSpan={12} className="px-3 py-8 text-center text-muted-foreground text-sm">
+                  <td colSpan={13} className="px-3 py-8 text-center text-muted-foreground text-sm">
                     No positions found.
                   </td>
                 </tr>
