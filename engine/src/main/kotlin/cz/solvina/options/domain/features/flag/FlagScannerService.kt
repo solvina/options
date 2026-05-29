@@ -54,7 +54,10 @@ class FlagScannerService(
     }
 
     private fun resolveWatchlist(): List<Symbol> {
-        val universeSymbols = runCatching { universePort.getActiveSymbols() }.getOrNull() ?: emptyList()
+        // Use the full watchlist (all enabled symbols), not getActiveSymbols() which only returns
+        // currently-open markets. reqRealTimeBars uses useRTH=1, so IBKR delivers bars only during
+        // each symbol's own trading hours — no need to gate subscriptions by current market time.
+        val universeSymbols = runCatching { universePort.getWatchlist() }.getOrNull() ?: emptyList()
         return if (universeSymbols.isNotEmpty()) {
             universeSymbols
         } else {
