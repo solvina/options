@@ -1,0 +1,351 @@
+openapi: 3.0.3
+info:
+  title: Options Engine - Flags API
+  description: Bull Flag Momentum strategy — positions, config, and analytics
+  version: 1.0.0
+
+paths:
+  /flags:
+    get:
+      tags:
+        - Flags
+      summary: List flag positions (paginated)
+      operationId: listFlags
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [PENDING, OPEN, CLOSED_PROFIT, CLOSED_STOP, CLOSED_EOD, CLOSED_MANUAL]
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+        - name: size
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Paged list of flag positions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PagedFlagsDto'
+
+  /flags/analytics:
+    get:
+      tags:
+        - Flags
+      summary: Aggregate performance analytics
+      operationId: getFlagAnalytics
+      responses:
+        '200':
+          description: Analytics data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FlagAnalyticsDto'
+
+  /flags/config:
+    get:
+      tags:
+        - Flags
+      summary: Get trading config (risk limits, kill switch)
+      operationId: getFlagConfig
+      responses:
+        '200':
+          description: Current trading config
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FlagTradingConfigDto'
+    put:
+      tags:
+        - Flags
+      summary: Update trading config
+      operationId: updateFlagConfig
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FlagTradingConfigDto'
+      responses:
+        '200':
+          description: Updated config
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FlagTradingConfigDto'
+
+  /flags/scanner/pause:
+    post:
+      tags:
+        - Flags
+      summary: Pause the flag scanner (no new entries, persisted across restarts)
+      operationId: pauseFlagScanner
+      responses:
+        '204':
+          description: Scanner paused
+
+  /flags/scanner/resume:
+    post:
+      tags:
+        - Flags
+      summary: Resume the flag scanner
+      operationId: resumeFlagScanner
+      responses:
+        '204':
+          description: Scanner resumed
+
+  /flags/{id}:
+    get:
+      tags:
+        - Flags
+      summary: Get a single flag position
+      operationId: getFlagById
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Flag position
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FlagPositionDto'
+        '404':
+          description: Not found
+
+  /flags/{id}/close:
+    post:
+      tags:
+        - Flags
+      summary: Manually close a position (PENDING or OPEN)
+      operationId: closeFlagPosition
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Closed position
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FlagPositionDto'
+        '404':
+          description: Not found
+        '409':
+          description: Already closed
+
+components:
+  schemas:
+    FlagPositionDto:
+      type: object
+      required:
+        - id
+        - symbol
+        - status
+        - entryOrderId
+        - stopLossOrderId
+        - profitTargetOrderId
+        - entryPrice
+        - stopLossPrice
+        - profitTargetPrice
+        - shares
+        - riskAmount
+        - openedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        symbol:
+          type: string
+        status:
+          type: string
+          enum: [PENDING, OPEN, CLOSED_PROFIT, CLOSED_STOP, CLOSED_EOD, CLOSED_MANUAL]
+        entryOrderId:
+          type: integer
+        stopLossOrderId:
+          type: integer
+        profitTargetOrderId:
+          type: integer
+        entryPrice:
+          type: number
+        stopLossPrice:
+          type: number
+        profitTargetPrice:
+          type: number
+        shares:
+          type: integer
+        riskAmount:
+          type: number
+        flagpoleHeight:
+          type: number
+          nullable: true
+        flagRetracement:
+          type: number
+          nullable: true
+        resistanceAtEntry:
+          type: number
+          nullable: true
+        patternStartedAt:
+          type: string
+          format: date-time
+          nullable: true
+        openedAt:
+          type: string
+          format: date-time
+        closedAt:
+          type: string
+          format: date-time
+          nullable: true
+        closeReason:
+          type: string
+          nullable: true
+        closePriceActual:
+          type: number
+          nullable: true
+        realizedPnl:
+          type: number
+          nullable: true
+
+    PagedFlagsDto:
+      type: object
+      required: [content, totalElements, totalPages, page, size]
+      properties:
+        content:
+          type: array
+          items:
+            $ref: '#/components/schemas/FlagPositionDto'
+        totalElements:
+          type: integer
+          format: int64
+        totalPages:
+          type: integer
+        page:
+          type: integer
+        size:
+          type: integer
+
+    FlagTradingConfigDto:
+      type: object
+      required:
+        - riskPerTrade
+        - maxOpenPositions
+        - enabled
+        - entryBlockMinutesBeforeClose
+        - eodLiqMinutesBeforeClose
+      properties:
+        riskPerTrade:
+          type: number
+          description: Maximum dollar loss per trade (e.g. 100.00)
+        maxOpenPositions:
+          type: integer
+          description: Maximum concurrent open flag positions
+        enabled:
+          type: boolean
+          description: Master kill switch — false prevents any new entries
+        entryBlockMinutesBeforeClose:
+          type: integer
+          description: No new entries within this many minutes before exchange close
+        eodLiqMinutesBeforeClose:
+          type: integer
+          description: Auto-liquidate open positions this many minutes before exchange close
+
+    FlagAnalyticsDto:
+      type: object
+      required: [summary, byStatus, bySymbol, pnlTimeline]
+      properties:
+        summary:
+          $ref: '#/components/schemas/FlagSummaryDto'
+        byStatus:
+          type: array
+          items:
+            $ref: '#/components/schemas/FlagStatusBreakdownDto'
+        bySymbol:
+          type: array
+          items:
+            $ref: '#/components/schemas/FlagSymbolBreakdownDto'
+        pnlTimeline:
+          type: array
+          items:
+            $ref: '#/components/schemas/FlagPnlTimelinePointDto'
+
+    FlagSummaryDto:
+      type: object
+      required: [totalTrades, openTrades, winRate, totalRealizedPnl, avgWinner, avgLoser, eodCutPct, avgHoldMinutes]
+      properties:
+        totalTrades:
+          type: integer
+        openTrades:
+          type: integer
+        winRate:
+          type: number
+        totalRealizedPnl:
+          type: number
+        avgWinner:
+          type: number
+        avgLoser:
+          type: number
+        eodCutPct:
+          type: number
+          description: Fraction of trades closed by EOD auto-liquidation
+        avgHoldMinutes:
+          type: number
+
+    FlagStatusBreakdownDto:
+      type: object
+      required: [status, count, totalPnl, avgPnl]
+      properties:
+        status:
+          type: string
+        count:
+          type: integer
+        totalPnl:
+          type: number
+        avgPnl:
+          type: number
+
+    FlagSymbolBreakdownDto:
+      type: object
+      required: [symbol, count, wins, winRate, totalPnl, avgPnl]
+      properties:
+        symbol:
+          type: string
+        count:
+          type: integer
+        wins:
+          type: integer
+        winRate:
+          type: number
+        totalPnl:
+          type: number
+        avgPnl:
+          type: number
+
+    FlagPnlTimelinePointDto:
+      type: object
+      required: [date, dailyPnl, cumulativePnl]
+      properties:
+        date:
+          type: string
+          format: date
+        dailyPnl:
+          type: number
+        cumulativePnl:
+          type: number

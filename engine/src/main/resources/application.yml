@@ -87,6 +87,19 @@ scanner:
   iv-cache-ttl-minutes: 60
   option-params-cache-ttl-hours: 24
 
+flag:
+  watchlist: [SPY, QQQ, AAPL, MSFT, NVDA]
+  atr-period: 14
+  atr-multiplier: 2.0
+  volume-ma-period: 20
+  volume-spike-multiplier: 1.5
+  pole-min-bars: 5
+  pole-max-bars: 10
+  flag-min-bars: 5
+  flag-max-bars: 20
+  max-retracement-pct: 0.50
+  historical-bootstrap-days: 3
+
 app:
   timezone: Europe/Prague
 

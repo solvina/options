@@ -17,11 +17,21 @@ internal data class PendingBarsRequest(
     val onError: (Exception) -> Unit,
 )
 
+/** Raw-bar callback for equity OHLCV requests (e.g., 5-min candles). */
+internal data class PendingRawBarsRequest(
+    val onBar: (Bar) -> Unit,
+    val onEnd: () -> Unit,
+    val onError: (Exception) -> Unit,
+)
+
 @Component
 class IbkrHistoricalDataRegistry(
     private val idCounter: IbkrIdCounter,
 ) {
     internal val pendingHistoricalBars = ConcurrentHashMap<Int, PendingBarsRequest>()
+
+    /** For equity OHLCV requests that need the full raw com.ib.client.Bar. */
+    internal val pendingRawBars = ConcurrentHashMap<Int, PendingRawBarsRequest>()
 
     fun nextReqId(): Int = idCounter.next()
 
@@ -29,6 +39,12 @@ class IbkrHistoricalDataRegistry(
         reqId: Int,
         bar: Bar,
     ) {
+        // Raw-bar path (equity 5-min candles, etc.)
+        pendingRawBars[reqId]?.let { request ->
+            request.onBar(bar)
+            return
+        }
+        // IV/analytics path
         val request = pendingHistoricalBars[reqId] ?: return
         val date =
             runCatching {
@@ -40,6 +56,7 @@ class IbkrHistoricalDataRegistry(
 
     fun onHistoricalDataEnd(reqId: Int) {
         pendingHistoricalBars.remove(reqId)?.onEnd?.invoke()
+        pendingRawBars.remove(reqId)?.onEnd?.invoke()
     }
 
     fun onError(
@@ -47,14 +64,19 @@ class IbkrHistoricalDataRegistry(
         code: Int,
         msg: String,
     ) {
-        pendingHistoricalBars.remove(id)?.onError?.invoke(RuntimeException("IBKR error [code=$code]: $msg"))
+        val ex = RuntimeException("IBKR error [code=$code]: $msg")
+        pendingHistoricalBars.remove(id)?.onError?.invoke(ex)
+        pendingRawBars.remove(id)?.onError?.invoke(ex)
     }
 
     fun cancelAllPending(cause: Exception) {
-        if (pendingHistoricalBars.isNotEmpty()) {
-            logger.warn { "Cancelling ${pendingHistoricalBars.size} pending historical requests due to disconnect" }
+        val total = pendingHistoricalBars.size + pendingRawBars.size
+        if (total > 0) {
+            logger.warn { "Cancelling $total pending historical requests due to disconnect" }
         }
         pendingHistoricalBars.values.forEach { it.onError(cause) }
         pendingHistoricalBars.clear()
+        pendingRawBars.values.forEach { it.onError(cause) }
+        pendingRawBars.clear()
     }
 }

@@ -1,0 +1,157 @@
+databaseChangeLog:
+  - changeSet:
+      id: v6__flag_trading_config
+      author: vseliga
+      changes:
+        - createTable:
+            tableName: flag_trading_config
+            columns:
+              - column:
+                  name: id
+                  type: BIGINT
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: risk_per_trade
+                  type: NUMERIC(10,2)
+                  defaultValueNumeric: 100.00
+                  constraints:
+                    nullable: false
+              - column:
+                  name: max_open_positions
+                  type: INT
+                  defaultValueNumeric: 3
+                  constraints:
+                    nullable: false
+              - column:
+                  name: enabled
+                  type: BOOLEAN
+                  defaultValueBoolean: true
+                  constraints:
+                    nullable: false
+              - column:
+                  name: entry_block_minutes_before_close
+                  type: INT
+                  defaultValueNumeric: 120
+                  constraints:
+                    nullable: false
+              - column:
+                  name: eod_liq_minutes_before_close
+                  type: INT
+                  defaultValueNumeric: 15
+                  constraints:
+                    nullable: false
+        - insert:
+            tableName: flag_trading_config
+            columns:
+              - column:
+                  name: id
+                  value: 1
+
+  - changeSet:
+      id: v6__flag_positions
+      author: vseliga
+      changes:
+        - createTable:
+            tableName: flag_positions
+            columns:
+              - column:
+                  name: id
+                  type: UUID
+                  defaultValueComputed: gen_random_uuid()
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: symbol
+                  type: VARCHAR(10)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: status
+                  type: VARCHAR(30)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: entry_order_id
+                  type: INT
+                  constraints:
+                    nullable: false
+              - column:
+                  name: stop_loss_order_id
+                  type: INT
+                  constraints:
+                    nullable: false
+              - column:
+                  name: profit_target_order_id
+                  type: INT
+                  constraints:
+                    nullable: false
+              - column:
+                  name: entry_price
+                  type: NUMERIC(10,4)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: stop_loss_price
+                  type: NUMERIC(10,4)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: profit_target_price
+                  type: NUMERIC(10,4)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: shares
+                  type: INT
+                  constraints:
+                    nullable: false
+              - column:
+                  name: risk_amount
+                  type: NUMERIC(10,2)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: flagpole_height
+                  type: NUMERIC(10,4)
+              - column:
+                  name: flag_retracement
+                  type: NUMERIC(5,4)
+              - column:
+                  name: resistance_at_entry
+                  type: NUMERIC(10,4)
+              - column:
+                  name: pattern_started_at
+                  type: TIMESTAMPTZ
+              - column:
+                  name: opened_at
+                  type: TIMESTAMPTZ
+                  constraints:
+                    nullable: false
+              - column:
+                  name: closed_at
+                  type: TIMESTAMPTZ
+              - column:
+                  name: close_reason
+                  type: VARCHAR(50)
+              - column:
+                  name: close_price_actual
+                  type: NUMERIC(10,4)
+              - column:
+                  name: realized_pnl
+                  type: NUMERIC(10,2)
+        - createIndex:
+            tableName: flag_positions
+            indexName: idx_flag_positions_status
+            columns:
+              - column:
+                  name: status
+        - createIndex:
+            tableName: flag_positions
+            indexName: idx_flag_positions_opened_at
+            columns:
+              - column:
+                  name: opened_at
+                  descending: true

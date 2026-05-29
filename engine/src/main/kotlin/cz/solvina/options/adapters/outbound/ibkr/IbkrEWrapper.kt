@@ -298,7 +298,8 @@ class IbkrEWrapper(
         wap: Decimal,
         count: Int,
     ) {
-        logger.trace { "realtimeBar: reqId=$reqId" }
+        logger.trace { "realtimeBar: reqId=$reqId time=$time close=$close" }
+        marketDataRegistry.onRealtimeBar(reqId, time, open, high, low, close, volume.value().toLong(), wap.value().toDouble())
     }
 
     override fun currentTime(time: Long) {

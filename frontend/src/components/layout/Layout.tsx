@@ -4,9 +4,11 @@ import { cn } from '../../lib/utils'
 
 const navItems = [
   { to: '/spreads', label: 'Spreads' },
+  { to: '/flags', label: 'Flags' },
   { to: '/account', label: 'Account' },
   { to: '/scanner', label: 'Scanner' },
   { to: '/analytics', label: 'Analytics' },
+  { to: '/flags/analytics', label: 'Flag Analytics' },
   { to: '/universe', label: 'Universe' },
   { to: '/diagnostic', label: 'Diagnostics' },
 ]

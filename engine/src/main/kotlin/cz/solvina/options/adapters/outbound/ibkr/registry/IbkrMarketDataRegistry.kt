@@ -1,8 +1,10 @@
 package cz.solvina.options.adapters.outbound.ibkr.registry
 
+import cz.solvina.options.domain.features.bars.RealTimeBar
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CompletableDeferred
 import org.springframework.stereotype.Component
+import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 
 private val logger = KotlinLogging.logger {}
@@ -38,6 +40,31 @@ class IbkrMarketDataRegistry(
     internal val pendingMarketData = ConcurrentHashMap<Int, PendingMarketDataRequest>()
     internal val pendingContinuousMarketData = ConcurrentHashMap<Int, PendingContinuousMarketDataRequest>()
     internal val pendingTickByTick = ConcurrentHashMap<Int, PendingTickByTickRequest>()
+
+    /** Active reqRealTimeBars subscriptions. Callback invoked on every 5-second bar. */
+    internal val pendingRealTimeBars = ConcurrentHashMap<Int, (RealTimeBar) -> Unit>()
+
+    fun onRealtimeBar(
+        reqId: Int,
+        time: Long,
+        open: Double,
+        high: Double,
+        low: Double,
+        close: Double,
+        volume: Long,
+        wap: Double,
+    ) {
+        val bar = RealTimeBar(
+            time = Instant.ofEpochSecond(time),
+            open = open,
+            high = high,
+            low = low,
+            close = close,
+            volume = volume,
+            wap = wap,
+        )
+        pendingRealTimeBars[reqId]?.invoke(bar)
+    }
 
     fun nextReqId(): Int = idCounter.next()
 
@@ -145,12 +172,14 @@ class IbkrMarketDataRegistry(
     }
 
     fun cancelAllPending(cause: Exception) {
-        val count = pendingMarketData.size + pendingContinuousMarketData.size + pendingTickByTick.size
+        val count = pendingMarketData.size + pendingContinuousMarketData.size + pendingTickByTick.size + pendingRealTimeBars.size
         if (count > 0) logger.warn { "Cancelling $count pending market data requests due to disconnect" }
         pendingMarketData.values.forEach { it.deferred.completeExceptionally(cause) }
         pendingMarketData.clear()
         // Continuous subscriptions: flows will detect completion via their awaitClose blocks
         pendingContinuousMarketData.clear()
         pendingTickByTick.clear()
+        // Real-time bar subscriptions will notice disconnect via their awaitClose blocks
+        pendingRealTimeBars.clear()
     }
 }

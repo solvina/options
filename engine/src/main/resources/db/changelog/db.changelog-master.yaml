@@ -9,3 +9,5 @@ databaseChangeLog:
       file: db/changelog/v4__instrument_universe.yaml
   - include:
       file: db/changelog/v5__spread_exit_data.yaml
+  - include:
+      file: db/changelog/v6__flag_positions.yaml
