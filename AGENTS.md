@@ -82,6 +82,12 @@ The only acceptable exception is when two identically-named types are used in th
 neither can be aliased away cleanly — in that case, prefer a `typealias` or `import ... as ...`
 over an inline fully-qualified name.
 
+## Market time vs. system time
+
+**Be driven by market data, not the system clock. Use the most suitable timestamp from market data wherever possible.**
+
+System clock (`Instant.now()` / `Clock`) is only appropriate for true wall-clock events: order submission timestamps, audit trails, and scheduler ticks. For everything else — entry blocking, context fields, candle timestamps, replay — derive time from the market data itself so the engine behaves consistently in both live and replay/backtest modes.
+
 ## IBKR configuration
 
 - Connection config: `ibkr.connection.*` (see `IbkrConnectionConfig`)

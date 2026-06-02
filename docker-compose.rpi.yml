@@ -32,6 +32,21 @@ services:
       - "7497:4004"   # paper SOCAT relay: 4004 → 4002 (internal), host 7497 matches application.yml
       - "5901:5900"   # VNC
 
+  influxdb:
+    image: influxdb:2.7
+    restart: unless-stopped
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: admin
+      DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUXDB_ADMIN_PASSWORD}
+      DOCKER_INFLUXDB_INIT_ORG: options
+      DOCKER_INFLUXDB_INIT_BUCKET: market_data
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUXDB_TOKEN}
+    volumes:
+      - ./data/influxdb-data:/var/lib/influxdb2
+    ports:
+      - "127.0.0.1:8086:8086"
+
   loki:
     image: grafana/loki:3.4.2
     restart: unless-stopped
@@ -51,12 +66,13 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: "options"
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer"
+      INFLUXDB_TOKEN: ${INFLUXDB_TOKEN}
     volumes:
       - grafana-data:/var/lib/grafana
       - ./deploy/grafana-provisioning:/etc/grafana/provisioning:ro
     ports:
       - "127.0.0.1:3000:3000"
-    depends_on: [loki]
+    depends_on: [loki, influxdb]
 
   alloy:
     image: grafana/alloy:v1.8.3
