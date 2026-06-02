@@ -6,6 +6,21 @@
         </encoder>
     </appender>
 
+    <appender name="TWS_RAW_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_PATH:-/home/solvina/options}/tws-raw.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_PATH:-/home/solvina/options}/tws-raw.%d{yyyy-MM-dd}.log</fileNamePattern>
+            <maxHistory>7</maxHistory>
+        </rollingPolicy>
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <logger name="TWS_RAW" level="DEBUG" additivity="false">
+        <appender-ref ref="TWS_RAW_FILE"/>
+    </logger>
+
     <appender name="TRADES_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
         <file>${LOG_PATH:-/home/solvina/options}/trades.log</file>
         <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">

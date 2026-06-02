@@ -37,6 +37,22 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.stereotype.Component
 
 private val logger = KotlinLogging.logger {}
+private val twsRaw = KotlinLogging.logger("TWS_RAW")
+
+private fun tickFieldName(field: Int) = when (field) {
+    0 -> "BID_SIZE"; 1 -> "BID"; 2 -> "ASK"; 3 -> "ASK_SIZE"
+    4 -> "LAST"; 5 -> "LAST_SIZE"; 6 -> "HIGH"; 7 -> "LOW"
+    9 -> "CLOSE_PREV"; 14 -> "OPEN"; 24 -> "VOLUME"; 37 -> "MARK"
+    10 -> "BID_OPT"; 11 -> "ASK_OPT"; 12 -> "LAST_OPT"; 13 -> "MODEL"
+    66 -> "DELAYED_BID"; 67 -> "DELAYED_ASK"; 68 -> "DELAYED_LAST"
+    72 -> "DELAYED_HIGH"; 73 -> "DELAYED_LOW"; 75 -> "DELAYED_CLOSE"
+    else -> "FIELD_$field"
+}
+
+private fun optFieldName(field: Int) = when (field) {
+    10 -> "BID"; 11 -> "ASK"; 12 -> "LAST"; 13 -> "MODEL"; 53 -> "CUSTOM"
+    else -> "FIELD_$field"
+}
 
 @Component
 class IbkrEWrapper(
@@ -56,6 +72,7 @@ class IbkrEWrapper(
         attrib: TickAttrib,
     ) {
         logger.trace { "tickPrice: tickerId=$tickerId, field=$field, price=$price" }
+        twsRaw.debug { "TICK_PRICE    tid=$tickerId  fld=${tickFieldName(field)}  val=$price" }
         marketDataRegistry.onTickPrice(tickerId, field, price)
     }
 
@@ -65,6 +82,7 @@ class IbkrEWrapper(
         size: Decimal,
     ) {
         logger.trace { "tickSize: tickerId=$tickerId, field=$field, size=$size" }
+        twsRaw.debug { "TICK_SIZE     tid=$tickerId  fld=${tickFieldName(field)}  val=$size" }
     }
 
     override fun tickOptionComputation(
@@ -81,6 +99,12 @@ class IbkrEWrapper(
         undPrice: Double,
     ) {
         logger.trace { "tickOptionComputation: tickerId=$tickerId, field=$field, delta=$delta" }
+        twsRaw.debug {
+            "OPT_COMPUTE   tid=$tickerId  fld=${optFieldName(field)}" +
+                "  iv=${"%.4f".format(impliedVol)}  delta=${"%.4f".format(delta)}" +
+                "  gamma=${"%.4f".format(gamma)}  vega=${"%.4f".format(vega)}  theta=${"%.4f".format(theta)}" +
+                "  optPrice=$optPrice  undPrice=$undPrice"
+        }
         marketDataRegistry.onTickOptionComputation(tickerId, field, impliedVol, delta, gamma, vega, theta)
     }
 
@@ -128,6 +152,10 @@ class IbkrEWrapper(
         mktCapPrice: Double,
     ) {
         logger.debug { "orderStatus: orderId=$orderId, status=$status, filled=$filled avgFill=$avgFillPrice" }
+        twsRaw.debug {
+            "ORDER_STATUS  oid=$orderId  status=$status  filled=$filled  remaining=$remaining" +
+                "  avgFill=$avgFillPrice  lastFill=$lastFillPrice  parentId=$parentId  whyHeld=$whyHeld"
+        }
         orderRegistry.onOrderStatus(orderId, status, avgFillPrice)
     }
 
@@ -138,6 +166,13 @@ class IbkrEWrapper(
         orderState: OrderState,
     ) {
         logger.debug { "openOrder: orderId=$orderId, symbol=${contract.symbol()}" }
+        twsRaw.debug {
+            "OPEN_ORDER    oid=$orderId  sym=${contract.symbol()}  secType=${contract.secType()}" +
+                "  expiry=${contract.lastTradeDateOrContractMonth()}  strike=${contract.strike()}  right=${contract.right()}" +
+                "  action=${order.action()}  qty=${order.totalQuantity()}  type=${order.orderType()}" +
+                "  lmt=${order.lmtPrice()}  aux=${order.auxPrice()}  tif=${order.tif()}" +
+                "  status=${orderState.status()}"
+        }
         openOrdersRegistry.onOpenOrder(orderId, contract, order, orderState)
     }
 
@@ -167,6 +202,12 @@ class IbkrEWrapper(
         accountName: String,
     ) {
         logger.trace { "updatePortfolio: symbol=${contract.symbol()}, position=$position" }
+        twsRaw.debug {
+            "PORTFOLIO     sym=${contract.symbol()}  secType=${contract.secType()}" +
+                "  expiry=${contract.lastTradeDateOrContractMonth()}  strike=${contract.strike()}  right=${contract.right()}" +
+                "  pos=$position  mktPrice=$marketPrice  mktValue=$marketValue" +
+                "  avgCost=$averageCost  unrealPnl=$unrealizedPNL  realPnl=$realizedPNL"
+        }
     }
 
     override fun updateAccountTime(timeStamp: String) {
@@ -187,6 +228,14 @@ class IbkrEWrapper(
         contractDetails: ContractDetails,
     ) {
         logger.debug { "contractDetails: reqId=$reqId, symbol=${contractDetails.contract().symbol()}" }
+        val c = contractDetails.contract()
+        twsRaw.debug {
+            "CONTRACT_DET  rid=$reqId  sym=${c.symbol()}  secType=${c.secType()}  conId=${c.conid()}" +
+                "  expiry=${c.lastTradeDateOrContractMonth()}  strike=${c.strike()}  right=${c.right()}" +
+                "  exchange=${c.exchange()}  currency=${c.currency()}  mult=${c.multiplier()}" +
+                "  tradingClass=${c.tradingClass()}  minTick=${contractDetails.minTick()}" +
+                "  orderTypes=${contractDetails.orderTypes()}"
+        }
         contractRegistry.onContractDetails(reqId, contractDetails)
     }
 
@@ -208,6 +257,13 @@ class IbkrEWrapper(
         execution: Execution,
     ) {
         logger.debug { "execDetails: reqId=$reqId" }
+        twsRaw.debug {
+            "EXEC_DETAILS  rid=$reqId  sym=${contract.symbol()}  secType=${contract.secType()}" +
+                "  strike=${contract.strike()}  right=${contract.right()}  expiry=${contract.lastTradeDateOrContractMonth()}" +
+                "  side=${execution.side()}  qty=${execution.shares()}  price=${execution.price()}" +
+                "  avgPrice=${execution.avgPrice()}  execId=${execution.execId()}  orderId=${execution.orderId()}" +
+                "  time=${execution.time()}"
+        }
     }
 
     override fun execDetailsEnd(reqId: Int) {
@@ -264,6 +320,10 @@ class IbkrEWrapper(
         bar: Bar,
     ) {
         logger.trace { "historicalData: reqId=$reqId, time=${bar.time()}" }
+        twsRaw.debug {
+            "HIST_BAR      rid=$reqId  time=${bar.time()}  open=${bar.open()}  high=${bar.high()}" +
+                "  low=${bar.low()}  close=${bar.close()}  vol=${bar.volume()}  wap=${bar.wap()}  count=${bar.count()}"
+        }
         historicalRegistry.onHistoricalBar(reqId, bar)
     }
 
@@ -299,6 +359,10 @@ class IbkrEWrapper(
         count: Int,
     ) {
         logger.trace { "realtimeBar: reqId=$reqId time=$time close=$close" }
+        twsRaw.debug {
+            "REALTIME_BAR  rid=$reqId  time=$time  open=$open  high=$high  low=$low  close=$close" +
+                "  vol=$volume  wap=$wap  count=$count"
+        }
         marketDataRegistry.onRealtimeBar(reqId, time, open, high, low, close, volume.value().toLong(), wap.value().toDouble())
     }
 
@@ -488,6 +552,11 @@ class IbkrEWrapper(
     ) {
         logger.info {
             "securityDefinitionOptionalParameter: reqId=$reqId, exchange=$exchange, tradingClass=$tradingClass, multiplier=$multiplier, expirations=${expirations.size}, strikes=${strikes.size}"
+        }
+        twsRaw.debug {
+            "OPT_PARAMS    rid=$reqId  exchange=$exchange  tradingClass=$tradingClass  mult=$multiplier" +
+                "  expirations=[${expirations.sorted().joinToString(",")}]" +
+                "  strikes=[${strikes.sorted().joinToString(",")}]"
         }
         contractRegistry.onSecurityDefinitionOptionalParameter(reqId, exchange, tradingClass, multiplier, expirations, strikes)
     }
@@ -695,6 +764,9 @@ class IbkrEWrapper(
         tickAttribBidAsk: TickAttribBidAsk,
     ) {
         logger.trace { "tickByTickBidAsk: reqId=$reqId, bid=$bidPrice, ask=$askPrice" }
+        twsRaw.debug {
+            "TICK_BIDASK   rid=$reqId  time=$time  bid=$bidPrice  ask=$askPrice  bidSz=$bidSize  askSz=$askSize"
+        }
         marketDataRegistry.onTickByTickBidAsk(reqId, TickByTickBidAsk(time, bidPrice, askPrice))
     }
 
