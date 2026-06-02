@@ -26,6 +26,7 @@ import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.math.RoundingMode
+import java.time.Clock
 import java.time.DayOfWeek
 import java.time.Instant
 import java.time.LocalTime
@@ -48,6 +49,7 @@ class FlagScannerService(
     private val barStorePort: BarStorePort,
     private val strategyConfig: FlagStrategyConfig,
     private val scope: CoroutineScope,
+    private val clock: Clock,
 ) {
     private val subscriptions = ConcurrentHashMap<Symbol, Job>()
     private val aggregators = ConcurrentHashMap<Symbol, BarAggregator>()
@@ -106,7 +108,7 @@ class FlagScannerService(
     }
 
     private fun resolveWatchlist(): List<Symbol> {
-        val now = ZonedDateTime.now()
+        val now = ZonedDateTime.now(clock)
         val eu = if (isEuMarketOpen(now)) strategyConfig.euWatchlist.map { Symbol(it) } else emptyList()
         val us = if (isUsMarketOpen(now)) strategyConfig.usWatchlist.map { Symbol(it) } else emptyList()
         val symbols = eu + us

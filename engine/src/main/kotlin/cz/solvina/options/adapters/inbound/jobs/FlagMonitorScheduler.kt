@@ -8,6 +8,7 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.runBlocking
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
+import java.time.Clock
 import java.time.DayOfWeek
 import java.time.ZoneId
 import java.time.ZonedDateTime
@@ -23,6 +24,7 @@ class FlagMonitorScheduler(
     private val flagManagementService: FlagManagementService,
     private val flagTradingConfigPort: FlagTradingConfigPort,
     private val connectionStatusPort: ConnectionStatusPort,
+    private val clock: Clock,
 ) {
     /**
      * Runs every minute. Triggers EOD liquidation for each market session once we enter the
@@ -37,7 +39,7 @@ class FlagMonitorScheduler(
         runBlocking {
             runCatching {
                 val config = flagTradingConfigPort.get()
-                val now = ZonedDateTime.now()
+                val now = ZonedDateTime.now(clock)
                 checkEuClose(now, config)
                 checkUsClose(now, config)
             }.onFailure { e -> logger.error(e) { "Flag EOD liquidation check failed: ${e.message}" } }

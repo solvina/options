@@ -16,7 +16,7 @@ class ScannerScheduler(
     private val connectionStatusPort: ConnectionStatusPort,
     private val killSwitch: TradingKillSwitch,
 ) {
-    @Scheduled(cron = "\${scanner.cron:0 */15 10-15 * * MON-FRI}", zone = "\${app.timezone:}")
+    @Scheduled(cron = "\${scanner.cron:0 */15 9-22 * * MON-FRI}", zone = "Europe/Berlin")
     fun runScan() {
         if (killSwitch.scannerPaused) {
             logger.info { "Scanner skipped: paused by kill switch" }

@@ -115,7 +115,7 @@ influxdb:
   bucket: market_data
 
 app:
-  timezone: Europe/Prague
+  timezone: Europe/Berlin
 
 server:
   port: 8081

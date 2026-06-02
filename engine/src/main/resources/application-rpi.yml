@@ -1,13 +1,13 @@
 app:
-  timezone: America/New_York
+  timezone: Europe/Berlin
 
 spring:
   jackson:
-    time-zone: America/New_York
+    time-zone: Europe/Berlin
 
 scanner:
   watchlist: [ SPY, QQQ, AAPL, MSFT, AMZN, IWM, DIA, TSLA, NVDA, META, GOOGL, XLF, XLE, XLV, AMD, UNH, ASML ]
-  cron: "0 */15 3-20 * * MON-FRI"   # covers EU morning (09:00 CEST = 07:00 UTC) through US close (16:00 ET = 20:00 UTC)
+  cron: "0 */15 9-22 * * MON-FRI"   # Europe/Berlin: 09:00 EU open → 22:00 US close (16:00 ET = 22:00 CEST)
 
 ibkr:
   connection:

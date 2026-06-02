@@ -12,7 +12,7 @@ import java.time.ZoneId
 import java.time.ZonedDateTime
 
 private val logger = KotlinLogging.logger {}
-private val ET = ZoneId.of("America/New_York")
+private val BERLIN = ZoneId.of("Europe/Berlin")
 
 @Component
 class SpreadMonitorScheduler(
@@ -41,11 +41,11 @@ class SpreadMonitorScheduler(
     }
 
     private fun isMarketHours(): Boolean {
-        val now = ZonedDateTime.now(ET)
+        val now = ZonedDateTime.now(BERLIN)
         val dow = now.dayOfWeek
         if (dow == DayOfWeek.SATURDAY || dow == DayOfWeek.SUNDAY) return false
         val minuteOfDay = now.hour * 60 + now.minute
-        // EU opens 09:00 CEST = 03:00 ET; US closes 16:00 ET
-        return minuteOfDay in (3 * 60)..(16 * 60)
+        // EU opens 09:00 Berlin; US closes 16:00 ET = 22:00 CEST (use 22:30 for safety margin)
+        return minuteOfDay in (9 * 60)..(22 * 60 + 30)
     }
 }
