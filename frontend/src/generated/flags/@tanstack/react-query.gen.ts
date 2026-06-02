@@ -3,8 +3,8 @@
 import { type DefaultError, type InfiniteData, infiniteQueryOptions, queryOptions, type UseMutationOptions } from '@tanstack/react-query';
 
 import { client } from '../client.gen';
-import { closeFlagPosition, getFlagAnalytics, getFlagById, getFlagConfig, listFlags, type Options, pauseFlagScanner, resumeFlagScanner, updateFlagConfig } from '../sdk.gen';
-import type { CloseFlagPositionData, CloseFlagPositionResponse, GetFlagAnalyticsData, GetFlagAnalyticsResponse, GetFlagByIdData, GetFlagByIdResponse, GetFlagConfigData, GetFlagConfigResponse, ListFlagsData, ListFlagsResponse, PauseFlagScannerData, PauseFlagScannerResponse, ResumeFlagScannerData, ResumeFlagScannerResponse, UpdateFlagConfigData, UpdateFlagConfigResponse } from '../types.gen';
+import { closeFlagPosition, getFlagAnalytics, getFlagById, getFlagConfig, listFlags, type Options, pauseFlagScanner, resumeFlagScanner, subscribeFlagSymbol, updateFlagConfig } from '../sdk.gen';
+import type { CloseFlagPositionData, CloseFlagPositionResponse, GetFlagAnalyticsData, GetFlagAnalyticsResponse, GetFlagByIdData, GetFlagByIdResponse, GetFlagConfigData, GetFlagConfigResponse, ListFlagsData, ListFlagsResponse, PauseFlagScannerData, PauseFlagScannerResponse, ResumeFlagScannerData, ResumeFlagScannerResponse, SubscribeFlagSymbolData, SubscribeFlagSymbolResponse, UpdateFlagConfigData, UpdateFlagConfigResponse } from '../types.gen';
 
 export type QueryKey<TOptions extends Options> = [
     Pick<TOptions, 'baseUrl' | 'body' | 'headers' | 'path' | 'query'> & {
@@ -190,6 +190,23 @@ export const resumeFlagScannerMutation = (options?: Partial<Options<ResumeFlagSc
     const mutationOptions: UseMutationOptions<ResumeFlagScannerResponse, DefaultError, Options<ResumeFlagScannerData>> = {
         mutationFn: async (fnOptions) => {
             const { data } = await resumeFlagScanner({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+/**
+ * Hot-subscribe a new symbol to the flag scanner without restarting
+ */
+export const subscribeFlagSymbolMutation = (options?: Partial<Options<SubscribeFlagSymbolData>>): UseMutationOptions<SubscribeFlagSymbolResponse, DefaultError, Options<SubscribeFlagSymbolData>> => {
+    const mutationOptions: UseMutationOptions<SubscribeFlagSymbolResponse, DefaultError, Options<SubscribeFlagSymbolData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await subscribeFlagSymbol({
                 ...options,
                 ...fnOptions,
                 throwOnError: true

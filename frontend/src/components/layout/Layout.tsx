@@ -20,11 +20,18 @@ const navGroups = [
     ],
   },
   {
+    label: 'Backtest',
+    items: [
+      { to: '/backtest', label: 'Flag' },
+    ],
+  },
+  {
     label: 'Maintenance',
     items: [
       { to: '/universe', label: 'Universe' },
       { to: '/account', label: 'Account' },
       { to: '/diagnostic', label: 'Diagnostics' },
+      { to: '/historical', label: 'Historical' },
     ],
   },
 ]

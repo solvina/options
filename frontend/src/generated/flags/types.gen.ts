@@ -33,6 +33,25 @@ export type FlagPositionDto = {
     lowestPriceSeen?: number | null;
     maxFavorableExcursion?: number | null;
     maxAdverseExcursion?: number | null;
+    flagBarCount?: number | null;
+    flagpoleBarCount?: number | null;
+    flagpoleAvgVolume?: number | null;
+    flagAvgVolume?: number | null;
+    channelSlope?: number | null;
+    marketSession?: string | null;
+    minutesToClose?: number | null;
+    entrySlippage?: number | null;
+    rMultiple?: number | null;
+    timeInTradeSeconds?: number | null;
+    atrAtEntry?: number | null;
+    volumeMaAtEntry?: number | null;
+    flagpoleVolumeRatio?: number | null;
+    vwapAtEntry?: number | null;
+    dayOpenPrice?: number | null;
+    breakoutType?: string | null;
+    stopDistancePct?: number | null;
+    mfeR?: number | null;
+    maeR?: number | null;
 };
 
 export type PagedFlagsDto = {
@@ -85,6 +104,14 @@ export type FlagSummaryDto = {
      */
     eodCutPct: number;
     avgHoldMinutes: number;
+    /**
+     * Average R-multiple across closed trades (realizedPnl / riskAmount)
+     */
+    avgRMultiple?: number | null;
+    /**
+     * Gross winning P&L divided by gross losing P&L
+     */
+    profitFactor?: number | null;
 };
 
 export type FlagStatusBreakdownDto = {
@@ -109,6 +136,17 @@ export type FlagPnlTimelinePointDto = {
     cumulativePnl: number;
 };
 
+export type ScannerSubscribeRequestDto = {
+    /**
+     * Ticker symbol to subscribe (e.g. "AAPL")
+     */
+    symbol: string;
+    /**
+     * Market session — US (NYSE/NASDAQ) or EU (Xetra etc.)
+     */
+    session: 'US' | 'EU';
+};
+
 export type ListFlagsData = {
     body?: never;
     path?: never;
@@ -116,6 +154,8 @@ export type ListFlagsData = {
         status?: 'PENDING' | 'OPEN' | 'CLOSED_PROFIT' | 'CLOSED_STOP' | 'CLOSED_EOD' | 'CLOSED_MANUAL';
         page?: number;
         size?: number;
+        sort?: 'openedAt' | 'closedAt' | 'realizedPnl' | 'rMultiple' | 'timeInTradeSeconds' | 'symbol' | 'entryPrice';
+        sortDir?: 'ASC' | 'DESC';
     };
     url: '/flags';
 };
@@ -208,6 +248,29 @@ export type ResumeFlagScannerResponses = {
 };
 
 export type ResumeFlagScannerResponse = ResumeFlagScannerResponses[keyof ResumeFlagScannerResponses];
+
+export type SubscribeFlagSymbolData = {
+    body: ScannerSubscribeRequestDto;
+    path?: never;
+    query?: never;
+    url: '/flags/scanner/subscribe';
+};
+
+export type SubscribeFlagSymbolErrors = {
+    /**
+     * Invalid request
+     */
+    400: unknown;
+};
+
+export type SubscribeFlagSymbolResponses = {
+    /**
+     * Symbol subscribed (or already active)
+     */
+    204: void;
+};
+
+export type SubscribeFlagSymbolResponse = SubscribeFlagSymbolResponses[keyof SubscribeFlagSymbolResponses];
 
 export type GetFlagByIdData = {
     body?: never;

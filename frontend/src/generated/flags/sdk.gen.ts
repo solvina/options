@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CloseFlagPositionData, CloseFlagPositionErrors, CloseFlagPositionResponses, GetFlagAnalyticsData, GetFlagAnalyticsResponses, GetFlagByIdData, GetFlagByIdErrors, GetFlagByIdResponses, GetFlagConfigData, GetFlagConfigResponses, ListFlagsData, ListFlagsResponses, PauseFlagScannerData, PauseFlagScannerResponses, ResumeFlagScannerData, ResumeFlagScannerResponses, UpdateFlagConfigData, UpdateFlagConfigResponses } from './types.gen';
+import type { CloseFlagPositionData, CloseFlagPositionErrors, CloseFlagPositionResponses, GetFlagAnalyticsData, GetFlagAnalyticsResponses, GetFlagByIdData, GetFlagByIdErrors, GetFlagByIdResponses, GetFlagConfigData, GetFlagConfigResponses, ListFlagsData, ListFlagsResponses, PauseFlagScannerData, PauseFlagScannerResponses, ResumeFlagScannerData, ResumeFlagScannerResponses, SubscribeFlagSymbolData, SubscribeFlagSymbolErrors, SubscribeFlagSymbolResponses, UpdateFlagConfigData, UpdateFlagConfigResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean> = Options2<TData, ThrowOnError> & {
     /**
@@ -54,6 +54,18 @@ export const pauseFlagScanner = <ThrowOnError extends boolean = false>(options?:
  * Resume the flag scanner
  */
 export const resumeFlagScanner = <ThrowOnError extends boolean = false>(options?: Options<ResumeFlagScannerData, ThrowOnError>) => (options?.client ?? client).post<ResumeFlagScannerResponses, unknown, ThrowOnError>({ url: '/flags/scanner/resume', ...options });
+
+/**
+ * Hot-subscribe a new symbol to the flag scanner without restarting
+ */
+export const subscribeFlagSymbol = <ThrowOnError extends boolean = false>(options: Options<SubscribeFlagSymbolData, ThrowOnError>) => (options.client ?? client).post<SubscribeFlagSymbolResponses, SubscribeFlagSymbolErrors, ThrowOnError>({
+    url: '/flags/scanner/subscribe',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
 
 /**
  * Get a single flag position

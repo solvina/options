@@ -8,6 +8,8 @@ import { UniversePage } from './pages/UniversePage'
 import { AnalyticsPage } from './pages/AnalyticsPage'
 import { FlagsPage } from './pages/FlagsPage'
 import { FlagAnalyticsPage } from './pages/FlagAnalyticsPage'
+import { HistoricalDataPage } from './pages/HistoricalDataPage'
+import { BacktestPage } from './pages/BacktestPage'
 
 function App() {
   return (
@@ -25,6 +27,8 @@ function App() {
           <Route path="/flags/positions" element={<FlagsPage />} />
           <Route path="/flags" element={<Navigate to="/flags/positions" replace />} />
           <Route path="/flags/analytics" element={<FlagAnalyticsPage />} />
+          <Route path="/historical" element={<HistoricalDataPage />} />
+          <Route path="/backtest" element={<BacktestPage />} />
         </Route>
       </Routes>
     </BrowserRouter>
