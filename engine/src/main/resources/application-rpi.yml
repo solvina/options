@@ -7,7 +7,7 @@ spring:
 
 scanner:
   watchlist: [ SPY, QQQ, AAPL, MSFT, AMZN, IWM, DIA, TSLA, NVDA, META, GOOGL, XLF, XLE, XLV, AMD, UNH, ASML ]
-  cron: "0 */15 3-16 * * MON-FRI"   # covers EU morning (03:00 ET = 09:00 CEST) through US close (16:00 ET = 22:00 CEST)
+  cron: "0 */15 3-20 * * MON-FRI"   # covers EU morning (09:00 CEST = 07:00 UTC) through US close (16:00 ET = 20:00 UTC)
 
 ibkr:
   connection:

@@ -60,9 +60,12 @@ class IbkrContractRegistry(
         if (request.exchange == "SMART" && exchange.isNotBlank()) request.exchange = exchange
         if (request.tradingClass.isEmpty() && tradingClass.isNotBlank()) request.tradingClass = tradingClass
         if (multiplier.isNotBlank()) request.multiplier = multiplier
-        // Skip strikes from secondary exchanges to avoid cross-exchange strike contamination
-        // (e.g., FTA has finer strike spacing than EUREX; merging causes "not found" errors)
+        // Skip secondary exchanges (e.g. FTA has finer strike spacing than EUREX)
         if (exchange != request.exchange) return
+        // Skip secondary trading classes on the same exchange (e.g. ASM2 mini contracts,
+        // SAP.1 dividend-adjusted series with multiplier=101). Merging their strikes causes
+        // "not found" errors when we try to look up a conId in the wrong series.
+        if (request.tradingClass.isNotEmpty() && tradingClass != request.tradingClass) return
         val parsedStrikes = strikes.filter { it > 0 }.map { BigDecimal(it.toString()) }
         expirations.forEach { expStr ->
             runCatching {
