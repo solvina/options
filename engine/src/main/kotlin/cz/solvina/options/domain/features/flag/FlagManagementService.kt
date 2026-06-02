@@ -38,14 +38,19 @@ class FlagManagementService(
 
     /**
      * Called on a schedule near end-of-day. Cancels bracket children and market-sells
-     * all OPEN positions that should be liquidated before exchange close.
+     * OPEN positions for the given market session (or all sessions when null).
      */
-    suspend fun checkEodLiquidation() {
+    suspend fun checkEodLiquidation(session: String? = null) {
         val open = flagPort.findOpen()
-        if (open.isEmpty()) return
+        val toClose = when {
+            session == null -> open
+            session == "EU" -> open.filter { it.marketSession == "EU" }
+            else -> open.filter { it.marketSession == session || it.marketSession == null }
+        }
+        if (toClose.isEmpty()) return
 
-        for (position in open) {
-            logger.info { "[${position.symbol}] EOD liquidation: cancelling bracket orders and selling ${position.shares} shares" }
+        for (position in toClose) {
+            logger.info { "[${position.symbol}] EOD liquidation (session=${session ?: "ALL"}): cancelling bracket orders and selling ${position.shares} shares" }
             performClose(position, FlagStatus.CLOSED_EOD, "eod_liquidation")
         }
     }
@@ -133,21 +138,23 @@ class FlagManagementService(
                 marketDataPort.getUnderlyingPrice(position.symbol).amount
             }.getOrNull()
 
+            val effectiveEntry = position.actualEntryPrice ?: position.entryPrice
             if (closePriceActual != null) {
                 realizedPnl = closePriceActual
-                    .subtract(position.entryPrice)
+                    .subtract(effectiveEntry)
                     .multiply(BigDecimal(position.shares))
                     .setScale(2, RoundingMode.HALF_UP)
             }
         }
 
         val shares = BigDecimal(position.shares)
+        val effectiveEntry = position.actualEntryPrice ?: position.entryPrice
         val mfe = position.highestPriceSeen
-            ?.subtract(position.entryPrice)
+            ?.subtract(effectiveEntry)
             ?.multiply(shares)
             ?.setScale(2, RoundingMode.HALF_UP)
         val mae = position.lowestPriceSeen
-            ?.let { position.entryPrice.subtract(it) }
+            ?.let { effectiveEntry.subtract(it) }
             ?.multiply(shares)
             ?.setScale(2, RoundingMode.HALF_UP)
 

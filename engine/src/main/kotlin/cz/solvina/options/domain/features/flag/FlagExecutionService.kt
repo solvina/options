@@ -3,6 +3,7 @@ package cz.solvina.options.domain.features.flag
 import cz.solvina.options.domain.features.flag.config.FlagTradingConfig
 import cz.solvina.options.domain.features.flag.model.FlagPosition
 import cz.solvina.options.domain.features.flag.model.FlagStatus
+import cz.solvina.options.domain.features.flag.model.isTerminal
 import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.features.flag.EntryFill
 import cz.solvina.options.domain.models.Symbol
@@ -166,16 +167,21 @@ class FlagExecutionService(
             if (status == OrderStatus.FILLED) {
                 val closedAt = Instant.now(clock)
                 val latest = position.id?.let { flagPort.findById(it) } ?: position
-                val pnl = position.stopLossPrice
-                    .subtract(position.entryPrice)
-                    .multiply(BigDecimal(position.shares))
+                if (latest.status.isTerminal) {
+                    logger.debug { "[${position.symbol}] SL fill ignored — position already ${latest.status}" }
+                    return@launch
+                }
+                val effectiveEntry = latest.actualEntryPrice ?: latest.entryPrice
+                val pnl = latest.stopLossPrice
+                    .subtract(effectiveEntry)
+                    .multiply(BigDecimal(latest.shares))
                     .setScale(2, RoundingMode.HALF_UP)
                 flagPort.update(withCloseMetrics(
                     latest.copy(
                         status = FlagStatus.CLOSED_STOP,
                         closedAt = closedAt,
                         closeReason = "stop_loss",
-                        closePriceActual = position.stopLossPrice,
+                        closePriceActual = latest.stopLossPrice,
                         realizedPnl = pnl,
                     ),
                     pnl, closedAt,
@@ -190,16 +196,21 @@ class FlagExecutionService(
             if (status == OrderStatus.FILLED) {
                 val closedAt = Instant.now(clock)
                 val latest = position.id?.let { flagPort.findById(it) } ?: position
-                val pnl = position.profitTargetPrice
-                    .subtract(position.entryPrice)
-                    .multiply(BigDecimal(position.shares))
+                if (latest.status.isTerminal) {
+                    logger.debug { "[${position.symbol}] PT fill ignored — position already ${latest.status}" }
+                    return@launch
+                }
+                val effectiveEntry = latest.actualEntryPrice ?: latest.entryPrice
+                val pnl = latest.profitTargetPrice
+                    .subtract(effectiveEntry)
+                    .multiply(BigDecimal(latest.shares))
                     .setScale(2, RoundingMode.HALF_UP)
                 flagPort.update(withCloseMetrics(
                     latest.copy(
                         status = FlagStatus.CLOSED_PROFIT,
                         closedAt = closedAt,
                         closeReason = "profit_target",
-                        closePriceActual = position.profitTargetPrice,
+                        closePriceActual = latest.profitTargetPrice,
                         realizedPnl = pnl,
                     ),
                     pnl, closedAt,
@@ -211,12 +222,13 @@ class FlagExecutionService(
 
     private fun withCloseMetrics(position: FlagPosition, pnl: BigDecimal, closedAt: Instant): FlagPosition {
         val shares = BigDecimal(position.shares)
+        val effectiveEntry = position.actualEntryPrice ?: position.entryPrice
         val mfe = position.highestPriceSeen
-            ?.subtract(position.entryPrice)
+            ?.subtract(effectiveEntry)
             ?.multiply(shares)
             ?.setScale(2, RoundingMode.HALF_UP)
         val mae = position.lowestPriceSeen
-            ?.let { position.entryPrice.subtract(it) }
+            ?.let { effectiveEntry.subtract(it) }
             ?.multiply(shares)
             ?.setScale(2, RoundingMode.HALF_UP)
         val rMultiple = if (position.riskAmount > BigDecimal.ZERO)

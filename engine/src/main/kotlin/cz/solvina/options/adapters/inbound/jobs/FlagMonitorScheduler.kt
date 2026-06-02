@@ -2,6 +2,7 @@ package cz.solvina.options.adapters.inbound.jobs
 
 import cz.solvina.options.domain.features.connection.status.ConnectionStatusPort
 import cz.solvina.options.domain.features.flag.FlagManagementService
+import cz.solvina.options.domain.features.flag.config.FlagTradingConfig
 import cz.solvina.options.domain.features.flag.config.FlagTradingConfigPort
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.runBlocking
@@ -12,8 +13,10 @@ import java.time.ZoneId
 import java.time.ZonedDateTime
 
 private val logger = KotlinLogging.logger {}
-private val ET_FLAG = ZoneId.of("America/New_York")
-private const val US_CLOSE_MINUTE = 16 * 60  // 16:00 ET
+private val ET_ZONE = ZoneId.of("America/New_York")
+private val BERLIN_ZONE = ZoneId.of("Europe/Berlin")
+private const val US_CLOSE_MINUTE = 16 * 60       // 16:00 ET
+private const val EU_CLOSE_MINUTE = 17 * 60 + 30  // 17:30 Berlin
 
 @Component
 class FlagMonitorScheduler(
@@ -22,8 +25,8 @@ class FlagMonitorScheduler(
     private val connectionStatusPort: ConnectionStatusPort,
 ) {
     /**
-     * Runs every minute during US market hours.
-     * Triggers EOD liquidation once we enter the configured liquidation window before close.
+     * Runs every minute. Triggers EOD liquidation for each market session once we enter the
+     * configured window before that session's close.
      */
     @Scheduled(fixedDelay = 60_000)
     fun checkEodLiquidation() {
@@ -31,28 +34,37 @@ class FlagMonitorScheduler(
             logger.debug { "Flag EOD check skipped: IBKR not connected" }
             return
         }
-        if (!isUsTradingDay()) {
-            return
-        }
-        val now = ZonedDateTime.now(ET_FLAG)
-        val minuteOfDay = now.hour * 60 + now.minute
-        // Only run during trading hours (9:30–16:00 ET)
-        if (minuteOfDay !in (9 * 60 + 30)..US_CLOSE_MINUTE) return
-
         runBlocking {
             runCatching {
                 val config = flagTradingConfigPort.get()
-                if (minuteOfDay < US_CLOSE_MINUTE - config.eodLiqMinutesBeforeClose) {
-                    logger.debug { "Flag EOD check skipped: not yet in liquidation window" }
-                    return@runCatching
-                }
-                flagManagementService.checkEodLiquidation()
+                val now = ZonedDateTime.now()
+                checkEuClose(now, config)
+                checkUsClose(now, config)
             }.onFailure { e -> logger.error(e) { "Flag EOD liquidation check failed: ${e.message}" } }
         }
     }
 
-    private fun isUsTradingDay(): Boolean {
-        val dow = ZonedDateTime.now(ET_FLAG).dayOfWeek
-        return dow != DayOfWeek.SATURDAY && dow != DayOfWeek.SUNDAY
+    private suspend fun checkEuClose(now: ZonedDateTime, config: FlagTradingConfig) {
+        val eu = now.withZoneSameInstant(BERLIN_ZONE)
+        if (eu.dayOfWeek == DayOfWeek.SATURDAY || eu.dayOfWeek == DayOfWeek.SUNDAY) return
+        val minuteOfDay = eu.hour * 60 + eu.minute
+        if (minuteOfDay > EU_CLOSE_MINUTE) return
+        if (minuteOfDay < EU_CLOSE_MINUTE - config.eodLiqMinutesBeforeClose) {
+            logger.debug { "Flag EU EOD check skipped: not yet in liquidation window" }
+            return
+        }
+        flagManagementService.checkEodLiquidation("EU")
+    }
+
+    private suspend fun checkUsClose(now: ZonedDateTime, config: FlagTradingConfig) {
+        val us = now.withZoneSameInstant(ET_ZONE)
+        if (us.dayOfWeek == DayOfWeek.SATURDAY || us.dayOfWeek == DayOfWeek.SUNDAY) return
+        val minuteOfDay = us.hour * 60 + us.minute
+        if (minuteOfDay !in (9 * 60 + 30)..US_CLOSE_MINUTE) return
+        if (minuteOfDay < US_CLOSE_MINUTE - config.eodLiqMinutesBeforeClose) {
+            logger.debug { "Flag US EOD check skipped: not yet in liquidation window" }
+            return
+        }
+        flagManagementService.checkEodLiquidation("US")
     }
 }

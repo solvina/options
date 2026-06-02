@@ -67,7 +67,7 @@ class InfluxDbBarStoreAdapter(
     override suspend fun lastBarTime(symbol: Symbol): Instant? {
         val flux = """
             from(bucket: "${props.bucket}")
-              |> range(start: -30d)
+              |> range(start: -5y)
               |> filter(fn: (r) => r._measurement == "$MEASUREMENT")
               |> filter(fn: (r) => r.symbol == "${symbol.value}")
               |> filter(fn: (r) => r.interval == "$INTERVAL_5MIN")

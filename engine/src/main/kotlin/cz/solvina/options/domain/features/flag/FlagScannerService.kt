@@ -18,6 +18,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.springframework.boot.context.event.ApplicationReadyEvent
 import org.springframework.context.event.EventListener
 import org.springframework.scheduling.annotation.Scheduled
@@ -26,12 +28,12 @@ import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.DayOfWeek
 import java.time.Instant
-import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.time.temporal.ChronoUnit
 import java.util.concurrent.ConcurrentHashMap
+import cz.solvina.options.domain.features.flag.model.FlagStatus
 
 private val logger = KotlinLogging.logger {}
 
@@ -52,6 +54,9 @@ class FlagScannerService(
     private val buffers = ConcurrentHashMap<Symbol, BarBuffer>()
     private val detectors = ConcurrentHashMap<Symbol, PatternDetector>()
     private val runtimeEuSymbols = ConcurrentHashMap.newKeySet<Symbol>()
+    // Serialises the open-position count check and order submission so two concurrent breakout
+    // signals cannot both read below maxOpenPositions before either one persists PENDING.
+    private val entryMutex = Mutex()
 
     @EventListener(ApplicationReadyEvent::class)
     fun onStartup() {
@@ -216,14 +221,6 @@ class FlagScannerService(
                 return@launch
             }
 
-            val openCount = flagPort.findOpen().size +
-                flagPort.findByStatus(cz.solvina.options.domain.features.flag.model.FlagStatus.PENDING).size
-            if (openCount >= config.maxOpenPositions) {
-                logger.info { "[${symbol.value}] Max open positions (${config.maxOpenPositions}) reached — skipping" }
-                detectors[symbol]?.reset()
-                return@launch
-            }
-
             val entryPrice = BigDecimal(breakout.resistanceLevel).setScale(2, RoundingMode.HALF_UP)
             val stopLossPrice = BigDecimal(breakout.flag.lowestLow)
                 .subtract(BigDecimal("0.01"))
@@ -323,8 +320,19 @@ class FlagScannerService(
                     stopDistancePct = stopDistancePct,
                 )
 
-            detectors[symbol]?.reset() // prevent double-firing
-            flagExecutionService.execute(request)
+            // Serialise position count check + submission to close the TOCTOU window where two
+            // concurrent breakout signals could both read below maxOpenPositions before either persists.
+            entryMutex.withLock {
+                val openCount = flagPort.findOpen().size +
+                    flagPort.findByStatus(FlagStatus.PENDING).size
+                if (openCount >= config.maxOpenPositions) {
+                    logger.info { "[${symbol.value}] Max open positions (${config.maxOpenPositions}) reached — skipping" }
+                    detectors[symbol]?.reset()
+                    return@withLock
+                }
+                detectors[symbol]?.reset() // prevent double-firing
+                flagExecutionService.execute(request)
+            }
         }
     }
 
