@@ -12,6 +12,7 @@ import cz.solvina.options.domain.features.spread.model.BullPutSpread
 import cz.solvina.options.domain.features.spread.model.SpreadLeg
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
 import cz.solvina.options.domain.features.universe.UniversePort
+import cz.solvina.options.domain.features.volatility.VolatilityPort
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
 import cz.solvina.options.domain.models.OptionType
@@ -98,6 +99,7 @@ class SpreadManagementServiceTest {
                 marketDataPort = marketDataPort,
                 orderPort = orderPort,
                 universePort = universePort,
+                volatilityPort = mockk(relaxed = true),
                 config = config,
                 clock = clockAtEntry,
             ).checkExits()
@@ -145,6 +147,7 @@ class SpreadManagementServiceTest {
                 marketDataPort = marketDataPort,
                 orderPort = orderPort,
                 universePort = universePort,
+                volatilityPort = mockk(relaxed = true),
                 config = config,
                 clock = clockAtEntry,
             ).checkExits()
@@ -180,6 +183,7 @@ class SpreadManagementServiceTest {
                 marketDataPort = marketDataPort,
                 orderPort = orderPort,
                 universePort = universePort,
+                volatilityPort = mockk(relaxed = true),
                 config = config,
                 clock = clock,
             ).checkExits()
@@ -206,6 +210,7 @@ class SpreadManagementServiceTest {
                 marketDataPort = marketDataPort,
                 orderPort = orderPort,
                 universePort = universePort,
+                volatilityPort = mockk(relaxed = true),
                 config = config,
                 clock = clockAtEntry,
             ).checkExits()

@@ -13,3 +13,7 @@ databaseChangeLog:
       file: db/changelog/v6__flag_positions.yaml
   - include:
       file: db/changelog/v7__flag_position_journaling.yaml
+  - include:
+      file: db/changelog/v8__flag_extended_journal.yaml
+  - include:
+      file: db/changelog/v9__flag_context_journal.yaml

@@ -14,6 +14,7 @@ import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.Clock
 import java.time.Instant
+import java.time.temporal.ChronoUnit
 
 private val logger = KotlinLogging.logger {}
 private val tradeLogger = KotlinLogging.logger("FLAG_TRADES")
@@ -33,7 +34,22 @@ class FlagExecutionService(
         val flagRetracement: BigDecimal,
         val resistanceAtEntry: BigDecimal,
         val patternStartedAt: Instant?,
+        val signalTime: Instant,
         val tradingConfig: FlagTradingConfig,
+        val flagBarCount: Int? = null,
+        val flagpoleBarCount: Int? = null,
+        val flagpoleAvgVolume: Long? = null,
+        val flagAvgVolume: Long? = null,
+        val channelSlope: BigDecimal? = null,
+        val marketSession: String? = null,
+        val minutesToClose: Int? = null,
+        val atrAtEntry: BigDecimal? = null,
+        val volumeMaAtEntry: Long? = null,
+        val flagpoleVolumeRatio: BigDecimal? = null,
+        val vwapAtEntry: BigDecimal? = null,
+        val dayOpenPrice: BigDecimal? = null,
+        val breakoutType: String? = null,
+        val stopDistancePct: BigDecimal? = null,
     )
 
     /**
@@ -94,7 +110,21 @@ class FlagExecutionService(
                 flagRetracement = request.flagRetracement,
                 resistanceAtEntry = request.resistanceAtEntry,
                 patternStartedAt = request.patternStartedAt,
-                openedAt = Instant.now(clock),
+                openedAt = request.signalTime,
+                flagBarCount = request.flagBarCount,
+                flagpoleBarCount = request.flagpoleBarCount,
+                flagpoleAvgVolume = request.flagpoleAvgVolume,
+                flagAvgVolume = request.flagAvgVolume,
+                channelSlope = request.channelSlope,
+                marketSession = request.marketSession,
+                minutesToClose = request.minutesToClose,
+                atrAtEntry = request.atrAtEntry,
+                volumeMaAtEntry = request.volumeMaAtEntry,
+                flagpoleVolumeRatio = request.flagpoleVolumeRatio,
+                vwapAtEntry = request.vwapAtEntry,
+                dayOpenPrice = request.dayOpenPrice,
+                breakoutType = request.breakoutType,
+                stopDistancePct = request.stopDistancePct,
             ),
         )
 
@@ -117,8 +147,9 @@ class FlagExecutionService(
                 return@launch
             }
 
-            position = flagPort.update(position.copy(status = FlagStatus.OPEN, actualEntryPrice = entryFill.avgPrice))
-            tradeLogger.info { "ENTRY_FILLED ${request.symbol} entryOrder=${ids.entryOrderId} shares=$shares entry=${request.entryPrice} actualFill=${entryFill.avgPrice}" }
+            val entrySlippage = entryFill.avgPrice?.subtract(request.entryPrice)
+            position = flagPort.update(position.copy(status = FlagStatus.OPEN, actualEntryPrice = entryFill.avgPrice, entrySlippage = entrySlippage))
+            tradeLogger.info { "ENTRY_FILLED ${request.symbol} entryOrder=${ids.entryOrderId} shares=$shares entry=${request.entryPrice} actualFill=${entryFill.avgPrice} slippage=$entrySlippage" }
 
             // Now watch both children — whichever fills first wins (OCA cancels the other)
             awaitChildOutcome(position, ids)
@@ -133,19 +164,22 @@ class FlagExecutionService(
         scope.launch {
             val status = runCatching { bracketOrderPort.awaitChildFill(ids.stopLossOrderId) }.getOrNull()
             if (status == OrderStatus.FILLED) {
+                val closedAt = Instant.now(clock)
+                val latest = position.id?.let { flagPort.findById(it) } ?: position
                 val pnl = position.stopLossPrice
                     .subtract(position.entryPrice)
                     .multiply(BigDecimal(position.shares))
                     .setScale(2, RoundingMode.HALF_UP)
-                flagPort.update(
-                    position.copy(
+                flagPort.update(withCloseMetrics(
+                    latest.copy(
                         status = FlagStatus.CLOSED_STOP,
-                        closedAt = Instant.now(clock),
+                        closedAt = closedAt,
                         closeReason = "stop_loss",
                         closePriceActual = position.stopLossPrice,
                         realizedPnl = pnl,
                     ),
-                )
+                    pnl, closedAt,
+                ))
                 tradeLogger.info { "CLOSED_STOP ${position.symbol} pnl=\$$pnl" }
             }
         }
@@ -154,21 +188,50 @@ class FlagExecutionService(
         scope.launch {
             val status = runCatching { bracketOrderPort.awaitChildFill(ids.profitTargetOrderId) }.getOrNull()
             if (status == OrderStatus.FILLED) {
+                val closedAt = Instant.now(clock)
+                val latest = position.id?.let { flagPort.findById(it) } ?: position
                 val pnl = position.profitTargetPrice
                     .subtract(position.entryPrice)
                     .multiply(BigDecimal(position.shares))
                     .setScale(2, RoundingMode.HALF_UP)
-                flagPort.update(
-                    position.copy(
+                flagPort.update(withCloseMetrics(
+                    latest.copy(
                         status = FlagStatus.CLOSED_PROFIT,
-                        closedAt = Instant.now(clock),
+                        closedAt = closedAt,
                         closeReason = "profit_target",
                         closePriceActual = position.profitTargetPrice,
                         realizedPnl = pnl,
                     ),
-                )
+                    pnl, closedAt,
+                ))
                 tradeLogger.info { "CLOSED_PROFIT ${position.symbol} pnl=\$$pnl" }
             }
         }
+    }
+
+    private fun withCloseMetrics(position: FlagPosition, pnl: BigDecimal, closedAt: Instant): FlagPosition {
+        val shares = BigDecimal(position.shares)
+        val mfe = position.highestPriceSeen
+            ?.subtract(position.entryPrice)
+            ?.multiply(shares)
+            ?.setScale(2, RoundingMode.HALF_UP)
+        val mae = position.lowestPriceSeen
+            ?.let { position.entryPrice.subtract(it) }
+            ?.multiply(shares)
+            ?.setScale(2, RoundingMode.HALF_UP)
+        val rMultiple = if (position.riskAmount > BigDecimal.ZERO)
+            pnl.divide(position.riskAmount, 2, RoundingMode.HALF_UP) else null
+        val mfeR = if (mfe != null && position.riskAmount > BigDecimal.ZERO)
+            mfe.divide(position.riskAmount, 2, RoundingMode.HALF_UP) else null
+        val maeR = if (mae != null && position.riskAmount > BigDecimal.ZERO)
+            mae.divide(position.riskAmount, 2, RoundingMode.HALF_UP) else null
+        return position.copy(
+            maxFavorableExcursion = mfe,
+            maxAdverseExcursion = mae,
+            rMultiple = rMultiple,
+            mfeR = mfeR,
+            maeR = maeR,
+            timeInTradeSeconds = ChronoUnit.SECONDS.between(position.openedAt, closedAt).toInt(),
+        )
     }
 }

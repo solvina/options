@@ -5,12 +5,14 @@ import cz.solvina.options.domain.features.flag.model.FlagPosition
 import cz.solvina.options.domain.features.flag.model.FlagStatus
 import cz.solvina.options.domain.features.flag.model.isTerminal
 import cz.solvina.options.domain.features.market.MarketDataPort
+import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.Clock
 import java.time.Instant
+import java.time.temporal.ChronoUnit
 import java.util.UUID
 
 private val logger = KotlinLogging.logger {}
@@ -96,6 +98,17 @@ class FlagManagementService(
         }
     }
 
+    suspend fun updateWatermarksForSymbol(symbol: Symbol, price: BigDecimal) {
+        val open = flagPort.findOpen().filter { it.symbol == symbol }
+        for (position in open) {
+            val newHigh = position.highestPriceSeen?.max(price) ?: price
+            val newLow = position.lowestPriceSeen?.min(price) ?: price
+            if (newHigh != position.highestPriceSeen || newLow != position.lowestPriceSeen) {
+                flagPort.update(position.copy(highestPriceSeen = newHigh, lowestPriceSeen = newLow))
+            }
+        }
+    }
+
     private suspend fun performClose(
         position: FlagPosition,
         closeStatus: FlagStatus,
@@ -138,17 +151,30 @@ class FlagManagementService(
             ?.multiply(shares)
             ?.setScale(2, RoundingMode.HALF_UP)
 
+        val closedAt = Instant.now(clock)
+        val rMultiple = if (realizedPnl != null && position.riskAmount > BigDecimal.ZERO)
+            realizedPnl.divide(position.riskAmount, 2, RoundingMode.HALF_UP) else null
+        val mfeR = if (mfe != null && position.riskAmount > BigDecimal.ZERO)
+            mfe.divide(position.riskAmount, 2, RoundingMode.HALF_UP) else null
+        val maeR = if (mae != null && position.riskAmount > BigDecimal.ZERO)
+            mae.divide(position.riskAmount, 2, RoundingMode.HALF_UP) else null
+        val timeInTrade = ChronoUnit.SECONDS.between(position.openedAt, closedAt).toInt()
+
         val closed = position.copy(
             status = closeStatus,
-            closedAt = Instant.now(clock),
+            closedAt = closedAt,
             closeReason = reason,
             closePriceActual = closePriceActual,
             realizedPnl = realizedPnl,
             maxFavorableExcursion = mfe,
             maxAdverseExcursion = mae,
+            rMultiple = rMultiple,
+            mfeR = mfeR,
+            maeR = maeR,
+            timeInTradeSeconds = timeInTrade,
         )
         flagPort.update(closed)
-        tradeLogger.info { "${closeStatus.name} ${position.symbol} reason=$reason pnl=${realizedPnl ?: "n/a"}" }
+        tradeLogger.info { "${closeStatus.name} ${position.symbol} reason=$reason pnl=${realizedPnl ?: "n/a"} R=$rMultiple" }
         return closed
     }
 }

@@ -100,6 +100,19 @@ flag:
   flag-max-bars: 20
   max-retracement-pct: 0.50
   historical-bootstrap-days: 3
+  # Entry quality filters (set permissive defaults; tune per backtest findings)
+  skip-first-rth-minutes: 90
+  require-negative-channel-slope: true
+  min-flagpole-atr-multiple: 2.0
+  max-flagpole-atr-multiple: 4.0
+  min-flag-retracement-pct: 0.25
+  min-flag-bars-for-entry: 7
+
+influxdb:
+  url: http://localhost:8086
+  token: ${INFLUXDB_TOKEN:options_token_changeme}
+  org: options
+  bucket: market_data
 
 app:
   timezone: Europe/Prague

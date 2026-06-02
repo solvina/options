@@ -9,4 +9,6 @@ data class Flagpole(
     val height: Double,
     /** Average volume across the pole bars */
     val avgVolume: Double,
+    /** Number of 5-minute bars that formed the pole */
+    val barCount: Int,
 )

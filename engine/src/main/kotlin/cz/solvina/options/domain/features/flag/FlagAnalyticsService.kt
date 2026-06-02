@@ -29,6 +29,8 @@ class FlagAnalyticsService(
         val avgLoser: BigDecimal,
         val eodCutPct: Double,
         val avgHoldMinutes: Double,
+        val avgRMultiple: BigDecimal?,
+        val profitFactor: BigDecimal?,
     )
 
     data class StatusBreakdown(
@@ -76,6 +78,15 @@ class FlagAnalyticsService(
             .divide(BigDecimal(losses.size), 2, RoundingMode.HALF_UP)
         val avgHoldMin = closed.mapNotNull { it.holdMinutes() }.average().takeIf { !it.isNaN() } ?: 0.0
 
+        val rValues = closed.mapNotNull { it.rMultiple }
+        val avgRMultiple = if (rValues.isEmpty()) null
+            else rValues.fold(BigDecimal.ZERO) { acc, r -> acc + r }
+                .divide(BigDecimal(rValues.size), 2, RoundingMode.HALF_UP)
+        val grossWin = wins.fold(BigDecimal.ZERO) { acc, p -> acc + p.realizedPnl!! }
+        val grossLoss = losses.fold(BigDecimal.ZERO) { acc, p -> acc + p.realizedPnl!! }.abs()
+        val profitFactor = if (grossLoss == BigDecimal.ZERO) null
+            else grossWin.divide(grossLoss, 2, RoundingMode.HALF_UP)
+
         return Analytics(
             summary = Summary(
                 totalTrades = all.size,
@@ -86,6 +97,8 @@ class FlagAnalyticsService(
                 avgLoser = avgLoser,
                 eodCutPct = if (closed.isEmpty()) 0.0 else eodCuts.size.toDouble() / closed.size,
                 avgHoldMinutes = avgHoldMin,
+                avgRMultiple = avgRMultiple,
+                profitFactor = profitFactor,
             ),
             byStatus = byStatus(closed),
             bySymbol = bySymbol(closed),

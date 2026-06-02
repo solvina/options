@@ -1,9 +1,12 @@
 package cz.solvina.options.domain.features.flag
 
+import cz.solvina.options.domain.features.bars.AtrCalculator
 import cz.solvina.options.domain.features.bars.BarAggregator
 import cz.solvina.options.domain.features.bars.BarBuffer
+import cz.solvina.options.domain.features.bars.BarStorePort
 import cz.solvina.options.domain.features.bars.EquityHistoricalBarsPort
 import cz.solvina.options.domain.features.bars.RealTimeBarsPort
+import cz.solvina.options.domain.features.bars.VolumeAnalysis
 import cz.solvina.options.domain.features.flag.FlagExecutionService.ExecutionRequest
 import cz.solvina.options.domain.features.flag.config.FlagStrategyConfig
 import cz.solvina.options.domain.features.flag.config.FlagTradingConfig
@@ -17,12 +20,17 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
 import org.springframework.boot.context.event.ApplicationReadyEvent
 import org.springframework.context.event.EventListener
+import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
+import java.math.RoundingMode
 import java.time.DayOfWeek
+import java.time.Instant
+import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
 import java.time.ZonedDateTime
+import java.time.temporal.ChronoUnit
 import java.util.concurrent.ConcurrentHashMap
 
 private val logger = KotlinLogging.logger {}
@@ -33,7 +41,9 @@ class FlagScannerService(
     private val equityHistoricalBarsPort: EquityHistoricalBarsPort,
     private val flagExecutionService: FlagExecutionService,
     private val flagPort: FlagPort,
+    private val flagManagementService: FlagManagementService,
     private val flagTradingConfigPort: FlagTradingConfigPort,
+    private val barStorePort: BarStorePort,
     private val strategyConfig: FlagStrategyConfig,
     private val scope: CoroutineScope,
 ) {
@@ -41,6 +51,7 @@ class FlagScannerService(
     private val aggregators = ConcurrentHashMap<Symbol, BarAggregator>()
     private val buffers = ConcurrentHashMap<Symbol, BarBuffer>()
     private val detectors = ConcurrentHashMap<Symbol, PatternDetector>()
+    private val runtimeEuSymbols = ConcurrentHashMap.newKeySet<Symbol>()
 
     @EventListener(ApplicationReadyEvent::class)
     fun onStartup() {
@@ -54,6 +65,39 @@ class FlagScannerService(
         subscriptions.values.forEach { it.cancel() }
         subscriptions.clear()
         logger.info { "Flag scanner stopped — all bar subscriptions cancelled" }
+    }
+
+    fun subscribeSymbol(symbolStr: String, session: String): Boolean {
+        val symbol = Symbol(symbolStr.uppercase())
+        // Update session classification before the early-return so that a re-subscribe with a
+        // different session (e.g. US → EU for a dual-listed stock) is always honoured.
+        if (session.uppercase() == "EU") runtimeEuSymbols.add(symbol)
+        if (subscriptions[symbol]?.isActive == true) {
+            logger.info { "[${symbol.value}] Hot-subscribe: already active, session updated to $session" }
+            return false
+        }
+        logger.info { "[${symbol.value}] Hot-subscribe: adding to scanner (session=$session)" }
+        subscribe(symbol)
+        return true
+    }
+
+    // Runs just after EU open (09:01 Berlin) and just after US open (15:31 CEST = 09:31 ET).
+    // Resubscribes any watchlist symbols whose stream ended at the previous day's close.
+    @Scheduled(cron = "0 1 9 * * MON-FRI", zone = "Europe/Berlin")
+    fun onEuMarketOpen() = resubscribeWatchlist(strategyConfig.euWatchlist, "EU open resubscription")
+
+    @Scheduled(cron = "0 31 9 * * MON-FRI", zone = "America/New_York")
+    fun onUsMarketOpen() = resubscribeWatchlist(strategyConfig.usWatchlist, "US open resubscription")
+
+    private fun resubscribeWatchlist(watchlist: List<String>, reason: String) {
+        val symbols = watchlist.map { Symbol(it) }
+        val stale = symbols.filter { subscriptions[it]?.isActive != true }
+        if (stale.isEmpty()) {
+            logger.debug { "Flag scanner $reason: all ${symbols.size} symbols already active" }
+            return
+        }
+        logger.info { "Flag scanner $reason: resubscribing ${stale.map { it.value }}" }
+        stale.forEach { subscribe(it) }
     }
 
     private fun resolveWatchlist(): List<Symbol> {
@@ -81,12 +125,14 @@ class FlagScannerService(
         return !time.isBefore(LocalTime.of(9, 30)) && time.isBefore(LocalTime.of(16, 0))
     }
 
-    private fun isEntryBlocked(symbol: Symbol, config: FlagTradingConfig): Boolean {
-        val isEu = strategyConfig.euWatchlist.contains(symbol.value)
+    internal fun isEu(symbol: Symbol) = strategyConfig.euWatchlist.contains(symbol.value) || runtimeEuSymbols.contains(symbol)
+
+    internal fun isEntryBlocked(symbol: Symbol, config: FlagTradingConfig, barTime: Instant): Boolean {
+        val isEu = isEu(symbol)
         val zone = if (isEu) ZoneId.of("Europe/Berlin") else ZoneId.of("America/New_York")
         val closeTime = if (isEu) LocalTime.of(17, 30) else LocalTime.of(16, 0)
-        val now = ZonedDateTime.now(zone).toLocalTime()
-        return !now.isBefore(closeTime.minusMinutes(config.entryBlockMinutesBeforeClose.toLong()))
+        val barLocal = barTime.atZone(zone).toLocalTime()
+        return !barLocal.isBefore(closeTime.minusMinutes(config.entryBlockMinutesBeforeClose.toLong()))
     }
 
     private fun subscribe(symbol: Symbol) {
@@ -115,13 +161,17 @@ class FlagScannerService(
                     .streamBars(symbol)
                     .catch { e -> logger.error(e) { "[${symbol.value}] Real-time bar stream error: ${e.message}" } }
                     .collect { bar ->
+                        // Update high/low watermarks for any open position on this symbol
+                        flagManagementService.updateWatermarksForSymbol(symbol, BigDecimal.valueOf(bar.close))
+
                         // 1. Check for 5-min candle completion
                         val completed = aggregator.add(bar)
                         if (completed != null) {
+                            barStorePort.writeBar(symbol, completed)
                             buffer.add(completed)
                             val state = detector.onNewBar(completed)
                             if (state is PatternState.BreakoutReady) {
-                                maybeEnter(symbol, state)
+                                maybeEnter(symbol, state, "FIVE_MIN", completed.time)
                             }
                         }
 
@@ -131,10 +181,15 @@ class FlagScannerService(
                         if (currentState is PatternState.FlagForming) {
                             val breakout = detector.checkBreakoutOnLiveBar(bar.close, currentState.pole, currentState.flag)
                             if (breakout != null) {
-                                maybeEnter(symbol, breakout)
+                                maybeEnter(symbol, breakout, "LIVE_BAR", bar.time)
                             }
                         }
                     }
+
+                // Stream ended (market closed). Remove stale Job so onUsMarketOpen/onEuMarketOpen
+                // can resubscribe cleanly the next morning.
+                subscriptions.remove(symbol)
+                logger.info { "[${symbol.value}] Real-time bar stream ended — subscription removed" }
             }
 
         subscriptions[symbol] = job
@@ -143,6 +198,8 @@ class FlagScannerService(
     private fun maybeEnter(
         symbol: Symbol,
         breakout: PatternState.BreakoutReady,
+        breakoutType: String,
+        barTime: Instant,
     ) {
         scope.launch {
             val config = flagTradingConfigPort.get()
@@ -153,7 +210,7 @@ class FlagScannerService(
                 return@launch
             }
 
-            if (isEntryBlocked(symbol, config)) {
+            if (isEntryBlocked(symbol, config, barTime)) {
                 logger.info { "[${symbol.value}] Entry blocked — within ${config.entryBlockMinutesBeforeClose} min of market close" }
                 detectors[symbol]?.reset()
                 return@launch
@@ -167,21 +224,103 @@ class FlagScannerService(
                 return@launch
             }
 
-            val entryPrice = BigDecimal(breakout.resistanceLevel).setScale(2, java.math.RoundingMode.HALF_UP)
+            val entryPrice = BigDecimal(breakout.resistanceLevel).setScale(2, RoundingMode.HALF_UP)
             val stopLossPrice = BigDecimal(breakout.flag.lowestLow)
                 .subtract(BigDecimal("0.01"))
-                .setScale(2, java.math.RoundingMode.HALF_UP)
+                .setScale(2, RoundingMode.HALF_UP)
+
+            val isEu = isEu(symbol)
+            val marketSession = if (isEu) "EU" else "US"
+            val zone = if (isEu) ZoneId.of("Europe/Berlin") else ZoneId.of("America/New_York")
+            val closeTime = if (isEu) LocalTime.of(17, 30) else LocalTime.of(16, 0)
+            val barZoned = barTime.atZone(zone)
+            val minutesToClose = ChronoUnit.MINUTES.between(barZoned.toLocalTime(), closeTime).toInt().coerceAtLeast(0)
+            val flagAvgVolume = breakout.flag.bars.map { it.volume.toLong() }.average().toLong()
+
+            val bars = buffers[symbol]?.snapshot() ?: emptyList()
+            val atrAtEntry = AtrCalculator.atr(bars, strategyConfig.atrPeriod).takeIf { !it.isNaN() }
+            val volumeMaRaw = VolumeAnalysis.volumeMa(bars, strategyConfig.volumeMaPeriod).takeIf { !it.isNaN() }
+            val volumeMaAtEntry = volumeMaRaw?.toLong()
+            val flagpoleVolumeRatio = if (volumeMaRaw != null && volumeMaRaw > 0)
+                breakout.pole.avgVolume / volumeMaRaw else null
+
+            val sessionOpenLocal = if (isEu) LocalTime.of(9, 0) else LocalTime.of(9, 30)
+            val sessionStart = barZoned.toLocalDate().atTime(sessionOpenLocal).atZone(zone).toInstant()
+            val todayBars = bars.filter { !it.time.isBefore(sessionStart) }
+            val dayOpenPrice = todayBars.firstOrNull()?.open
+            val vwapAtEntry = if (todayBars.isNotEmpty()) {
+                val totalVol = todayBars.sumOf { it.volume.toDouble() }
+                if (totalVol > 0) todayBars.sumOf { ((it.high + it.low + it.close) / 3.0) * it.volume } / totalVol
+                else null
+            } else null
+
+            // Quality filters
+            val minutesSinceOpen = ChronoUnit.MINUTES.between(sessionStart, barTime).toInt().coerceAtLeast(0)
+            if (minutesSinceOpen < strategyConfig.skipFirstRthMinutes) {
+                logger.debug { "[${symbol.value}] Entry skipped — ${minutesSinceOpen}min since open < skipFirstRthMinutes(${strategyConfig.skipFirstRthMinutes})" }
+                detectors[symbol]?.reset()
+                return@launch
+            }
+            if (strategyConfig.requireNegativeChannelSlope && breakout.flag.upperResistance.slope >= 0) {
+                logger.debug { "[${symbol.value}] Entry skipped — channel slope ${breakout.flag.upperResistance.slope} is not negative" }
+                detectors[symbol]?.reset()
+                return@launch
+            }
+            if (atrAtEntry != null && atrAtEntry > 0) {
+                val poleAtrRatio = breakout.pole.height / atrAtEntry
+                if (poleAtrRatio < strategyConfig.minFlagpoleAtrMultiple) {
+                    logger.debug { "[${symbol.value}] Entry skipped — pole/ATR ratio ${poleAtrRatio} < min(${strategyConfig.minFlagpoleAtrMultiple})" }
+                    detectors[symbol]?.reset()
+                    return@launch
+                }
+                if (poleAtrRatio > strategyConfig.maxFlagpoleAtrMultiple) {
+                    logger.debug { "[${symbol.value}] Entry skipped — pole/ATR ratio ${poleAtrRatio} > max(${strategyConfig.maxFlagpoleAtrMultiple})" }
+                    detectors[symbol]?.reset()
+                    return@launch
+                }
+            }
+            val retracementPct = Math.abs(breakout.flag.retracement)
+            if (retracementPct < strategyConfig.minFlagRetracementPct) {
+                logger.debug { "[${symbol.value}] Entry skipped — retracement ${retracementPct * 100}% < min(${strategyConfig.minFlagRetracementPct * 100}%)" }
+                detectors[symbol]?.reset()
+                return@launch
+            }
+            if (breakout.flag.bars.size < strategyConfig.minFlagBarsForEntry) {
+                logger.debug { "[${symbol.value}] Entry skipped — flag bars ${breakout.flag.bars.size} < min(${strategyConfig.minFlagBarsForEntry})" }
+                detectors[symbol]?.reset()
+                return@launch
+            }
+
+            val stopDistancePct = entryPrice.subtract(stopLossPrice)
+                .divide(entryPrice, 6, RoundingMode.HALF_UP)
+                .multiply(BigDecimal("100"))
+                .setScale(4, RoundingMode.HALF_UP)
 
             val request =
                 ExecutionRequest(
                     symbol = symbol,
                     entryPrice = entryPrice,
                     stopLossPrice = stopLossPrice,
-                    flagpoleHeight = BigDecimal(breakout.pole.height).setScale(4, java.math.RoundingMode.HALF_UP),
-                    flagRetracement = BigDecimal(breakout.flag.retracement).setScale(4, java.math.RoundingMode.HALF_UP),
+                    flagpoleHeight = BigDecimal(breakout.pole.height).setScale(4, RoundingMode.HALF_UP),
+                    flagRetracement = BigDecimal(breakout.flag.retracement).setScale(4, RoundingMode.HALF_UP),
                     resistanceAtEntry = entryPrice,
                     patternStartedAt = breakout.pole.startBar.time,
+                    signalTime = barTime,
                     tradingConfig = config,
+                    flagBarCount = breakout.flag.bars.size,
+                    flagpoleBarCount = breakout.pole.barCount,
+                    flagpoleAvgVolume = breakout.pole.avgVolume.toLong(),
+                    flagAvgVolume = flagAvgVolume,
+                    channelSlope = BigDecimal(breakout.flag.upperResistance.slope).setScale(7, RoundingMode.HALF_UP),
+                    marketSession = marketSession,
+                    minutesToClose = minutesToClose,
+                    atrAtEntry = atrAtEntry?.let { BigDecimal(it).setScale(4, RoundingMode.HALF_UP) },
+                    volumeMaAtEntry = volumeMaAtEntry,
+                    flagpoleVolumeRatio = flagpoleVolumeRatio?.let { BigDecimal(it).setScale(3, RoundingMode.HALF_UP) },
+                    vwapAtEntry = vwapAtEntry?.let { BigDecimal(it).setScale(4, RoundingMode.HALF_UP) },
+                    dayOpenPrice = dayOpenPrice?.let { BigDecimal(it).setScale(4, RoundingMode.HALF_UP) },
+                    breakoutType = breakoutType,
+                    stopDistancePct = stopDistancePct,
                 )
 
             detectors[symbol]?.reset() // prevent double-firing

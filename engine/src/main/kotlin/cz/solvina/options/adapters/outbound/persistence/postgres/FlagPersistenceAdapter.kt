@@ -39,13 +39,19 @@ class FlagPersistenceAdapter(
     override suspend fun findAll(): List<FlagPosition> =
         withContext(Dispatchers.IO) { repository.findAllByOrderByOpenedAtDesc().map { it.toDomain() } }
 
+    private val SORTABLE_FIELDS = setOf("openedAt", "closedAt", "realizedPnl", "rMultiple", "timeInTradeSeconds", "symbol", "entryPrice")
+
     override suspend fun findPage(
         status: FlagStatus?,
         page: Int,
         size: Int,
+        sort: String,
+        sortDir: String,
     ): FlagPage =
         withContext(Dispatchers.IO) {
-            val pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "openedAt"))
+            val direction = if (sortDir.uppercase() == "ASC") Sort.Direction.ASC else Sort.Direction.DESC
+            val sortField = if (sort in SORTABLE_FIELDS) sort else "openedAt"
+            val pageable = PageRequest.of(page, size, Sort.by(direction, sortField))
             val result = if (status != null) repository.findByStatus(status.name, pageable) else repository.findAllBy(pageable)
             FlagPage(
                 content = result.content.map { it.toDomain() },
@@ -92,6 +98,25 @@ class FlagPersistenceAdapter(
             lowestPriceSeen = lowestPriceSeen,
             maxFavorableExcursion = maxFavorableExcursion,
             maxAdverseExcursion = maxAdverseExcursion,
+            flagBarCount = flagBarCount,
+            flagpoleBarCount = flagpoleBarCount,
+            flagpoleAvgVolume = flagpoleAvgVolume,
+            flagAvgVolume = flagAvgVolume,
+            channelSlope = channelSlope,
+            marketSession = marketSession,
+            minutesToClose = minutesToClose,
+            entrySlippage = entrySlippage,
+            rMultiple = rMultiple,
+            timeInTradeSeconds = timeInTradeSeconds,
+            atrAtEntry = atrAtEntry,
+            volumeMaAtEntry = volumeMaAtEntry,
+            flagpoleVolumeRatio = flagpoleVolumeRatio,
+            vwapAtEntry = vwapAtEntry,
+            dayOpenPrice = dayOpenPrice,
+            breakoutType = breakoutType,
+            stopDistancePct = stopDistancePct,
+            mfeR = mfeR,
+            maeR = maeR,
         )
 
     private fun FlagPositionEntity.toDomain(): FlagPosition =
@@ -122,5 +147,24 @@ class FlagPersistenceAdapter(
             lowestPriceSeen = lowestPriceSeen,
             maxFavorableExcursion = maxFavorableExcursion,
             maxAdverseExcursion = maxAdverseExcursion,
+            flagBarCount = flagBarCount,
+            flagpoleBarCount = flagpoleBarCount,
+            flagpoleAvgVolume = flagpoleAvgVolume,
+            flagAvgVolume = flagAvgVolume,
+            channelSlope = channelSlope,
+            marketSession = marketSession,
+            minutesToClose = minutesToClose,
+            entrySlippage = entrySlippage,
+            rMultiple = rMultiple,
+            timeInTradeSeconds = timeInTradeSeconds,
+            atrAtEntry = atrAtEntry,
+            volumeMaAtEntry = volumeMaAtEntry,
+            flagpoleVolumeRatio = flagpoleVolumeRatio,
+            vwapAtEntry = vwapAtEntry,
+            dayOpenPrice = dayOpenPrice,
+            breakoutType = breakoutType,
+            stopDistancePct = stopDistancePct,
+            mfeR = mfeR,
+            maeR = maeR,
         )
 }

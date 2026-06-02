@@ -30,6 +30,20 @@ paths:
           schema:
             type: integer
             default: 20
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [openedAt, closedAt, realizedPnl, rMultiple, timeInTradeSeconds, symbol, entryPrice]
+            default: openedAt
+        - name: sortDir
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [ASC, DESC]
+            default: DESC
       responses:
         '200':
           description: Paged list of flag positions
@@ -103,6 +117,24 @@ paths:
       responses:
         '204':
           description: Scanner resumed
+
+  /flags/scanner/subscribe:
+    post:
+      tags:
+        - Flags
+      summary: Hot-subscribe a new symbol to the flag scanner without restarting
+      operationId: subscribeFlagSymbol
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScannerSubscribeRequestDto'
+      responses:
+        '204':
+          description: Symbol subscribed (or already active)
+        '400':
+          description: Invalid request
 
   /flags/{id}:
     get:
@@ -246,6 +278,68 @@ components:
         maxAdverseExcursion:
           type: number
           nullable: true
+        # --- v8: pattern quality & market context ---
+        flagBarCount:
+          type: integer
+          nullable: true
+        flagpoleBarCount:
+          type: integer
+          nullable: true
+        flagpoleAvgVolume:
+          type: integer
+          format: int64
+          nullable: true
+        flagAvgVolume:
+          type: integer
+          format: int64
+          nullable: true
+        channelSlope:
+          type: number
+          nullable: true
+        marketSession:
+          type: string
+          nullable: true
+        minutesToClose:
+          type: integer
+          nullable: true
+        entrySlippage:
+          type: number
+          nullable: true
+        rMultiple:
+          type: number
+          nullable: true
+        timeInTradeSeconds:
+          type: integer
+          nullable: true
+        # --- v9: volatility, volume, intraday context ---
+        atrAtEntry:
+          type: number
+          nullable: true
+        volumeMaAtEntry:
+          type: integer
+          format: int64
+          nullable: true
+        flagpoleVolumeRatio:
+          type: number
+          nullable: true
+        vwapAtEntry:
+          type: number
+          nullable: true
+        dayOpenPrice:
+          type: number
+          nullable: true
+        breakoutType:
+          type: string
+          nullable: true
+        stopDistancePct:
+          type: number
+          nullable: true
+        mfeR:
+          type: number
+          nullable: true
+        maeR:
+          type: number
+          nullable: true
 
     PagedFlagsDto:
       type: object
@@ -330,6 +424,14 @@ components:
           description: Fraction of trades closed by EOD auto-liquidation
         avgHoldMinutes:
           type: number
+        avgRMultiple:
+          type: number
+          nullable: true
+          description: Average R-multiple across closed trades (realizedPnl / riskAmount)
+        profitFactor:
+          type: number
+          nullable: true
+          description: Gross winning P&L divided by gross losing P&L
 
     FlagStatusBreakdownDto:
       type: object
@@ -372,3 +474,15 @@ components:
           type: number
         cumulativePnl:
           type: number
+
+    ScannerSubscribeRequestDto:
+      type: object
+      required: [symbol, session]
+      properties:
+        symbol:
+          type: string
+          description: Ticker symbol to subscribe (e.g. "AAPL")
+        session:
+          type: string
+          enum: [US, EU]
+          description: Market session — US (NYSE/NASDAQ) or EU (Xetra etc.)

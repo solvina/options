@@ -41,10 +41,6 @@ class FlagMonitorScheduler(
 
         runBlocking {
             runCatching {
-                flagManagementService.updateWatermarks()
-            }.onFailure { e -> logger.error(e) { "Flag watermark update failed: ${e.message}" } }
-
-            runCatching {
                 val config = flagTradingConfigPort.get()
                 if (minuteOfDay < US_CLOSE_MINUTE - config.eodLiqMinutesBeforeClose) {
                     logger.debug { "Flag EOD check skipped: not yet in liquidation window" }

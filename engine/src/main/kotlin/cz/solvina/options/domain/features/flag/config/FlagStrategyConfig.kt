@@ -17,4 +17,18 @@ data class FlagStrategyConfig(
     val flagMaxBars: Int = 20,
     val maxRetracementPct: Double = 0.50,
     val historicalBootstrapDays: Int = 3,
+
+    // Entry quality filters — default to permissive (no filter) so existing live behaviour is unchanged
+    /** Skip entries for this many minutes after session open (avoids opening-bell chop). */
+    val skipFirstRthMinutes: Int = 0,
+    /** Require downward-sloping flag channel (rising wedge is not a bull flag). */
+    val requireNegativeChannelSlope: Boolean = false,
+    /** Minimum flagpole height as a multiple of ATR at entry. */
+    val minFlagpoleAtrMultiple: Double = 0.0,
+    /** Maximum flagpole height as a multiple of ATR at entry (filters over-extended moves). */
+    val maxFlagpoleAtrMultiple: Double = 99.0,
+    /** Minimum flag retracement as a fraction (e.g. 0.25 = 25%). */
+    val minFlagRetracementPct: Double = 0.0,
+    /** Minimum number of flag bars before an entry is allowed. */
+    val minFlagBarsForEntry: Int = 1,
 )

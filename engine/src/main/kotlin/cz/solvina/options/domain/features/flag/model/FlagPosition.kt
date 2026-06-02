@@ -42,4 +42,45 @@ data class FlagPosition(
     val lowestPriceSeen: BigDecimal? = null,
     val maxFavorableExcursion: BigDecimal? = null,
     val maxAdverseExcursion: BigDecimal? = null,
+    // ---- Pattern quality at entry ----
+    val flagBarCount: Int? = null,
+    val flagpoleBarCount: Int? = null,
+    val flagpoleAvgVolume: Long? = null,
+    val flagAvgVolume: Long? = null,
+    /** Slope of the upper resistance regression line (negative = descending channel = tighter flag). */
+    val channelSlope: BigDecimal? = null,
+    // ---- Market context at entry ----
+    val marketSession: String? = null,
+    val minutesToClose: Int? = null,
+    // ---- Execution quality ----
+    /** actualEntryPrice − entryPrice; negative means filled better than expected. */
+    val entrySlippage: BigDecimal? = null,
+    // ---- Performance ----
+    /** realizedPnl / riskAmount — e.g. 2.0 = 2R win, −1.0 = full stop loss. */
+    val rMultiple: BigDecimal? = null,
+    val timeInTradeSeconds: Int? = null,
+    // ---- Volatility context ----
+    /** 14-bar ATR on 5-min candles at the moment of entry signal. */
+    val atrAtEntry: BigDecimal? = null,
+    // ---- Volume context ----
+    /** 20-bar volume moving average — denominator for all volume ratio analysis. */
+    val volumeMaAtEntry: Long? = null,
+    /** flagpoleAvgVolume / volumeMaAtEntry — how many times normal volume was the pole. */
+    val flagpoleVolumeRatio: BigDecimal? = null,
+    // ---- Intraday price structure ----
+    /** Intraday VWAP at entry. Price above VWAP = bullish context. */
+    val vwapAtEntry: BigDecimal? = null,
+    /** First bar open of the current session — sets the intraday trend reference. */
+    val dayOpenPrice: BigDecimal? = null,
+    // ---- Breakout signal type ----
+    /** "FIVE_MIN" when breakout confirmed on 5-min close; "LIVE_BAR" when fired on sub-candle 5-sec close. */
+    val breakoutType: String? = null,
+    // ---- Pre-computed geometry (stored for SQL convenience) ----
+    /** (entryPrice − stopLossPrice) / entryPrice × 100 */
+    val stopDistancePct: BigDecimal? = null,
+    // ---- R-unit excursions (set at close) ----
+    /** maxFavorableExcursion / riskAmount — how far did price move in our favour. */
+    val mfeR: BigDecimal? = null,
+    /** maxAdverseExcursion / riskAmount — how close to the stop did price get. */
+    val maeR: BigDecimal? = null,
 )

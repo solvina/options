@@ -45,7 +45,7 @@ class BarAggregator(
         val close = buffer.last().close
         val volume = buffer.sumOf { it.volume }
         return FiveMinuteBar(
-            time = buffer.first().time,
+            time = buffer.last().time,
             open = open,
             high = high,
             low = low,

@@ -1,0 +1,172 @@
+openapi: 3.0.3
+info:
+  title: Options Engine - Historical Data API
+  description: Bar coverage overview and on-demand historical fetch management
+  version: 1.0.0
+
+paths:
+  /historical/coverage:
+    get:
+      tags:
+        - Historical
+      summary: Get 5-min bar coverage per symbol per day
+      operationId: getHistoricalCoverage
+      parameters:
+        - name: symbols
+          in: query
+          required: false
+          description: Comma-separated list of symbols; defaults to full watchlist
+          schema:
+            type: string
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Coverage per symbol — list of symbol+day→count entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SymbolCoverageDto'
+
+  /historical/fetch:
+    post:
+      tags:
+        - Historical
+      summary: Start a historical data fetch job
+      operationId: startHistoricalFetch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FetchRequestDto'
+      responses:
+        '202':
+          description: Job accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FetchJobDto'
+
+  /historical/fetch/jobs:
+    get:
+      tags:
+        - Historical
+      summary: List all fetch jobs (most recent first)
+      operationId: listFetchJobs
+      responses:
+        '200':
+          description: List of fetch jobs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/FetchJobDto'
+
+  /historical/fetch/jobs/{id}:
+    get:
+      tags:
+        - Historical
+      summary: Get a single fetch job by ID
+      operationId: getFetchJob
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Fetch job
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FetchJobDto'
+        '404':
+          description: Job not found
+
+components:
+  schemas:
+    SymbolCoverageDto:
+      type: object
+      required:
+        - symbol
+        - days
+      properties:
+        symbol:
+          type: string
+        days:
+          type: object
+          description: Key is date (yyyy-MM-dd), value is 5-min bar count for that day
+          additionalProperties:
+            type: integer
+
+    FetchRequestDto:
+      type: object
+      required:
+        - from
+        - to
+      properties:
+        symbols:
+          type: array
+          description: Symbols to fetch; defaults to full watchlist if omitted
+          items:
+            type: string
+        from:
+          type: string
+          format: date
+        to:
+          type: string
+          format: date
+
+    FetchJobDto:
+      type: object
+      required:
+        - id
+        - symbols
+        - from
+        - to
+        - status
+        - barsWritten
+        - startedAt
+      properties:
+        id:
+          type: string
+        symbols:
+          type: array
+          items:
+            type: string
+        from:
+          type: string
+          format: date
+        to:
+          type: string
+          format: date
+        status:
+          type: string
+          enum: [RUNNING, DONE, FAILED]
+        barsWritten:
+          type: integer
+        error:
+          type: string
+          nullable: true
+        startedAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: string
+          format: date-time
+          nullable: true

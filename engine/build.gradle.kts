@@ -59,6 +59,9 @@ dependencies {
     testImplementation("org.testcontainers:postgresql")
     testImplementation("org.springframework.boot:spring-boot-testcontainers")
 
+    // InfluxDB
+    implementation("com.influxdb:influxdb-client-kotlin:7.2.0")
+
     // Interactive Brokers TWS API
     implementation(files("lib/TwsApi_debug.jar"))
 }

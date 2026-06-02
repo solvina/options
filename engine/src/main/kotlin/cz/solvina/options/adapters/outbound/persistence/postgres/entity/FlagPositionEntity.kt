@@ -66,4 +66,42 @@ class FlagPositionEntity(
     var maxFavorableExcursion: BigDecimal? = null,
     @Column(name = "max_adverse_excursion", precision = 12, scale = 2)
     var maxAdverseExcursion: BigDecimal? = null,
+    @Column(name = "flag_bar_count")
+    var flagBarCount: Int? = null,
+    @Column(name = "flagpole_bar_count")
+    var flagpoleBarCount: Int? = null,
+    @Column(name = "flagpole_avg_volume")
+    var flagpoleAvgVolume: Long? = null,
+    @Column(name = "flag_avg_volume")
+    var flagAvgVolume: Long? = null,
+    @Column(name = "channel_slope", precision = 10, scale = 7)
+    var channelSlope: BigDecimal? = null,
+    @Column(name = "market_session", length = 5)
+    var marketSession: String? = null,
+    @Column(name = "minutes_to_close")
+    var minutesToClose: Int? = null,
+    @Column(name = "entry_slippage", precision = 10, scale = 4)
+    var entrySlippage: BigDecimal? = null,
+    @Column(name = "r_multiple", precision = 8, scale = 2)
+    var rMultiple: BigDecimal? = null,
+    @Column(name = "time_in_trade_seconds")
+    var timeInTradeSeconds: Int? = null,
+    @Column(name = "atr_at_entry", precision = 10, scale = 4)
+    var atrAtEntry: BigDecimal? = null,
+    @Column(name = "volume_ma_at_entry")
+    var volumeMaAtEntry: Long? = null,
+    @Column(name = "flagpole_volume_ratio", precision = 8, scale = 3)
+    var flagpoleVolumeRatio: BigDecimal? = null,
+    @Column(name = "vwap_at_entry", precision = 10, scale = 4)
+    var vwapAtEntry: BigDecimal? = null,
+    @Column(name = "day_open_price", precision = 10, scale = 4)
+    var dayOpenPrice: BigDecimal? = null,
+    @Column(name = "breakout_type", length = 10)
+    var breakoutType: String? = null,
+    @Column(name = "stop_distance_pct", precision = 8, scale = 4)
+    var stopDistancePct: BigDecimal? = null,
+    @Column(name = "mfe_r", precision = 8, scale = 2)
+    var mfeR: BigDecimal? = null,
+    @Column(name = "mae_r", precision = 8, scale = 2)
+    var maeR: BigDecimal? = null,
 )

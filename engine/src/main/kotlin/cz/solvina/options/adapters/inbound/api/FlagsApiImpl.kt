@@ -9,9 +9,11 @@ import `cz.solvina.options.flags`.dto.FlagSummaryDto
 import `cz.solvina.options.flags`.dto.FlagSymbolBreakdownDto
 import `cz.solvina.options.flags`.dto.FlagTradingConfigDto
 import `cz.solvina.options.flags`.dto.PagedFlagsDto
+import `cz.solvina.options.flags`.dto.ScannerSubscribeRequestDto
 import cz.solvina.options.domain.features.flag.FlagAnalyticsService
 import cz.solvina.options.domain.features.flag.FlagManagementService
 import cz.solvina.options.domain.features.flag.FlagPort
+import cz.solvina.options.domain.features.flag.FlagScannerService
 import cz.solvina.options.domain.features.flag.config.FlagTradingConfig
 import cz.solvina.options.domain.features.flag.config.FlagTradingConfigPort
 import cz.solvina.options.domain.features.flag.model.FlagPosition
@@ -32,15 +34,18 @@ class FlagsApiImpl(
     private val flagAnalyticsService: FlagAnalyticsService,
     private val flagTradingConfigPort: FlagTradingConfigPort,
     private val marketDataPort: MarketDataPort,
+    private val flagScannerService: FlagScannerService,
 ) : FlagsApi {
 
     override suspend fun listFlags(
         status: String?,
         page: Int,
         size: Int,
+        sort: String,
+        sortDir: String,
     ): ResponseEntity<PagedFlagsDto> {
         val flagStatus = status?.let { FlagStatus.valueOf(it) }
-        val result = flagPort.findPage(flagStatus, page, size)
+        val result = flagPort.findPage(flagStatus, page, size, sort, sortDir)
         val dtos = mutableListOf<FlagPositionDto>()
         for (p in result.content) dtos.add(p.toDto())
         return ResponseEntity.ok(
@@ -72,6 +77,8 @@ class FlagsApiImpl(
                     avgLoser = a.summary.avgLoser,
                     eodCutPct = a.summary.eodCutPct.toBigDecimal(),
                     avgHoldMinutes = a.summary.avgHoldMinutes.toBigDecimal(),
+                    avgRMultiple = a.summary.avgRMultiple,
+                    profitFactor = a.summary.profitFactor,
                 ),
                 byStatus = a.byStatus.map { s ->
                     FlagStatusBreakdownDto(status = s.status, count = s.count, totalPnl = s.totalPnl, avgPnl = s.avgPnl)
@@ -126,6 +133,13 @@ class FlagsApiImpl(
             is FlagManagementService.ManualCloseResult.AlreadyClosed -> ResponseEntity.status(HttpStatus.CONFLICT).build()
         }
 
+    override suspend fun subscribeFlagSymbol(scannerSubscribeRequestDto: ScannerSubscribeRequestDto): ResponseEntity<Unit> {
+        val symbol = scannerSubscribeRequestDto.symbol.trim()
+        if (symbol.isBlank()) return ResponseEntity.badRequest().build()
+        flagScannerService.subscribeSymbol(symbol, scannerSubscribeRequestDto.session.value)
+        return ResponseEntity.noContent().build()
+    }
+
     private suspend fun FlagPosition.toDto(): FlagPositionDto {
         val livePrice = if (status == FlagStatus.OPEN || status == FlagStatus.PENDING) {
             runCatching { marketDataPort.getUnderlyingPrice(symbol).amount }.getOrNull()
@@ -164,6 +178,25 @@ class FlagsApiImpl(
             lowestPriceSeen = lowestPriceSeen,
             maxFavorableExcursion = maxFavorableExcursion,
             maxAdverseExcursion = maxAdverseExcursion,
+            flagBarCount = flagBarCount,
+            flagpoleBarCount = flagpoleBarCount,
+            flagpoleAvgVolume = flagpoleAvgVolume,
+            flagAvgVolume = flagAvgVolume,
+            channelSlope = channelSlope,
+            marketSession = marketSession,
+            minutesToClose = minutesToClose,
+            entrySlippage = entrySlippage,
+            rMultiple = rMultiple,
+            timeInTradeSeconds = timeInTradeSeconds,
+            atrAtEntry = atrAtEntry,
+            volumeMaAtEntry = volumeMaAtEntry,
+            flagpoleVolumeRatio = flagpoleVolumeRatio,
+            vwapAtEntry = vwapAtEntry,
+            dayOpenPrice = dayOpenPrice,
+            breakoutType = breakoutType,
+            stopDistancePct = stopDistancePct,
+            mfeR = mfeR,
+            maeR = maeR,
         )
     }
 

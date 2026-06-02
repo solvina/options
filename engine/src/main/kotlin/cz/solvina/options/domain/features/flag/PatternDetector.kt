@@ -79,7 +79,7 @@ class PatternDetector(
                 if (!hasVolumeSpike) continue
 
                 val avgVol = poleSlice.map { it.volume.toDouble() }.average()
-                val pole = Flagpole(start, end, height, avgVol)
+                val pole = Flagpole(start, end, height, avgVol, endIdx - startIdx + 1)
                 logger.debug { "[$symbol] Flagpole detected: height=${"%.2f".format(height)} atr=${"%.2f".format(atr)}" }
                 return PatternState.FlagpoleDetected(pole)
             }

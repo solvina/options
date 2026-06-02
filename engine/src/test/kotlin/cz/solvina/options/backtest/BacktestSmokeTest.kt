@@ -129,6 +129,7 @@ class BacktestSmokeTest {
                 marketDataPort = marketAdapter,
                 orderPort = orderAdapter,
                 universePort = universePort,
+                volatilityPort = ivRankService,
                 config = config,
                 clock = clock,
             )

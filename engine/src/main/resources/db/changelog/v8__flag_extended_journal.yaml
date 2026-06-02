@@ -1,0 +1,42 @@
+databaseChangeLog:
+  - changeSet:
+      id: v8__flag_extended_journal
+      author: solvina
+      changes:
+        - addColumn:
+            tableName: flag_positions
+            columns:
+              # --- Pattern quality at entry ---
+              - column:
+                  name: flag_bar_count
+                  type: INT
+              - column:
+                  name: flagpole_bar_count
+                  type: INT
+              - column:
+                  name: flagpole_avg_volume
+                  type: BIGINT
+              - column:
+                  name: flag_avg_volume
+                  type: BIGINT
+              - column:
+                  name: channel_slope
+                  type: NUMERIC(10,7)
+              # --- Market context at entry ---
+              - column:
+                  name: market_session
+                  type: VARCHAR(5)
+              - column:
+                  name: minutes_to_close
+                  type: INT
+              # --- Execution quality ---
+              - column:
+                  name: entry_slippage
+                  type: NUMERIC(10,4)
+              # --- Performance ---
+              - column:
+                  name: r_multiple
+                  type: NUMERIC(8,2)
+              - column:
+                  name: time_in_trade_seconds
+                  type: INT

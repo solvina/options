@@ -1,0 +1,43 @@
+databaseChangeLog:
+  - changeSet:
+      id: v9__flag_context_journal
+      author: solvina
+      changes:
+        - addColumn:
+            tableName: flag_positions
+            columns:
+              # --- Volatility context ---
+              - column:
+                  name: atr_at_entry
+                  type: NUMERIC(10,4)
+              # --- Volume context ---
+              - column:
+                  name: volume_ma_at_entry
+                  type: BIGINT
+              # flagpole_avg_volume / volume_ma_at_entry — how exceptional was the pole spike
+              - column:
+                  name: flagpole_volume_ratio
+                  type: NUMERIC(8,3)
+              # --- Intraday price structure ---
+              - column:
+                  name: vwap_at_entry
+                  type: NUMERIC(10,4)
+              - column:
+                  name: day_open_price
+                  type: NUMERIC(10,4)
+              # --- Breakout signal type ---
+              - column:
+                  name: breakout_type
+                  type: VARCHAR(10)
+              # --- Pre-computed ratios (stored for SQL convenience) ---
+              # (entry_price - stop_loss_price) / entry_price * 100
+              - column:
+                  name: stop_distance_pct
+                  type: NUMERIC(8,4)
+              # --- R-unit excursions (set at close) ---
+              - column:
+                  name: mfe_r
+                  type: NUMERIC(8,2)
+              - column:
+                  name: mae_r
+                  type: NUMERIC(8,2)
