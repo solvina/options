@@ -105,7 +105,7 @@ class TradeExecutionService(
                 )
             }.getOrElse { e ->
                 logger.warn(e) { "[${request.underlyingSymbol}] Failed to submit order: ${e.message}" }
-                spreadPort.update(pendingSpread.copy(status = SpreadStatus.CLOSED_MANUAL, closeReason = "order_rejected"))
+                spreadPort.update(pendingSpread.copy(status = SpreadStatus.CLOSED_REJECTED, closeReason = "order_rejected"))
                 return TradeExecutionResult(ExecutionOutcome.ORDER_REJECTED)
             }
         // Stamp the real orderId now that we have it
@@ -278,7 +278,8 @@ class TradeExecutionService(
         tradeLogger.info {
             "ABORTED ${request.underlyingSymbol}  ${request.soldContract.strike}P/${request.boughtContract.strike}P  reason=${outcome.name}"
         }
-        spreadPort.update(pendingSpread.copy(status = SpreadStatus.CLOSED_MANUAL, closeReason = outcome.name.lowercase()))
+        val abortStatus = if (outcome == ExecutionOutcome.ORDER_REJECTED) SpreadStatus.CLOSED_REJECTED else SpreadStatus.CLOSED_TIMEOUT
+        spreadPort.update(pendingSpread.copy(status = abortStatus, closeReason = outcome.name.lowercase()))
         val cooldownExpiry = Instant.now(clock).plusSeconds(config.entryCooldownMinutes * 60)
         cooldownUntil[request.underlyingSymbol] = cooldownExpiry
         logger.info { "[${request.underlyingSymbol}] Entry cooldown set — won't retry until $cooldownExpiry (${config.entryCooldownMinutes} min)" }

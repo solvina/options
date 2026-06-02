@@ -40,7 +40,7 @@ class StartupRecoveryService(
             if (orderId == 0) {
                 logger.warn { "Recovery: PENDING spread ${spread.id} has no orderId, closing as unknown" }
                 spreadPort.update(
-                    spread.copy(status = SpreadStatus.CLOSED_MANUAL, closeReason = "recovery_no_order", closedAt = Instant.now()),
+                    spread.copy(status = SpreadStatus.CLOSED_REJECTED, closeReason = "recovery_no_order", closedAt = Instant.now()),
                 )
                 continue
             }
@@ -63,7 +63,7 @@ class StartupRecoveryService(
                         else -> {
                             spreadPort.update(
                                 spread.copy(
-                                    status = SpreadStatus.CLOSED_MANUAL,
+                                    status = SpreadStatus.CLOSED_TIMEOUT,
                                     closeReason = "recovered_cancelled",
                                     closedAt = Instant.now(),
                                 ),

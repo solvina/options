@@ -144,7 +144,7 @@ class FlagExecutionService(
 
             if (entryFill.status != OrderStatus.FILLED) {
                 logger.info { "[${request.symbol}] Entry order not filled (status=${entryFill.status}) — marking cancelled" }
-                flagPort.update(position.copy(status = FlagStatus.CLOSED_MANUAL, closeReason = "entry_not_filled", closedAt = Instant.now(clock)))
+                flagPort.update(position.copy(status = FlagStatus.ENTRY_TIMEOUT, closeReason = "entry_not_filled", closedAt = Instant.now(clock)))
                 return@launch
             }
 

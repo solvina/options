@@ -18,7 +18,10 @@ enum class FlagStatus {
 
     /** Closed manually via API. */
     CLOSED_MANUAL,
+
+    /** Entry order placed but never filled within the timeout — no position was opened. */
+    ENTRY_TIMEOUT,
 }
 
 val FlagStatus.isTerminal: Boolean
-    get() = this in setOf(FlagStatus.CLOSED_PROFIT, FlagStatus.CLOSED_STOP, FlagStatus.CLOSED_EOD, FlagStatus.CLOSED_MANUAL)
+    get() = this in setOf(FlagStatus.CLOSED_PROFIT, FlagStatus.CLOSED_STOP, FlagStatus.CLOSED_EOD, FlagStatus.CLOSED_MANUAL, FlagStatus.ENTRY_TIMEOUT)
