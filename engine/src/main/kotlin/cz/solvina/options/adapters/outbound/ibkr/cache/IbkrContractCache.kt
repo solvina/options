@@ -86,6 +86,20 @@ class IbkrContractCache(
 
         val details = deferred.await()
         logger.debug { "[$key] reqContractDetails returned ${details.size} contracts" }
+
+        // Proactively mark all cached strikes not present in the actual results as missing for this expiry.
+        // reqSecDefOptParams returns a flat union across all expirations; far-out monthly expiries have
+        // coarser strike spacing (e.g. $10 increments) than weeklies ($2.50/$5). One reqContractDetails
+        // call gives us the authoritative set, so we can invalidate the phantom strikes immediately instead
+        // of discovering them one by one over multiple scan cycles.
+        val actualStrikesForExpiry = details.map { it.contract().strike() }.toSet()
+        val cachedStrikesForExpiry = optionParamsCache.getCached(key.symbol)?.strikesByExpiry?.get(key.expiry)
+        cachedStrikesForExpiry?.forEach { cachedStrike ->
+            if (cachedStrike.toDouble() !in actualStrikesForExpiry) {
+                missingContracts.add(OptionContractKey(key.symbol, key.expiry, cachedStrike, key.optionType))
+            }
+        }
+
         val conId =
             details
                 .filter { it.contract().strike() == key.strike.toDouble() }
