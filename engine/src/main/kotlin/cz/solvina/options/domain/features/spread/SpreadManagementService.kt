@@ -69,14 +69,8 @@ class SpreadManagementService(
                 forceCloseSpread(spread, spreadValue, exitContext = exitContext)
             } else {
                 closeSpread(spread, SpreadStatus.CLOSED_MANUAL, soldMid, boughtMid, spreadValue, exitContext)
-                spread.copy(
-                    status = SpreadStatus.CLOSED_MANUAL,
-                    closedAt = Instant.now(clock),
-                    closeReason = SpreadStatus.CLOSED_MANUAL.name,
-                    closePricePerShare = spreadValue,
-                    underlyingPriceAtExit = exitContext.first,
-                    ivRankAtExit = exitContext.second,
-                )
+                // Re-fetch so we return the actual persisted state (closeSpread updates the DB)
+                spreadPort.findById(id) ?: spread
             }
         return ManualCloseResult.Closed(closed)
     }
@@ -206,6 +200,27 @@ class SpreadManagementService(
                 closePricePerShare = currentSpreadValue,
             )
         spreadPort.update(closing)
+
+        // Sold leg is priced at zero — options are effectively worthless. Placing a buy limit at $0.00
+        // will never fill. Skip the buy-back and close directly.
+        if (roundedSoldMid.amount <= BigDecimal.ZERO) {
+            val closed =
+                closing.copy(
+                    status = closeStatus,
+                    closedAt = Instant.now(clock),
+                    closeReason = closeStatus.name,
+                    underlyingPriceAtExit = exitContext.first,
+                    ivRankAtExit = exitContext.second,
+                )
+            spreadPort.update(closed)
+            logger.info { "[${spread.symbol}] Sold leg worthless — closed $closeStatus without buy-back" }
+            tradeLogger.info {
+                "EXIT   ${spread.symbol}  ${spread.soldLeg.contract.strike}P/${spread.boughtLeg.contract.strike}P" +
+                    "  exp=${spread.soldLeg.contract.expiry}  reason=${closeStatus.name}  value=\$0 (worthless)" +
+                    "  credit=\$${spread.creditPerShare}  pnl=\$${spread.creditPerShare.multiply(BigDecimal("100")).multiply(BigDecimal(spread.quantity))}"
+            }
+            return
+        }
 
         val buyBackOrder =
             orderPort.placeAndAwaitFill(
