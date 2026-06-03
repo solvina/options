@@ -4,13 +4,16 @@ import com.ib.client.EClientSocket
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrContractRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.PendingContractRequest
+import cz.solvina.options.domain.models.OptionType
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CompletableDeferred
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.context.annotation.Lazy
 import org.springframework.stereotype.Component
+import java.math.BigDecimal
 import java.time.LocalDate
+import java.util.TreeSet
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 
@@ -27,6 +30,9 @@ class IbkrContractCache(
     private val underlyingConIds = ConcurrentHashMap<Symbol, Int>()
     private val optionConIds = ConcurrentHashMap<OptionContractKey, Int>()
     private val missingContracts = ConcurrentHashMap.newKeySet<OptionContractKey>()
+
+    private data class VerifiedKey(val symbol: Symbol, val expiry: LocalDate, val optionType: OptionType)
+    private val verifiedStrikes = ConcurrentHashMap<VerifiedKey, TreeSet<BigDecimal>>()
 
     suspend fun getOrFetchUnderlyingConId(symbol: Symbol): Int {
         underlyingConIds[symbol]?.let { return it }
@@ -87,12 +93,16 @@ class IbkrContractCache(
         val details = deferred.await()
         logger.debug { "[$key] reqContractDetails returned ${details.size} contracts" }
 
-        // Proactively mark all cached strikes not present in the actual results as missing for this expiry.
+        // Cache the authoritative strike list for this expiry+right from the real IBKR response.
         // reqSecDefOptParams returns a flat union across all expirations; far-out monthly expiries have
-        // coarser strike spacing (e.g. $10 increments) than weeklies ($2.50/$5). One reqContractDetails
-        // call gives us the authoritative set, so we can invalidate the phantom strikes immediately instead
-        // of discovering them one by one over multiple scan cycles.
+        // coarser strike spacing (e.g. $10 increments) than weeklies ($2.50/$5). Storing the real set
+        // here lets the option chain adapter use only genuine strikes when building candidate lists,
+        // eliminating the repeated "strike not found" failures caused by phantom near-term strikes.
         val actualStrikesForExpiry = details.map { it.contract().strike() }.toSet()
+        verifiedStrikes[VerifiedKey(key.symbol, key.expiry, key.optionType)] =
+            actualStrikesForExpiry.mapTo(TreeSet()) { BigDecimal(it.toString()) }
+        logger.debug { "[$key] Cached ${actualStrikesForExpiry.size} verified strikes for ${key.expiry}" }
+
         val cachedStrikesForExpiry = optionParamsCache.getCached(key.symbol)?.strikesByExpiry?.get(key.expiry)
         cachedStrikesForExpiry?.forEach { cachedStrike ->
             if (cachedStrike.toDouble() !in actualStrikesForExpiry) {
@@ -127,9 +137,15 @@ class IbkrContractCache(
 
     fun getCachedOptionConId(key: OptionContractKey): Int? = optionConIds[key]
 
+    /** Returns the authoritative strike set for a given expiry+right, populated after the first
+     *  reqContractDetails call for that expiry. Null means no data yet — fall back to option params. */
+    fun getVerifiedStrikes(symbol: Symbol, expiry: LocalDate, optionType: OptionType): Set<BigDecimal>? =
+        verifiedStrikes[VerifiedKey(symbol, expiry, optionType)]
+
     private fun evictExpired() {
         val today = LocalDate.now()
         optionConIds.keys.removeIf { it.expiry.isBefore(today) }
         missingContracts.removeIf { it.expiry.isBefore(today) }
+        verifiedStrikes.keys.removeIf { it.expiry.isBefore(today) }
     }
 }

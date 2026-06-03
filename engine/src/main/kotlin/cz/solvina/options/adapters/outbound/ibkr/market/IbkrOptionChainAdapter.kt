@@ -55,7 +55,15 @@ class IbkrOptionChainAdapter(
         // Allow bought-leg candidates to sit one spread-width below the sold-leg band
         val boughtLegFloor = lowerBound.subtract(scannerConfig.spreadWidthUsd)
 
-        val expiryStrikes = params.strikesByExpiry[expiry] ?: params.strikes
+        // Prefer authoritative strikes from a prior reqContractDetails response for this expiry.
+        // reqSecDefOptParams returns a flat union of all strikes across all expirations, so
+        // strikesByExpiry[expiry] contains fine-grained near-term increments ($2.50/$5) that
+        // don't exist for far-out monthly expiries ($10 increments). The verified set eliminates
+        // those phantoms so candidate selection only ever picks real, tradeable strikes.
+        val expiryStrikes =
+            contractCache.getVerifiedStrikes(symbol, expiry, OptionType.PUT)
+                ?: params.strikesByExpiry[expiry]
+                ?: params.strikes
         val validStrikes =
             expiryStrikes.filter { strike ->
                 strike >= boughtLegFloor && strike <= upperBound
