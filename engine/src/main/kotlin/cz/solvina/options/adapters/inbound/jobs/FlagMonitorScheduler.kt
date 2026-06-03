@@ -5,13 +5,17 @@ import cz.solvina.options.domain.features.flag.FlagManagementService
 import cz.solvina.options.domain.features.flag.config.FlagTradingConfig
 import cz.solvina.options.domain.features.flag.config.FlagTradingConfigPort
 import io.github.oshai.kotlinlogging.KotlinLogging
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 import java.time.Clock
 import java.time.DayOfWeek
 import java.time.ZoneId
 import java.time.ZonedDateTime
+import java.util.concurrent.atomic.AtomicBoolean
 
 private val logger = KotlinLogging.logger {}
 private val ET_ZONE = ZoneId.of("America/New_York")
@@ -26,6 +30,9 @@ class FlagMonitorScheduler(
     private val connectionStatusPort: ConnectionStatusPort,
     private val clock: Clock,
 ) {
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val running = AtomicBoolean(false)
+
     /**
      * Runs every minute. Triggers EOD liquidation for each market session once we enter the
      * configured window before that session's close.
@@ -36,13 +43,21 @@ class FlagMonitorScheduler(
             logger.debug { "Flag EOD check skipped: IBKR not connected" }
             return
         }
-        runBlocking {
-            runCatching {
-                val config = flagTradingConfigPort.get()
-                val now = ZonedDateTime.now(clock)
-                checkEuClose(now, config)
-                checkUsClose(now, config)
-            }.onFailure { e -> logger.error(e) { "Flag EOD liquidation check failed: ${e.message}" } }
+        if (!running.compareAndSet(false, true)) {
+            logger.debug { "Flag EOD check skipped: previous run still in progress" }
+            return
+        }
+        scope.launch {
+            try {
+                runCatching {
+                    val config = flagTradingConfigPort.get()
+                    val now = ZonedDateTime.now(clock)
+                    checkEuClose(now, config)
+                    checkUsClose(now, config)
+                }.onFailure { e -> logger.error(e) { "Flag EOD liquidation check failed: ${e.message}" } }
+            } finally {
+                running.set(false)
+            }
         }
     }
 

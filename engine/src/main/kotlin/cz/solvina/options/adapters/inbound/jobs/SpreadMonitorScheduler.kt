@@ -4,12 +4,16 @@ import cz.solvina.options.domain.features.connection.status.ConnectionStatusPort
 import cz.solvina.options.domain.features.scanner.TradingKillSwitch
 import cz.solvina.options.domain.features.spread.SpreadManagementService
 import io.github.oshai.kotlinlogging.KotlinLogging
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 import java.time.DayOfWeek
 import java.time.ZoneId
 import java.time.ZonedDateTime
+import java.util.concurrent.atomic.AtomicBoolean
 
 private val logger = KotlinLogging.logger {}
 private val BERLIN = ZoneId.of("Europe/Berlin")
@@ -20,6 +24,9 @@ class SpreadMonitorScheduler(
     private val connectionStatusPort: ConnectionStatusPort,
     private val killSwitch: TradingKillSwitch,
 ) {
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val running = AtomicBoolean(false)
+
     @Scheduled(fixedDelayString = "\${scanner.monitor-delay-ms:60000}")
     fun monitorSpreads() {
         if (killSwitch.monitorPaused) {
@@ -34,9 +41,17 @@ class SpreadMonitorScheduler(
             logger.debug { "Spread monitor skipped: outside market hours" }
             return
         }
-        runBlocking {
-            runCatching { spreadManagementService.checkExits() }
-                .onFailure { e -> logger.error(e) { "Spread monitor failed: ${e.message}" } }
+        if (!running.compareAndSet(false, true)) {
+            logger.debug { "Spread monitor skipped: previous run still in progress" }
+            return
+        }
+        scope.launch {
+            try {
+                runCatching { spreadManagementService.checkExits() }
+                    .onFailure { e -> logger.error(e) { "Spread monitor failed: ${e.message}" } }
+            } finally {
+                running.set(false)
+            }
         }
     }
 

@@ -104,16 +104,43 @@ class SpreadManagementService(
 
     suspend fun checkExits() {
         val openSpreads = spreadPort.findOpen()
-        if (openSpreads.isEmpty()) {
+        val closingSpreads = spreadPort.findByStatus(SpreadStatus.CLOSING)
+
+        if (openSpreads.isEmpty() && closingSpreads.isEmpty()) {
             logger.debug { "No open spreads to monitor" }
             return
         }
 
-        logger.info { "Checking exits for ${openSpreads.size} open spread(s)" }
-        for (spread in openSpreads) {
-            runCatching { checkSpreadExit(spread) }
-                .onFailure { e -> logger.error(e) { "[${spread.symbol}] Error checking spread exit: ${e.message}" } }
+        if (openSpreads.isNotEmpty()) {
+            logger.info { "Checking exits for ${openSpreads.size} open spread(s)" }
+            for (spread in openSpreads) {
+                runCatching { checkSpreadExit(spread) }
+                    .onFailure { e -> logger.error(e) { "[${spread.symbol}] Error checking spread exit: ${e.message}" } }
+            }
         }
+
+        if (closingSpreads.isNotEmpty()) {
+            logger.info { "Retrying close for ${closingSpreads.size} stuck CLOSING spread(s)" }
+            for (spread in closingSpreads) {
+                runCatching { retryClose(spread) }
+                    .onFailure { e -> logger.error(e) { "[${spread.symbol}] Error retrying close: ${e.message}" } }
+            }
+        }
+    }
+
+    private suspend fun retryClose(spread: BullPutSpread) {
+        val targetStatus =
+            spread.closeReason
+                ?.runCatching { SpreadStatus.valueOf(this) }
+                ?.getOrNull()
+                ?.takeIf { it != SpreadStatus.CLOSING }
+                ?: SpreadStatus.CLOSED_MANUAL
+        logger.info { "[${spread.symbol}] Retrying close (target=$targetStatus closeReason=${spread.closeReason})" }
+        val soldMid = marketDataPort.getOptionMid(spread.soldLeg.contract)
+        val boughtMid = marketDataPort.getOptionMid(spread.boughtLeg.contract)
+        val currentSpreadValue = soldMid.amount.subtract(boughtMid.amount)
+        val exitContext = captureExitContext(spread)
+        closeSpread(spread, targetStatus, soldMid, boughtMid, currentSpreadValue, exitContext)
     }
 
     private suspend fun checkSpreadExit(spread: BullPutSpread) {

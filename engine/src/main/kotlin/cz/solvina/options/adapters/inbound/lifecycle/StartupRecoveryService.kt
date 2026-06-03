@@ -1,6 +1,9 @@
 package cz.solvina.options.adapters.inbound.lifecycle
 
+import com.ib.client.EClientSocket
+import com.ib.client.OrderCancel
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOpenOrdersAdapter
+import cz.solvina.options.adapters.outbound.ibkr.account.OpenOrder
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.features.spread.SpreadPort
@@ -21,19 +24,39 @@ class StartupRecoveryService(
     private val spreadPort: SpreadPort,
     private val orderRegistry: IbkrOrderRegistry,
     private val openOrdersAdapter: IbkrOpenOrdersAdapter,
+    private val client: EClientSocket,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     suspend fun recover() {
         val pendingSpreads = spreadPort.findByStatus(SpreadStatus.PENDING)
-        if (pendingSpreads.isEmpty()) return
+        val closingSpreads = spreadPort.findByStatus(SpreadStatus.CLOSING)
+        if (pendingSpreads.isEmpty() && closingSpreads.isEmpty()) return
 
-        logger.info { "Recovery: found ${pendingSpreads.size} PENDING spread(s)" }
-
-        val openOrderIds =
-            runCatching { openOrdersAdapter.getOpenOrders().map { it.orderId }.toSet() }
+        val openOrders =
+            runCatching { openOrdersAdapter.getOpenOrders() }
                 .onFailure { e -> logger.warn(e) { "Recovery: could not fetch open IBKR orders" } }
-                .getOrDefault(emptySet())
+                .getOrDefault(emptyList<OpenOrder>())
+        val openOrderIds = openOrders.map { it.orderId }.toSet()
+
+        // Cancel any orphaned BUY orders for symbols stuck in CLOSING state.
+        // These were placed by the previous engine run's close attempt; without cancellation
+        // the next retryClose would place a duplicate order for the same contract.
+        if (closingSpreads.isNotEmpty()) {
+            val closingSymbols = closingSpreads.map { it.symbol.value }.toSet()
+            val staleOrders = openOrders.filter { it.symbol in closingSymbols && it.action.equals("BUY", ignoreCase = true) }
+            for (order in staleOrders) {
+                logger.info { "Recovery: cancelling stale CLOSING order ${order.orderId} (${order.symbol} ${order.action} @ ${order.limitPrice})" }
+                runCatching { client.cancelOrder(order.orderId, OrderCancel()) }
+                    .onFailure { e -> logger.warn(e) { "Recovery: failed to cancel order ${order.orderId}" } }
+            }
+            if (staleOrders.isEmpty()) {
+                logger.info { "Recovery: ${closingSpreads.size} CLOSING spread(s) found — no orphaned orders to cancel" }
+            }
+        }
+
+        if (pendingSpreads.isEmpty()) return
+        logger.info { "Recovery: found ${pendingSpreads.size} PENDING spread(s)" }
 
         for (spread in pendingSpreads) {
             val orderId = spread.soldLeg.orderId
