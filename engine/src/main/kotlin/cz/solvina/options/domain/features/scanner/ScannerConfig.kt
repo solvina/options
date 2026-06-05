@@ -42,6 +42,8 @@ data class ScannerConfig(
     val orderChasePriceStep: Double = 0.03,
     // Entry cooldown — how long to wait before retrying a symbol after a failed entry
     val entryCooldownMinutes: Long = 240,
+    // Stop-loss cooldown — how long to block re-entry after a CLOSED_STOP
+    val stopLossCooldownHours: Long = 24,
     // Schedulers
     val cron: String = "0 */15 10-15 * * MON-FRI",
     val monitorDelayMs: Long = 60_000,

@@ -30,6 +30,7 @@ import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.Clock
+import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
@@ -86,6 +87,15 @@ class TradeExecutionService(
     override fun isInFlight(symbol: Symbol): Boolean = inFlightSymbols.containsKey(symbol)
 
     override fun isCoolingDown(symbol: Symbol): Boolean = cooldownUntil[symbol]?.let { Instant.now(clock).isBefore(it) } ?: false
+
+    override fun blockEntry(
+        symbol: Symbol,
+        duration: Duration,
+    ) {
+        val until = Instant.now(clock).plus(duration)
+        cooldownUntil[symbol] = until
+        logger.info { "[$symbol] Entry blocked until $until (stop-loss cooldown ${duration.toHours()}h)" }
+    }
 
     // -------------------------------------------------------------------------
     // Execution loop

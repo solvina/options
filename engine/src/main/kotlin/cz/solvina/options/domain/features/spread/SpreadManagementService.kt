@@ -1,5 +1,6 @@
 package cz.solvina.options.domain.features.spread
 
+import cz.solvina.options.domain.features.execution.TradeExecutionPort
 import cz.solvina.options.domain.features.market.MarketDataPort
 import cz.solvina.options.domain.features.order.LegAction
 import cz.solvina.options.domain.features.order.OrderPort
@@ -15,6 +16,7 @@ import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.Clock
+import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
@@ -30,6 +32,7 @@ class SpreadManagementService(
     private val orderPort: OrderPort,
     private val universePort: UniversePort,
     private val volatilityPort: VolatilityPort,
+    private val executionPort: TradeExecutionPort,
     private val config: ScannerConfig,
     private val clock: Clock,
 ) {
@@ -136,18 +139,37 @@ class SpreadManagementService(
     }
 
     private suspend fun retryClose(spread: BullPutSpread) {
-        val targetStatus =
-            spread.closeReason
-                ?.runCatching { SpreadStatus.valueOf(this) }
-                ?.getOrNull()
-                ?.takeIf { it != SpreadStatus.CLOSING }
-                ?: SpreadStatus.CLOSED_MANUAL
-        logger.info { "[${spread.symbol}] Market-closing stuck CLOSING spread (target=$targetStatus)" }
         val soldMid = marketDataPort.getOptionMid(spread.soldLeg.contract)
         val boughtMid = marketDataPort.getOptionMid(spread.boughtLeg.contract)
         val currentSpreadValue = soldMid.amount.subtract(boughtMid.amount)
         val exitContext = captureExitContext(spread)
-        forceCloseSpread(spread, currentSpreadValue, targetStatus, targetStatus.name, exitContext)
+
+        // Re-evaluate against current market price — a stop-loss that sat in CLOSING while the
+        // market recovered should close as PROFIT, not STOP.
+        val inst = universePort.get(spread.symbol)
+        val takeProfitPercent = inst?.takeProfitPercent ?: config.takeProfitPercent
+        val stopLossPercent = inst?.stopLossPercent ?: config.stopLossPercent
+        val tpThreshold = spread.creditPerShare.multiply(BigDecimal.ONE.subtract(BigDecimal(takeProfitPercent)))
+        val slThreshold = spread.creditPerShare.add(spread.creditPerShare.multiply(BigDecimal(stopLossPercent)))
+
+        val actualStatus =
+            when {
+                currentSpreadValue <= tpThreshold -> SpreadStatus.CLOSED_PROFIT
+                currentSpreadValue >= slThreshold -> SpreadStatus.CLOSED_STOP
+                else ->
+                    spread.closeReason
+                        ?.runCatching { SpreadStatus.valueOf(this) }
+                        ?.getOrNull()
+                        ?.takeIf { it != SpreadStatus.CLOSING }
+                        ?: SpreadStatus.CLOSED_MANUAL
+            }
+
+        logger.info { "[${spread.symbol}] Market-closing stuck CLOSING spread (target=$actualStatus, value=\$$currentSpreadValue)" }
+        forceCloseSpread(spread, currentSpreadValue, actualStatus, actualStatus.name, exitContext)
+
+        if (actualStatus == SpreadStatus.CLOSED_STOP) {
+            executionPort.blockEntry(spread.symbol, Duration.ofHours(config.stopLossCooldownHours))
+        }
     }
 
     private suspend fun checkSpreadExit(spread: BullPutSpread) {
@@ -194,6 +216,10 @@ class SpreadManagementService(
 
         logger.info { "[${spread.symbol}] Closing spread at market — $reason" }
         forceCloseSpread(spread, currentSpreadValue, closeStatus, reason, exitContext)
+
+        if (closeStatus == SpreadStatus.CLOSED_STOP) {
+            executionPort.blockEntry(spread.symbol, Duration.ofHours(config.stopLossCooldownHours))
+        }
     }
 
     private suspend fun captureExitContext(spread: BullPutSpread): Pair<BigDecimal?, BigDecimal?> {
