@@ -1,20 +1,18 @@
 # Options Engine — Application Description
 
 > **Living document.** Update this file whenever significant structural changes land.
-> Last updated: 2026-05-13 (session 3)
+> Last updated: 2026-06-05
 
 ---
 
 ## Purpose
 
-An automated options trading engine that executes a **Bull Put Spread** (short put vertical / put credit spread) strategy against a watchlist of US equities using Interactive Brokers (IBKR) TWS API.
+An automated trading engine executing two independent strategies against Interactive Brokers (IBKR):
 
-### Strategy in plain English
+1. **Bull Put Spread** — options credit strategy; sells put verticals when IV rank is elevated.
+2. **Bull Flag Momentum** — intraday equity strategy; detects flag-and-pole breakouts on 5-min bars.
 
-1. Sell an OTM put (collect premium) + Buy a lower-strike OTM put (cap the risk).
-2. Keep the net credit. Both legs expire worthless if the stock stays above the sold strike.
-3. Target entry when IV rank is elevated (options overpriced) and ~45 DTE.
-4. Exit early at 50% profit, 50% loss, or when ≤14 DTE.
+Both strategies share the same IBKR connection infrastructure, persistence layer, and Spring Boot process.
 
 ---
 
@@ -25,10 +23,12 @@ An automated options trading engine that executes a **Bull Put Spread** (short p
 | Language | Kotlin 2.1.0 |
 | Runtime | Spring Boot 3.5.0 / Spring WebFlux (Netty) |
 | Async | Kotlin Coroutines + Reactor |
-| Broker API | IBKR TWS API (local socket, `TwsApi_debug.jar`) |
+| Broker API | IBKR TWS API (EClientSocket/EWrapper, `TwsApi_debug.jar`) |
 | Database | PostgreSQL 16 / JPA + Hibernate / Liquibase |
+| Time-series | InfluxDB (bar storage for flag backtest) |
 | Build | Gradle Kotlin DSL |
 | API spec | OpenAPI 3 (springdoc, spec-first generation) |
+| Frontend | React + TypeScript, Vite, TailwindCSS, TanStack Query, generated OpenAPI client |
 
 ---
 
@@ -37,255 +37,349 @@ An automated options trading engine that executes a **Bull Put Spread** (short p
 Hexagonal (ports & adapters) with three concentric layers:
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│  Inbound Adapters                                        │
-│  REST API · Scheduled Jobs · Lifecycle hooks             │
-│                        │                                 │
-│  ┌─────────────────────▼──────────────────────────────┐  │
-│  │              Domain (business logic)                │  │
-│  │  ScannerService · TradeExecutionService             │  │
-│  │  SpreadManagementService · IvRankService            │  │
-│  │              │  (Port interfaces)  │                │  │
-│  └──────────────┼─────────────────────┼───────────────┘  │
-│                 │                     │                   │
-│  ┌──────────────▼─────────────────────▼───────────────┐  │
-│  │  Outbound Adapters                                  │  │
-│  │  IBKR TWS · PostgreSQL · In-memory watchlist        │  │
-│  └─────────────────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│  Inbound Adapters                                                    │
+│  REST API (WebFlux) · Scheduled Jobs · ApplicationReady listener    │
+│                          │                                           │
+│  ┌───────────────────────▼────────────────────────────────────────┐  │
+│  │              Domain (business logic)                            │  │
+│  │  ScannerService · SpreadManagementService · SpreadAnalytics    │  │
+│  │  FlagScannerService · FlagExecutionService · FlagManagement    │  │
+│  │  IvRankService · TradeExecutionService (combo orders)          │  │
+│  │              │  (Port interfaces only — no adapter imports)    │  │
+│  └──────────────┼──────────────────────────────────────────────── ┘  │
+│                 │                                                     │
+│  ┌──────────────▼─────────────────────────────────────────────────┐  │
+│  │  Outbound Adapters                                              │  │
+│  │  IBKR (connection, market data, orders, bars)                  │  │
+│  │  PostgreSQL (spreads, flags, universe, flag config)            │  │
+│  │  InfluxDB (5-min bar storage)                                  │  │
+│  └────────────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 **Key rule:** Domain never imports from adapters. All cross-boundary communication goes through port interfaces.
 
 ---
 
-## Main Business Classes
+## Strategy 1 — Bull Put Spread (options)
 
-### Domain Models (`domain/models/`)
+### How it works
 
-| Class | What it is |
-|---|---|
-| `Symbol` | Inline value class wrapping a ticker string (`SPY`, `AAPL`…) |
-| `Money` | Value object for USD amounts — wraps `BigDecimal`, supports arithmetic |
-| `OptionContract` | An option identified by (symbol, expiry date, strike, PUT/CALL) |
-| `OptionGreeks` | delta, gamma, theta, vega, implied volatility from IBKR market data |
-| `OptionType` | Enum `PUT` / `CALL` with IBKR wire codes |
-| `IvRank` | Percentile rank (0–100) + `currentIv: Double` (raw IV value used for BS fallback) + calculation timestamp |
-| `HistoricalBar` | One daily bar: date, closing price, IV value |
-| `ConnectionStatus` | Live IBKR connection state snapshot |
+1. Sell an OTM put (collect premium) + buy a lower-strike OTM put (cap the risk).
+2. Keep the net credit. Both legs expire worthless if the stock stays above the sold strike.
+3. Target entry when IV rank ≥ 45% and ~45 DTE.
+4. Exit at 50% profit, full-credit stop (1× credit), or ≤ 14 DTE.
 
-### Account Models (`domain/features/account/`)
+### Key domain services
 
-| Class | What it is |
-|---|---|
-| `AccountDetail` | Live account snapshot: totalCapital, availableFunds, unrealizedPnL, excessLiquidity |
-| `AccountPosition` | Raw IBKR position: account ID, symbol, secType, currency, expiry, strike, optionRight, quantity, avgCost |
-| `AccountPort` | Port for the live `StateFlow<AccountDetail?>` feed |
-| `PositionsPort` | Port: `suspend fun getPositions(): List<AccountPosition>` — one-shot request/response |
+**`ScannerService`** — entry decision engine, runs on cron (every 15 min, Mon–Fri 03:00–15:00 ET).
 
-### Strategy Models (`domain/features/spread/`)
+1. Skip if `maxOpenSpreads` reached or IBKR not connected.
+2. Get active symbols from `UniversePort` (DB-backed, exchange-hours-filtered).
+3. Per symbol: delegate to `ScanCandidateSelector` (IV rank, expiry, option chain, delta, credit, risk checks).
+4. Fire-and-forget `TradeExecutionPort.execute()` in a dedicated coroutine scope.
 
-| Class | What it is |
-|---|---|
-| `BullPutSpread` | The core position: sold leg + bought leg, net credit, max risk, status, timestamps, entry context (IV rank, underlying price) |
-| `SpreadLeg` | One leg of the spread: contract, BUY/SELL action, premium, fill order ID |
-| `SpreadStatus` | `OPEN` → `CLOSED_PROFIT` / `CLOSED_STOP` / `CLOSED_TIME` / `CLOSED_MANUAL` |
+**`TradeExecutionService`** — async BAG/combo order execution. Places a BAG limit order (both legs in one IBKR order), manages it via a real-time event loop:
+- Monitors underlying price drift (abort if > `driftProtectionPct`).
+- Ladders limit credit price down by one tick every `priceAdjustIntervalSeconds` until floor reached or filled.
+- `entryCooldownMinutes` (default 4h) prevents immediate re-entry after a failed attempt.
+- On fill: persists `BullPutSpread` to PostgreSQL with full entry context.
 
-### Domain Services
+**`SpreadManagementService`** — exit monitoring + manual close.
 
-#### `ScannerService` — Entry decision engine
-Runs on a cron (every 15 min, 10 am–3 pm ET, Mon–Fri). For each watchlist symbol:
+- `checkExits()` runs every 60 s (via `SpreadMonitorScheduler`).
+- Filters to symbols whose exchange is currently open (config-driven, not hardcoded).
+- **All automated exits fire MARKET orders** (`forceCloseSpread`) — no limit/chase/CLOSING intermediate state.
+- CLOSING state is only reached when a manual `softClose` limit order fails to fill.
+- Exit triggers (per-instrument overrides possible from `InstrumentConfig`):
+  - Take-profit: spread value ≤ credit × (1 − takeProfitPercent) = 50% → `CLOSED_PROFIT`
+  - Stop-loss: spread value ≥ credit + credit × stopLossPercent = 2× credit → `CLOSED_STOP`
+  - Time exit: DTE ≤ 14 → `CLOSED_TIME`
+- Manual close: `softClose` (limit at mid → `CLOSING` → `CLOSED_MANUAL`), `forceClose` (market → `CLOSED_MANUAL`).
 
-1. Skip if max open spreads reached or symbol already in-flight / open.
-2. Fetch IV rank — reject if below threshold (default 30%).
-3. Find expiry closest to preferredDte (45 days) within [minDte=30, maxDte=50].
-4. Fetch option chain with Greeks — filter to delta range [0.10, 0.20], pick strike closest to targetDelta (0.15).
-5. Find the bought strike: highest available strike that is ≥ spread-width (5 USD) below the sold strike.
-6. Validate net credit ≥ minCreditPerShare (0.30 USD) and risk ≤ 2.5% of capital.
-7. Fire-and-forget `TradeExecutionService.execute()` in a dedicated coroutine scope.
+**`SpreadMonitorScheduler`** — guards: kill-switch `monitorPaused`, IBKR connected, `isAnyExchangeOpen()` (iterates `ibkr.exchanges` config map, not hardcoded).
 
-#### `TradeExecutionService` — Async combo order execution
-Places a BAG (combo) limit order and manages it in a real-time event loop until filled or timed out (15 min):
-
-- Merges three async streams via a `Channel<ExecutionEvent>`:
-  - **Underlying price ticks** → drift guard: abort if underlying moves > driftProtectionPct (1%) from entry.
-  - **Spread credit ticks** → price ladder: every N ticks (default 5) with no fill, lower the limit price by one tick. Abort if price would fall below floor credit.
-  - **Order fill events** → break the loop on FILLED.
-- On fill: persist the new `BullPutSpread` to PostgreSQL with entry metadata.
-- Pre-trade guards: checks in-flight exposure, available capital, and leg bid-ask spread liquidity.
-
-#### `SpreadManagementService` — Exit monitoring + manual close
-Runs every 60 seconds. For each open spread:
-
-1. Fetch current mid price of both legs via snapshot market data.
-2. Calculate current spread value = sold leg mid − bought leg mid.
-3. Check exit triggers:
-   - **Take-profit**: spread value ≤ credit × (1 − 50%) → buy back sold leg, sell back bought leg → `CLOSED_PROFIT`
-   - **Stop-loss**: spread value ≥ credit + maxRisk × 50% → same close sequence → `CLOSED_STOP`
-   - **Time exit**: DTE ≤ 14 → close at market → `CLOSED_TIME`
-
-Also handles manual close requests (via API):
-- **`softClose(id)`** — places limit close orders at mid price → `CLOSED_MANUAL`
-- **`forceClose(id)`** — places market close orders → `CLOSED_MANUAL`
-- Returns `ManualCloseResult` sealed class: `Closed(spread)`, `NotFound`, `AlreadyClosed`
-
-#### `TradingKillSwitch` — Runtime pause flags
-Spring component (initialized from `ScannerConfig`) with two `@Volatile` booleans:
-- `scannerPaused` — when `true`, `ScannerScheduler` skips cron ticks (no new entries opened)
-- `monitorPaused` — when `true`, `SpreadMonitorScheduler` skips cron ticks (no automatic exits)
-
-#### `IvRankService` — IV percentile calculation
-Fetches 365 days of daily IV bars for a symbol, computes:
+### Status flow
 
 ```
-ivRank = (currentIV − minIV(365d)) / (maxIV(365d) − minIV(365d)) × 100
+OPEN → CLOSING (soft manual only) → CLOSED_PROFIT / CLOSED_STOP / CLOSED_TIME / CLOSED_MANUAL
 ```
+Automated exits skip CLOSING entirely.
 
-Result (rank + raw `currentIv`) cached 60 minutes (configurable). The `currentIv` value is used by `IbkrOptionChainAdapter` as the volatility input for the Black-Scholes fallback.
+### P&L
 
-### Execution Results (`domain/features/execution/`)
-
-| Class | What it is |
-|---|---|
-| `TradeExecutionRequest` | Input to the execution engine: both contracts, target credit, floor credit, risk per share, initial bid/ask snapshots |
-| `TradeExecutionResult` | Output: `ExecutionOutcome` (FILLED / DRIFTED / FLOOR_REACHED / TIMED_OUT / PRE_TRADE_REJECTED) + achieved credit + order ID |
+`(creditPerShare - closePricePerShare) × 100 × quantity`
 
 ---
 
-## Configuration (`ScannerConfig`)
+## Strategy 2 — Bull Flag Momentum (equities, intraday)
 
-All strategy parameters live in `application.yml` under the `scanner:` key and are bound to `ScannerConfig`. Nothing is hardcoded in business logic.
+### How it works
 
-| Parameter group | Key settings |
-|---|---|
-| Entry filters | `ivRankThreshold=30`, `minDte=30`, `maxDte=50`, `preferredDte=45`, `targetDelta=0.15`, `deltaMin=0.10`, `deltaMax=0.20` |
-| Spread construction | `spreadWidthUsd=5.0`, `minCreditPerShare=0.30`, `maxRiskPercent=0.025`, `maxOpenSpreads=5` |
-| Exit rules | `takeProfitPercent=0.50`, `stopLossPercent=0.50`, `timeProfitDte=14` |
-| Execution | `driftProtectionPct=0.01`, `floorCreditBuffer=0.50`, `executionTimeoutMinutes=15`, `ticksBeforePriceAdjust=5` |
-| Leg liquidity | `maxLegBidAskSpreadPct=0.30` |
-| Order chasing | `orderChaseTimeoutMinutes=5`, `orderChaseMaxRetries=3`, `orderChasePriceStep=0.03` |
-| Kill-switch defaults | `scannerPaused=false`, `monitorPaused=false` |
-| Watchlist | `[SPY, QQQ, AAPL, MSFT, AMZN]` |
-| Cron | `0 */15 10-15 * * MON-FRI` |
-| Cache TTLs | `ivHistoryDays=365`, `ivCacheTtlMinutes=60`, `optionParamsCacheTtlHours=24` |
+1. Subscribe to 5-second real-time bars (`reqRealTimeBars`) for watchlist symbols at startup.
+2. Aggregate 60 × 5-sec bars into 5-min candles in-memory.
+3. Pattern detection (per-symbol `PatternDetector`, stateful FSM):
+   - **Flagpole**: strong up-move ≥ `atrMultiplier` × ATR(14), with at least one volume spike > `volumeSpikeMultiplier` × VolumeMA(20).
+   - **Flag consolidation**: ≤ `maxRetracementPct` (50%) retracement of pole height, ≤ `flagMaxBars` (20) 5-min bars, linear regression channel flat/downward-sloping.
+   - **Breakout**: live 5-sec bar close or completed 5-min bar close above the upper resistance regression line.
+4. On breakout signal, quality filters applied (skip first 90 RTH minutes, channel slope, pole/ATR ratio bounds, minimum retracement, minimum flag bars).
+5. Entry: bracket order — stop-market BUY at resistance + OCA children (stop-loss sell + profit-target sell).
+6. Position sizing: `riskPerTrade / (entryPrice - stopLossPrice)` shares.
+7. Profit target: `entryPrice + 2 × (entryPrice - stopLossPrice)` (2:1 reward/risk).
+8. Stop-loss: just below the lowest low of the flag.
+
+### Watchlists
+
+- US: `[SPY, QQQ, AAPL, MSFT, NVDA]` — RTH 09:30–16:00 ET
+- EU: `[SAP, ASML, SIE, ALV]` — RTH 09:00–17:30 Berlin
+
+Subscriptions start at `ApplicationReadyEvent`, resubscribe at market open cron (EU: 09:01 Berlin, US: 09:31 ET), and a 5-minute watchdog detects silent IBKR drops.
+
+Historical bootstrap: `historicalBootstrapDays` (3) of 5-min bars fetched via `reqHistoricalData` and replayed through `PatternDetector` before live bars arrive.
+
+### Order mechanics
+
+- Parent: stop-market `BUY` / `tif=DAY` (expires if session ends without entry).
+- Children: stop-market `SELL` (stop-loss) + limit `SELL` (profit target) / `tif=GTC`, OCA group.
+- Parent timeout: 10 hours (one trading session).
+- Child timeout: 30 days (safety net for GTC orders).
+
+### EOD liquidation
+
+`FlagMonitorScheduler` runs every 60 seconds and triggers `checkEodLiquidation` once the clock enters the configured window (`eodLiqMinutesBeforeClose`, default 15 min) before each session's close. Separately tracked for EU and US sessions.
+
+### Status flow
+
+```
+PENDING → OPEN → CLOSED_PROFIT / CLOSED_STOP / CLOSED_EOD / CLOSED_MANUAL / ENTRY_TIMEOUT
+```
+
+### Trade journaling fields
+
+`FlagPosition` records at entry: `actualEntryPrice`, `entrySlippage`, `highestPriceSeen` / `lowestPriceSeen` (watermarks), `atrAtEntry`, `volumeMaAtEntry`, `flagpoleVolumeRatio`, `vwapAtEntry`, `dayOpenPrice`, `channelSlope`, `breakoutType` ("FIVE_MIN" or "LIVE_BAR"), `stopDistancePct`.
+
+At close: `maxFavorableExcursion`, `maxAdverseExcursion`, `rMultiple`, `mfeR`, `maeR`, `timeInTradeSeconds`.
+
+### Kill switch
+
+`enabled` field in `flag_trading_config` DB table, toggled via `POST /options/flags/scanner/pause|resume`. Persists across restarts.
 
 ---
 
-## IBKR Adapter Layer
-
-The broker adapter is split into focused components under `adapters/outbound/ibkr/`:
+## IBKR Communication Layer
 
 ### Connection
-- **`IbkrConnection`** — Raw socket connect/disconnect, message reader thread.
-- **`IbkrConnectionManager`** — Implements `ConnectionPort`; mutex-guarded connect; runs watchdog coroutine for auto-reconnect (10 s interval).
-- **`IbkrEWrapper`** — Implements `EWrapper`; pure callback dispatcher — routes each of 100+ IBKR callbacks to the correct registry. No business logic.
 
-### Registries (async request tracking)
-Six focused registries, all injecting the shared **`IbkrIdCounter`** for request IDs:
+- **`IbkrConnection`** — raw socket, `EClientSocket`, `EReader` message pump (coroutine loop).
+- **`IbkrConnectionManager`** — mutex-guarded connect/disconnect; auto-reconnect watchdog every `reconnect-interval-ms` (10 s).
+- **`IbkrEWrapper`** — implements `EWrapper`; pure callback dispatcher; routes ~100 IBKR callbacks to the correct registry. All TWS wire events are also logged to a dedicated `TWS_RAW` logger at DEBUG level.
+- Port: 7497 (paper). SOCAT relay inside the gnzsnz container: host 7497 → container 4004 → IB Gateway 4002.
+- Market data type: `reqMarketDataType(3)` for paper without live subscription; `reqMarketDataType(1)` for paper with live subscription or live account.
+
+### Registries
+
+Six focused registries under `adapters/outbound/ibkr/registry/`:
 
 | Registry | Tracks |
 |---|---|
-| `IbkrHistoricalDataRegistry` | Pending `reqHistoricalData` requests → `Flow<HistoricalBar>` callbacks |
-| `IbkrContractRegistry` | Pending `reqContractDetails` + `reqSecDefOptParams` → expirations/strikes |
-| `IbkrMarketDataRegistry` | Pending snapshot requests, continuous subscriptions, tick-by-tick bid/ask streams |
-| `IbkrOrderRegistry` | Pending order fills → `CompletableDeferred<OrderStatus>`; owns the order ID counter (seeded from `nextValidId`) |
-| `IbkrAccountRegistry` | Account value callback dispatch (no pending map) |
-| `IbkrPositionsRegistry` | Accumulates `AccountPosition` list from `position()` callbacks; completes `CompletableDeferred` on `positionEnd()` |
+| `IbkrHistoricalDataRegistry` | `reqHistoricalData` → `Flow<HistoricalBar>` callbacks |
+| `IbkrContractRegistry` | `reqContractDetails` + `reqSecDefOptParams` → option params/conIds |
+| `IbkrMarketDataRegistry` | Snapshot requests, continuous subscriptions, real-time bars, tick-by-tick bid/ask |
+| `IbkrOrderRegistry` | Order fills → `CompletableDeferred<OrderStatus>`; order ID counter seeded from `nextValidId` |
+| `IbkrAccountRegistry` | Account value callbacks (NetLiquidation, AvailableFunds etc.) → `StateFlow<AccountDetail?>` |
+| `IbkrPositionsRegistry` | Accumulates positions from `position()` callbacks; completes `CompletableDeferred` on `positionEnd()` |
 
-`IbkrMarketDataRegistry` error handling: IBKR errors **354** (no live subscription) and **10197** (competing live session) never send `tickSnapshotEnd` for options, so the registry completes the pending deferred immediately with whatever snapshot arrived. The caller receives an empty snapshot (`delta=NaN`) and the option chain adapter triggers the BS fallback.
+Additional: `IbkrOpenOrdersRegistry`, `IbkrPnlRegistry` (P&L subscription for unrealized P&L per spread).
 
-`MarketDataSnapshot` is an immutable `data class` (all `val`). Each tick produces a new instance via `copy()`, held in a `@Volatile var` reference — safe for the IBKR reader thread writing, coroutine threads reading.
+**`IbkrOrderRegistry` error handling:**
+- Code 399 (after-hours order queued) — fail-fast, complete deferred as CANCELLED.
+- Code 201/202 (rejected/cancelled) — complete deferred as CANCELLED; distinguish self-cancel (repricing) vs external rejection.
+- `selfCancelledOrders` set prevents spurious error logs for intentional repricing cancels.
 
-### Account adapters
-- **`IbkrAccountAdapter`** — Implements `AccountPort`; exposes live `StateFlow<AccountDetail?>` populated from IBKR account value callbacks.
-- **`IbkrPositionsAdapter`** — Implements `PositionsPort`; calls `reqPositions()` under a mutex with a 10 s timeout; cancels the subscription on completion or error.
-
-### Market data adapters
-- **`IbkrMarketDataAdapter`** — Snapshot queries: underlying price + option mid.
-- **`IbkrMarketTickAdapter`** — Streaming: `Flow<Double>` underlying price, `Flow<SpreadCreditTick>` for both legs simultaneously (bid/ask via `reqTickByTick` + Greeks via continuous `reqMktData`).
-- **`IbkrOptionChainAdapter`** — Fetches OTM put chain with Greeks for candidate strikes. Candidate selection uses two pools merged as `nearest`: `candidateStrikeCount` strikes closest to the moneyness-based target (spot × 0.85), plus the `candidateStrikeCount` lowest valid strikes (to cover high-IV underlyings where the delta-matching strikes sit far below the moneyness target). `validStrikes` is extended one `spreadWidthUsd` below the standard band floor so bought-leg strikes are not cut off. The boughtLegs set adds the top-2 strikes below each sold candidate's spread target. When IBKR returns no Greeks (paper account, error 354 or 10197), falls back to **Black-Scholes** pricing using `IvRankService.currentIv`. `BlackScholes` object lives in `domain/features/market/` and provides `putPrice`, `putDelta`, `gamma`, `putTheta`, `vega`, `impliedVol`.
-- **`IbkrHistoricalDataAdapter`** — Fetches daily IV or price bars as a `Flow`.
+**`MarketDataRegistry`** error handling: errors 354 (no live subscription) and 10197 (competing session) complete snapshot deferred immediately with whatever partial data arrived; caller falls back to Black-Scholes.
 
 ### Order adapters
-- **`IbkrOrderExecutionAdapter`** — Implements `OrderExecutionPort`: places BAG (combo) limit orders, awaits fill, cancels and re-submits on price improvement.
-- **`IbkrOrderAdapter`** — Implements `OrderPort`: places single-leg limit orders for spread close sequences.
-- **`OrderChaseService`** — Price-chasing loop: on timeout, lowers limit price and resubmits up to `maxRetries` times.
 
-### Caches
-- **`IbkrContractCache`** — Contract IDs (conId) per option key; evicts expired entries lazily.
-- **`IbkrOptionParamsCache`** — Expirations + strikes per symbol; 24-hour TTL to avoid IBKR pacing limits.
+- **`IbkrBracketOrderAdapter`** (flag strategy) — submits 3 linked orders (parent + 2 OCA children), tracks fills via `IbkrOrderRegistry`.
+- **`IbkrOrderExecutionAdapter`** (spread strategy) — submits BAG combo limit orders.
+- **`IbkrOrderAdapter`** (spread close legs) — single-leg limit/market orders.
+- **`OrderChaseService`** — price-chase loop for spread close orders: cancel → lower price by `orderChasePriceStep` → resubmit, up to `orderChaseMaxRetries`.
+
+---
+
+## Universe / Watchlist
+
+`UniversePort` is backed by a PostgreSQL table (`instrument_universe`). Instruments are managed via the UI (`/universe`) or REST API. Each instrument can override global scanner defaults (IV rank threshold, DTE range, delta range, spread width, min credit, exit percentages).
+
+`UniversePersistenceAdapter`:
+- `getActiveSymbols()` — returns enabled instruments whose exchange is currently in RTH.
+- `isMarketOpen(symbol)` — looks up `ibkr.instruments[symbol].marketExchange`, finds the exchange hours from `ibkr.exchanges`, checks current time.
+- In-memory cache (`ConcurrentHashMap`) keeps the hot path allocation-free.
+
+---
+
+## Configuration
+
+### `ScannerConfig` (`@ConfigurationProperties("scanner")`)
+
+| Group | Key parameters |
+|---|---|
+| Entry filters | `ivRankThreshold=45`, `minDte=30`, `maxDte=50`, `preferredDte=45`, `targetDelta=0.15`, `deltaMin=0.10`, `deltaMax=0.20` |
+| Spread construction | `spreadWidthUsd=5.0`, `minCreditPerShare=0.35`, `maxRiskPercent=0.025`, `maxOpenSpreads=5` |
+| Exit rules | `takeProfitPercent=0.50`, `stopLossPercent=1.00` (full credit = 2× credit loss), `timeProfitDte=14` |
+| Execution | `driftProtectionPct=0.05`, `executionTimeoutMinutes=15`, `priceAdjustIntervalSeconds=30`, `maxLegBidAskSpreadPct=0.15`, `entryCooldownMinutes=240` |
+| Order chasing | `orderChaseTimeoutMinutes=3`, `orderChaseMaxRetries=1`, `orderChasePriceStep=0.01` |
+| Schedulers | `cron=0 */15 3-15 * * MON-FRI`, `monitorDelayMs=60000` |
+| Kill switches | `tradingEnabled=true`, `scannerPaused=false`, `monitorPaused=false` |
+
+### `FlagStrategyConfig` (`@ConfigurationProperties("flag")`)
+
+| Key parameters |
+|---|
+| `usWatchlist=[SPY, QQQ, AAPL, MSFT, NVDA]`, `euWatchlist=[SAP, ASML, SIE, ALV]` |
+| `atrPeriod=14`, `atrMultiplier=2.0`, `volumeMaPeriod=20`, `volumeSpikeMultiplier=1.5` |
+| `poleMinBars=5`, `poleMaxBars=10`, `flagMinBars=5`, `flagMaxBars=20`, `maxRetracementPct=0.50` |
+| `historicalBootstrapDays=3` |
+| Quality gates: `skipFirstRthMinutes=90`, `requireNegativeChannelSlope=true`, `minFlagpoleAtrMultiple=2.0`, `maxFlagpoleAtrMultiple=4.0`, `minFlagRetracementPct=0.25`, `minFlagBarsForEntry=7` |
+
+### `ibkr.exchanges` (exchange hours, config-driven, not hardcoded)
+
+```yaml
+ibkr:
+  exchanges:
+    US:
+      timezone: America/New_York
+      open: "09:30"
+      close: "16:00"
+    EU:
+      timezone: Europe/Berlin
+      open: "09:00"
+      close: "17:30"
+```
+
+### Runtime flag config (`flag_trading_config` DB table)
+
+Single-row table. Fields: `riskPerTrade`, `maxOpenPositions`, `entryBlockMinutesBeforeClose`, `eodLiqMinutesBeforeClose`, `enabled`. Editable at runtime via `PUT /options/flags/config`.
 
 ---
 
 ## Persistence
 
-Single table: `spread_positions`
+### Tables
 
-| Column | Notes |
+| Table | Purpose |
 |---|---|
-| `id` (UUID) | Auto-generated primary key |
-| `symbol`, `status` | Ticker + `SpreadStatus` string |
-| `sold_strike`, `bought_strike` | `DECIMAL(10,2)` |
-| `expiry_date` | `DATE` |
-| `credit_per_share`, `max_risk_per_share` | `DECIMAL(10,4)` |
-| `quantity` | Number of contracts |
-| `sold_order_id`, `bought_order_id` | IBKR order IDs |
-| `iv_rank_at_entry`, `underlying_price_at_entry` | Entry context |
-| `opened_at`, `closed_at` | Timestamps |
-| `close_reason`, `close_price_per_share` | Exit context |
+| `spread_positions` | Bull put spread lifecycle |
+| `flag_positions` | Bull flag position lifecycle |
+| `flag_trading_config` | Single-row runtime config for flag strategy |
+| `instrument_universe` | Spread watchlist + per-instrument parameter overrides |
 
 Managed by Liquibase (`db.changelog-master.yaml`). Schema validated on startup (`ddl-auto: validate`).
+
+### `spread_positions` notable columns
+
+`id`, `symbol`, `status`, `sold_strike`, `bought_strike`, `expiry_date`, `credit_per_share`, `max_risk_per_share`, `quantity`, `sold_order_id`, `bought_order_id`, `iv_rank_at_entry`, `underlying_price_at_entry`, `opened_at`, `closed_at`, `close_reason`, `close_price_per_share`, `underlying_price_at_exit`, `iv_rank_at_exit`, `last_spread_value`.
+
+### `flag_positions` notable columns
+
+`id`, `symbol`, `status`, `entry_order_id`, `stop_loss_order_id`, `profit_target_order_id`, `entry_price`, `stop_loss_price`, `profit_target_price`, `shares`, `risk_amount`, `actual_entry_price`, `entry_slippage`, `highest_price_seen`, `lowest_price_seen`, `realized_pnl`, `r_multiple`, `mfe_r`, `mae_r`, `time_in_trade_seconds`, `flagpole_height`, `flag_retracement`, `channel_slope`, `atr_at_entry`, `vwap_at_entry`, `breakout_type`, `market_session`, `opened_at`, `closed_at`, `close_reason`.
 
 ---
 
 ## REST API
 
-Server on port 8081, context path `/options`. OpenAPI spec auto-generated from YAML specs in `openapi/` directory.
+Server port 8081, base path `/options`. OpenAPI JSON at `GET /options/v3/api-docs`.
+
+### Spread endpoints
+
+| Endpoint | Description |
+|---|---|
+| `GET /options/spreads` | List spreads (optional `?status=OPEN`) |
+| `GET /options/spreads/{id}` | Single spread by UUID |
+| `GET /options/spreads/analytics` | Win rate, P&L breakdown |
+| `POST /options/spreads/{id}/close` | Soft-close at mid (limit) |
+| `POST /options/spreads/{id}/close-force` | Force-close at market |
+| `POST /options/scanner/run` | Trigger scan immediately (202) |
+| `GET /options/scanner/status` | IV ranks, pause state, cron |
+| `POST /options/scanner/pause` / `resume` | Toggle new-entry scanner |
+| `POST /options/monitor/pause` / `resume` | Toggle automatic exit monitor |
+
+### Flag endpoints
+
+| Endpoint | Description |
+|---|---|
+| `GET /options/flags` | List flag positions (optional `?status=`) |
+| `GET /options/flags/{id}` | Single position by UUID |
+| `GET /options/flags/analytics` | Win rate, P&L, R-multiple breakdown |
+| `GET /options/flags/config` | Runtime trading config |
+| `PUT /options/flags/config` | Update runtime config |
+| `POST /options/flags/scanner/pause` / `resume` | Toggle flag scanner (persisted to DB) |
+| `POST /options/flags/{id}/close` | Manual close (PENDING: cancel orders; OPEN: cancel + market sell) |
+| `GET /options/flags/scanner/status` | Per-symbol: subscription active, buffered candles, pattern state |
+
+### Other
 
 | Endpoint | Description |
 |---|---|
 | `GET /options/health` | IBKR connection status |
-| `GET /options/account` | Account overview: capital, P&L, engine-tracked spreads, all IBKR positions |
-| `POST /options/scanner/run` | Fire-and-forget scan (returns 202) |
-| `GET /options/scanner/status` | IV rank snapshot, open spread count, pause state |
-| `POST /options/scanner/pause` | Pause new-entry scanner (no new trades opened) |
-| `POST /options/scanner/resume` | Resume new-entry scanner |
-| `POST /options/monitor/pause` | Pause spread exit monitor (no automatic closes) |
-| `POST /options/monitor/resume` | Resume spread exit monitor |
-| `GET /options/spreads?status=OPEN` | Stream open/all spreads |
-| `GET /options/spreads/{id}` | Single spread by UUID |
-| `POST /options/spreads/{id}/close` | Soft-close at mid price (limit orders) → `CLOSED_MANUAL` |
-| `POST /options/spreads/{id}/close-force` | Force-close at market price → `CLOSED_MANUAL` |
-
-OpenAPI docs (JSON) available at `GET /options/v3/api-docs` — Swagger UI is disabled due to a springdoc + Spring Boot 3.5.0 incompatibility (issue: pattern `/swagger-ui/**/*swagger-initializer.js` rejected by Spring Framework 6.2's stricter `PathPatternParser`).
+| `GET /options/account` | Account overview (capital, P&L, positions) |
+| `GET /options/universe` | Instrument universe list |
+| `POST /options/universe` | Add/update instrument |
+| `DELETE /options/universe/{symbol}` | Remove instrument |
+| `POST /options/api/backtest/flag` | Run flag backtest |
+| `POST /options/api/historical/fetch` | Fetch historical bars into InfluxDB |
 
 ---
 
-## Test Strategy
+## Frontend
 
-| Test type | Where | Notes |
-|---|---|---|
-| Unit tests with mocks | `src/test/kotlin/**/` | MockK for mocking; no Spring context |
-| Integration / backtest | `src/test/kotlin/cz/solvina/options/backtest/` | Full domain run against synthetic Black-Scholes priced option chains; no IBKR needed |
-| Live fixture fetch | `src/test/kotlin/cz/solvina/options/fixtures/FixtureFetchTest.kt` | `@Tag("tws")` — requires live TWS paper session; saves JSON/CSV fixtures for offline use |
+React/TypeScript SPA served by nginx from `/home/solvina/options/frontend/`. OpenAPI clients auto-generated under `src/generated/` per strategy API. All generated clients must have `baseUrl: '/api'` set in `main.tsx`.
 
-Run all non-TWS tests: `./gradlew test` (TWS tag excluded by default in `build.gradle.kts`).
+| Route | Description |
+|---|---|
+| `/spreads/positions` | Open/closed spread table with current price and unrealized P&L |
+| `/spreads/analytics` | Spread P&L charts and win-rate breakdown |
+| `/scanner` | Scanner config, IV rank snapshot, kill switches |
+| `/flags/positions` | Flag positions table + scanner config panel |
+| `/flags/analytics` | Flag P&L charts |
+| `/universe` | Instrument universe management |
+| `/account` | Account overview |
+| `/diagnostic` | IBKR connection probe |
+| `/grafana/` | Grafana log explorer (reverse-proxied) |
 
 ---
 
 ## Deployment
 
-Runs on a Raspberry Pi at `192.168.0.107`. Three processes:
+Runs on Raspberry Pi 4 at `192.168.0.107` / Tailscale IP `100.65.216.36`.
 
 | Process | How it runs |
 |---|---|
-| PostgreSQL 16 | Docker Compose (`docker-compose.rpi.yml`) |
-| IB Gateway | Docker Compose (`ghcr.io/gnzsnz/ib-gateway:stable`), paper account, port 7497 |
-| Spring Boot engine | systemd service `options-engine`, JAR at `~/options/engine.jar` |
-| React frontend | nginx, static files at `~/options/frontend/`, proxies `/api/` → `localhost:8081/options/` |
+| PostgreSQL 16 | Docker Compose (`options-db-1`) |
+| IB Gateway | Docker Compose (`options-ib-gateway-1`, `ghcr.io/gnzsnz/ib-gateway:stable`) |
+| InfluxDB | Docker Compose |
+| Loki / Grafana / Alloy | Docker Compose (log aggregation) |
+| Spring Boot engine | systemd `options-engine` (fat JAR, `-Xmx512m`) |
+| nginx | systemd — serves frontend, reverse-proxies `/api/` → engine |
 
-- `application-rpi.yml` Spring profile overrides IBKR host to `localhost` (gateway is co-located in Docker).
-- IBKR credentials in `~/options/.env.rpi`, loaded by `docker compose --env-file .env.rpi`.
-- Auto-reconnect watchdog handles IB Gateway daily restart (~23:45 ET).
-- Deploy with `./deploy.sh` from the dev machine (builds locally, uploads, restarts services).
-- App logs: `journalctl -fu options-engine`
+- `application-rpi.yml` Spring profile: IBKR host = `localhost`, `use-live-market-data=false` for delayed data.
+- IBKR credentials in `~/options/.env.rpi` (not in git). IB Gateway auto-restarts ~23:45 ET; engine reconnect watchdog handles it.
+- Deploy: `./deploy.sh` from dev machine (build → upload → restart).
+- Logs: `journalctl -fu options-engine`; structured trade events via named loggers `TRADES` (spreads) and `FLAG_TRADES` (flags).
+
+---
+
+## Test Strategy
+
+| Type | Location | Notes |
+|---|---|---|
+| Unit (mock) | `src/test/kotlin/**/` | MockK; no Spring context |
+| Domain-level | `src/test/kotlin/cz/solvina/options/spread/SpreadManagementServiceTest` | Tests exit logic against fixture data |
+| Flag backtest smoke | `src/test/kotlin/cz/solvina/options/backtest/BacktestSmokeTest` | Replays historical bars through `PatternDetector`, simulates bracket fills |
+| TWS fixture fetch | `src/test/kotlin/.../fixtures/FixtureFetchTest` | `@Tag("tws")`, requires live paper session, writes CSVs/JSON to `src/test/resources/fixtures/` |
+
+```bash
+./gradlew test          # all non-TWS tests
+./gradlew test -Dtests.tags=tws  # TWS fixture fetch (requires paper session)
+```

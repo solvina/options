@@ -1,6 +1,8 @@
 # Paper vs Live Account — Observed Differences and Expected Live Behavior
 
-> Written: 2026-05-13. Based on observations running against IBKR paper account DU7875979 via IB Gateway (Docker, stable image).
+> Written: 2026-05-13. Last reviewed: 2026-06-05.
+> Based on observations running against IBKR paper account DU7875979 via IB Gateway (Docker, stable image).
+> Current status: paper account with `use-live-market-data=false` (delayed data, type 3) in `application-rpi.yml` to avoid error 10189.
 
 ---
 

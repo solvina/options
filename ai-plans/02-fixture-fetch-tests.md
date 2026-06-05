@@ -2,7 +2,7 @@
 
 ## Status
 
-**IMPLEMENTED** — `./gradlew compileTestKotlin` passes.
+**IMPLEMENTED**. Last reviewed: 2026-06-05. Note: watchlist now includes NVDA (US) and EU symbols (ASML, SAP, SIE, ALV) — fixture files for these may need fetching separately. Core fixtures (SPY/QQQ/AAPL/MSFT) remain committed.
 
 ---
 

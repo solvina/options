@@ -2,6 +2,7 @@
 
 > This file is the single source of truth for an AI agent (Claude Code) operating directly on
 > the Raspberry Pi. Read this before touching anything.
+> Last verified: 2026-06-05.
 
 ---
 

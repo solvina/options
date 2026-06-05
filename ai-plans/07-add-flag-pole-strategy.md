@@ -1,75 +1,159 @@
-# Epic: Intraday Bull Flag Momentum Strategy Engine
-## Architectural Context & Constraints
-  * Target Environment: Interactive Brokers TWS API / Gateway (Socket-based infrastructure).
-  * We need to be restricted by free cash on the account. There are other orders on the account we only can risk 1% of the cash pool with one trade. 
-  * Trading limits need to store in the database, shown to the user. 
-  * We must not risk capital not in the account or is in other orders.
+# Bull Flag Momentum Strategy — Implementation Summary
 
-## User Story 1: Quantitative Pattern Identification & State Tracking
+> Status: **IMPLEMENTED**. Last updated: 2026-06-05.
+> This document reflects the delivered system, not the original spec.
 
-As an Algorithmic Strategy Developer,
-I want to build an in-memory data aggregation pipeline and pattern-matching engine.
-So that I can quantitatively identify valid Bull Flag setups on liquid equities without visual charts.
-Acceptance Criteria:
-  * Data Stream Ingestion:
-    * The system must boot by pulling 3 days of historical data (reqHistoricalData) to calculate baseline metrics.
-    * The system must subscribe to live trading streams via reqRealTimeBars to receive pre-computed 5-second OHLCV bars (mitigating raw tick data conflation/gaps).
-  * Local Bar Construction:
-    * The ingestion loop must aggregate exactly sixty (60) 5-second bars in-memory to build an accurate, un-delayed 5-minute candle.
-    * Make sure that those 60 bars are realy consistent with the 5-second bar stream.
-      * Log, or alert if there are any discrepancies.
-  * Flagpole (Momentum) Logic:
-    * Detect a sharp vertical price expansion over 5–10 candles where the move is greater than 2×ATR (Average True Range).
-    * Confirm institutional volume spikes where Volume is greater than 1.5×Moving Average Volume (20).
-  * Flag (Consolidation) Logic:
-    * Track a horizontal or downward-sloping consolidation channel over 5–20 bars using a linear regression line fit through candle highs and lows.
-    * Validate that the retracement does not exceed 38.2% to 50% of the vertical flagpole height.
-    * Confirm that volume visibly dries up below the 20-period moving average during consolidation.
+---
 
-## User Story 2: Execution & Server-Side Risk Management
-As an Algorithmic Execution Engine,
-I want to calculate precise risk-adjusted position sizes and route native server-side bracket orders,
-So that I can protect capital and maximize the mathematical expectancy of the strategy.
+## What Was Built
 
-Acceptance Criteria:
-  * Dynamic Position Sizing:
-    * The system must query AvailableFunds prior to order routing.
-    * Risk per trade (1R) must be hard-capped at $200 (1% of the $20,000 cash pool).
-    * Calculate exact share sizes dynamically using the formula:
-        Shares=$100/(Breakout price - Stop loss price)
+An intraday bull-flag momentum strategy engine running as a second independent strategy inside the same Spring Boot process as the bull put spread scanner. It subscribes to 5-second IBKR real-time bars, aggregates them into 5-minute candles, detects flag-and-pole breakouts, and executes bracket (OCA) orders with full trade journaling.
 
-  * Order Structure & Routing:
-    * The strategy must trigger an entry the exact second a live 5-second bar close crosses above the calculated flag upper resistance line.
-    * Order must be sent as a native TWS Bracket / One-Cancels-All (OCA) structure to guarantee server-side management.
-    * Parent Order: Stop Market or Stop Limit order to enter on breakout.
-    * Child 1 (Stop Loss): Stop Market order placed just below the lowest point of the flag consolidation channel (Max loss capped at $100 + slippage friction).
-    * Child 2 (Profit Target): Limit order set at a strict 1:2 Reward-to-Risk ratio (Targeting a net +$200 gain).
+---
 
-## User Story 3: Time-Based Session Filtering (The Guardrails)
-As a System Architect,
-I want to enforce strict temporal gates on order entry and position lifecycles,
+## Key Components
 
-So that the engine eliminates late-day friction and completely avoids catastrophic overnight gap risk.
-Acceptance Criteria:
-RTH Focus: Enforce execution strictly within Regular Trading Hours on each exchange.
- * Afternoon Entry Block:
-   * Program an entry restriction gate: if (currentTime >= (exchnage.close - 2hrs)) { allowNewEntries = false; }
-   * This limits noise and ensures trades have a multi-hour window to naturally reach their 1:2 targets.
- * EOD Auto-Liquidation Handshake:
-   * If a trade is still open and grinding sideways at (exchange.close - 15min), the engine must automatically cancel all remaining child bracket orders and issue an immediate Market Close order.
-   * This completely immunizes us from overnight gap-downs and margin interest borrowing decay.
+### Bar pipeline
 
-## User story 4:
-As a user I want to be able to see the strategy in action.
-So that I can validate the strategy's performance and identify potential gaps in real time use in our web ui.
-  * I want to see all the orders and their status in real time.
-  * I want to see the current position and its status in real time.
+```
+reqRealTimeBars (5-sec bars, useRTH=true)
+  → IbkrMarketDataRegistry.onRealtimeBar()
+  → RealTimeBarsPort.streamBars(symbol) [callbackFlow]
+  → FlagScannerService.subscribe() [per-symbol coroutine]
+       ├── BarAggregator: accumulates 60 × 5-sec bars → FiveMinuteBar
+       ├── BarBuffer: circular buffer of completed 5-min bars
+       └── PatternDetector: stateful FSM per symbol
+```
 
+Historical bootstrap (on startup): `equityHistoricalBarsPort.fetch5MinBars(symbol, 3 days)` fetches 5-min bars via `reqHistoricalData("5 mins", "TRADES")` and replays them through the detector to prime the FSM before live bars arrive.
 
-## Developer Statistical Benchmark for Unit/Backtesting
-When backtesting or validating this engine over a 100-trade sample size, the developer should expect a statistically sound but visually "low" win-rate environment due to false breakout noise:
-* Target Win Rate: ~42% to 46% 
-* Expected Average Winner: +$195 (Net of $5 commissions/slippage)
-* Expected Average Loser: -$105 (Net of $5 commissions/slippage)
-* Expected Forced 3:45 PM Cuts: ~6% to 8% of trades averaging a small -$15 scratch loss.
-* Target 100-Trade P&L Output: +$2,820 (Below Average Edge) to +$3,840 (Average Edge). The code must run flawlessly through losing streaks without human intervention to let this risk asymmetry compound.
+### Pattern FSM (`PatternDetector`)
+
+Four states: `Idle → FlagpoleDetected → FlagForming → BreakoutReady`.
+
+Transition logic:
+- **Idle → FlagpoleDetected**: scan last `poleMaxBars` (10) candles for any start/end pair where `endBar.high − startBar.low ≥ atrMultiplier × ATR(14)` AND at least one bar has `volume > volumeSpikeMultiplier × VolumeMA(20)`.
+- **FlagpoleDetected → FlagForming**: wait for ≥ `flagMinBars` (5) post-pole bars; compute linear regression on highs/lows; check retracement ≤ 50%; check channel slope ≤ 0.
+- **FlagForming → BreakoutReady**: `newBar.close > upperResistance.valueAt(flagBarIndex)`. Also checked on every raw 5-sec bar (`checkBreakoutOnLiveBar`) for sub-candle precision. Breakout type stored: "FIVE_MIN" or "LIVE_BAR".
+
+Reset conditions: retracement > 50%, flag exceeds 20 bars, upper slope rising, manual reset after entry.
+
+### Entry quality filters (applied in `maybeEnter`)
+
+| Filter | Condition |
+|---|---|
+| Scanner paused | `config.enabled == false` → reset detector |
+| Entry block | within `entryBlockMinutesBeforeClose` (120 min) of session close → reset |
+| First-bar skip | `minutesSinceOpen < skipFirstRthMinutes` (90) → reset |
+| Channel slope | if `requireNegativeChannelSlope=true` and `slope ≥ 0` → reset |
+| Pole/ATR ratio | not in `[minFlagpoleAtrMultiple, maxFlagpoleAtrMultiple]` = [2.0, 4.0] → reset |
+| Retracement | `abs(retracement) < minFlagRetracementPct` (25%) → reset |
+| Flag bars | `flag.bars.size < minFlagBarsForEntry` (7) → reset |
+| Max open positions | `entryMutex` serialises read + write; `open + pending ≥ maxOpenPositions` → reset |
+
+### Execution (`FlagExecutionService`)
+
+```kotlin
+shares = floor(riskPerTrade / (entryPrice - stopLossPrice)).coerceAtLeast(1)
+profitTarget = entryPrice + 2 × (entryPrice - stopLossPrice)
+```
+
+Bracket order: stop-market parent (`DAY`), stop-market SL child + limit PT child (both `GTC`, OCA group).
+
+After placing the bracket, the service launches a background coroutine that:
+1. Awaits parent fill (up to 10h).
+2. On fill: records `actualEntryPrice`, computes `entrySlippage`, updates status to OPEN.
+3. Launches two parallel coroutines watching SL and PT fills. Whichever completes first wins; the other is cancelled by OCA.
+4. On close: computes MAE, MFE, R-multiple, MFE-R, MAE-R, time-in-trade. Updates `FlagPosition`.
+
+### EOD liquidation (`FlagMonitorScheduler` + `FlagManagementService`)
+
+Every 60 seconds, `FlagMonitorScheduler` checks both EU (17:30 Berlin) and US (16:00 ET) close times. When `minuteOfDay ≥ closeMinute - eodLiqMinutesBeforeClose`:
+1. Cancel SL and PT bracket children.
+2. Market SELL open equity position (`submitMarketSell`).
+3. Best-effort price capture for realized P&L.
+4. Status → `CLOSED_EOD`.
+
+### Watermark tracking
+
+Every 5-sec bar from a subscribed symbol triggers `flagManagementService.updateWatermarksForSymbol(symbol, barClose)`. This updates `highestPriceSeen` / `lowestPriceSeen` on any currently OPEN position for that symbol — used for MAE/MFE computation at close.
+
+---
+
+## Watchlist Management
+
+- Configured in `application.yml`: `flag.us-watchlist` / `flag.eu-watchlist`.
+- Subscriptions start at `ApplicationReadyEvent`. Only markets currently open at startup subscribe immediately.
+- Resubscription crons: `0 1 9 * * MON-FRI` (EU, Berlin TZ) and `0 31 9 * * MON-FRI` (US, ET).
+- 5-minute watchdog `watchdogCheck()` detects symbols whose last bar is > 10 min old and resubscribes.
+- Hot-subscribe API (`subscribeSymbol(symbol, session)`) for runtime additions.
+
+---
+
+## Trade Journal Fields Stored per Position
+
+### At entry
+`flagpoleHeight`, `flagRetracement`, `flagBarCount`, `flagpoleBarCount`, `flagpoleAvgVolume`, `flagAvgVolume`, `channelSlope`, `atrAtEntry`, `volumeMaAtEntry`, `flagpoleVolumeRatio`, `vwapAtEntry`, `dayOpenPrice`, `breakoutType`, `stopDistancePct`, `marketSession`, `minutesToClose`
+
+### At execution
+`actualEntryPrice`, `entrySlippage`
+
+### During trade (updated on each 5-sec bar)
+`highestPriceSeen`, `lowestPriceSeen`
+
+### At close
+`maxFavorableExcursion`, `maxAdverseExcursion`, `rMultiple`, `mfeR`, `maeR`, `timeInTradeSeconds`
+
+---
+
+## Database
+
+Table: `flag_positions`. All columns above as `NUMERIC` / `INT` / `TIMESTAMP WITH TIME ZONE`.
+
+Table: `flag_trading_config` (single row, id=1):
+- `risk_per_trade`, `max_open_positions`, `entry_block_minutes_before_close`, `eod_liq_minutes_before_close`, `enabled`
+- Managed by Liquibase; runtime editable via `PUT /options/flags/config`.
+
+---
+
+## REST API (flags)
+
+| Endpoint | Description |
+|---|---|
+| `GET /options/flags` | Paginated list; `?status=OPEN\|PENDING\|CLOSED_*` |
+| `GET /options/flags/{id}` | Single position |
+| `GET /options/flags/analytics` | Win rate, avg R, MAE/MFE distribution |
+| `GET /options/flags/config` | Runtime config |
+| `PUT /options/flags/config` | Update config (riskPerTrade, maxOpenPositions, enabled, etc.) |
+| `POST /options/flags/scanner/pause` | Set `enabled=false` in DB |
+| `POST /options/flags/scanner/resume` | Set `enabled=true` in DB |
+| `POST /options/flags/{id}/close` | Manual close |
+| `GET /options/flags/scanner/status` | Per-symbol bar subscription + pattern state |
+
+---
+
+## IBKR Quirks for Flag Strategy
+
+- `reqRealTimeBars` requires a live streaming market data subscription for the stock's primary exchange. EU symbols (ASML/SAP/SIE/ALV on XETRA/AEB) will fail with error 420 on a paper account without the relevant subscription — silently skipped, logged as WARN.
+- `useRTH=true` means bars only arrive during regular trading hours; streams go quiet at session close and resume the next trading day.
+- After IBKR reconnect, bar subscriptions should resume automatically via the `onEuMarketOpen`/`onUsMarketOpen` crons. If not, restart the engine.
+
+---
+
+## Original User Story Checklist vs Delivered
+
+| Requirement | Delivered |
+|---|---|
+| 5-sec bar aggregation to 5-min candles | Yes — `BarAggregator` |
+| Flagpole: ≥ 2×ATR, volume spike > 1.5×MA | Yes — `PatternDetector.detectPole()` |
+| Flag: ≤ 50% retracement, ≤ 20 bars, volume drying | Yes — regression channel, retracement guard |
+| Breakout entry on bar close above resistance | Yes — both 5-min and sub-candle 5-sec |
+| Bracket/OCA order with stop-loss + profit target | Yes — `IbkrBracketOrderAdapter` |
+| Position sizing from risk per trade | Yes — `shares = riskPerTrade / stopDistance` |
+| Entry block 2h before close | Yes — `entryBlockMinutesBeforeClose` (configurable) |
+| EOD liquidation 15 min before close | Yes — `eodLiqMinutesBeforeClose` (configurable) |
+| Real-time UI | Yes — `/flags/positions` with scanner status panel |
+| Kill switch persisted to DB | Yes — `flag_trading_config.enabled` |
+| 1% capital risk cap | Yes — `riskPerTrade` in config (runtime-editable) |
+| Historical bootstrap | Yes — 3-day 5-min bar replay at startup |
+| Trade journaling: MAE/MFE, R-multiple, slippage | Yes — full `FlagPosition` journal |

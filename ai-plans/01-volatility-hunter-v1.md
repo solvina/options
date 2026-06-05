@@ -1,8 +1,11 @@
 # Volatility Hunter v1.0 — Implementation Plan
 
+> **Historical document** — this was the original build plan. For current state, see `00-application-description.md`.
+> Key divergences from this plan: stop-loss is now 1× credit (not 50% of max risk); BAG/combo orders replaced sequential legs; `ScanCandidateSelector` extracted from `ScannerService`; `UniversePort` replaced `WatchlistPort`; universe is DB-backed (not in-memory); per-instrument parameter overrides added; flag strategy added; EU symbols supported; InfluxDB added.
+
 ## Status
 
-**IMPLEMENTED** — `./gradlew build` passes. Pending: startup PENDING-order cancellation (see Phase 9).
+**IMPLEMENTED** — superseded by current architecture. See `00-application-description.md` for current state.
 
 ---
 
