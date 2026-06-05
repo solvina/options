@@ -12,8 +12,10 @@ import jakarta.annotation.PostConstruct
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.springframework.stereotype.Component
+import java.time.DayOfWeek
 import java.time.LocalTime
 import java.time.ZoneId
+import java.time.ZonedDateTime
 import java.util.concurrent.ConcurrentHashMap
 
 @Component
@@ -31,6 +33,18 @@ class UniversePersistenceAdapter(
     override fun getWatchlist(): List<Symbol> = cache.values.filter { it.enabled }.map { it.symbol }
 
     override fun getActiveSymbols(): List<Symbol> = getWatchlist().filter { isMarketOpen(it) }
+
+    override fun isMarketOpen(symbol: Symbol): Boolean {
+        val def = instrumentsConfig.instruments[symbol.value] ?: InstrumentDef()
+        val hours = instrumentsConfig.exchanges[def.marketExchange] ?: US_HOURS
+        val zone = ZoneId.of(hours.timezone)
+        val now = ZonedDateTime.now(zone)
+        if (now.dayOfWeek == DayOfWeek.SATURDAY || now.dayOfWeek == DayOfWeek.SUNDAY) return false
+        val time = now.toLocalTime()
+        val open = LocalTime.parse(hours.open)
+        val close = LocalTime.parse(hours.close)
+        return !time.isBefore(open) && time.isBefore(close)
+    }
 
     override suspend fun getAll(): List<InstrumentConfig> =
         withContext(Dispatchers.IO) {
@@ -54,16 +68,6 @@ class UniversePersistenceAdapter(
             repository.deleteById(symbol.value)
             cache.remove(symbol.value)
         }
-    }
-
-    private fun isMarketOpen(symbol: Symbol): Boolean {
-        val def = instrumentsConfig.instruments[symbol.value] ?: InstrumentDef()
-        val hours = instrumentsConfig.exchanges[def.marketExchange] ?: US_HOURS
-        val zone = ZoneId.of(hours.timezone)
-        val now = LocalTime.now(zone)
-        val open = LocalTime.parse(hours.open)
-        val close = LocalTime.parse(hours.close)
-        return !now.isBefore(open) && now.isBefore(close)
     }
 
     private fun InstrumentUniverseEntity.toDomain() =

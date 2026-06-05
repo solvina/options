@@ -44,11 +44,13 @@ class OrderChaseService(
                     }
 
             val timeoutMs = config.orderChaseTimeoutMinutes * 60_000L
+            var cancelledByTimeout = false
             val status =
                 try {
                     withTimeout(timeoutMs) { deferred.await() }
                 } catch (e: TimeoutCancellationException) {
                     logger.info { "Order $orderId timed out after ${config.orderChaseTimeoutMinutes}min, cancelling" }
+                    cancelledByTimeout = true
                     cancelAndWait(orderId)
                     OrderStatus.CANCELLED
                 }
@@ -57,6 +59,10 @@ class OrderChaseService(
                 logger.info { "Order $orderId filled at price $price" }
                 return LegOrder(orderId, OrderStatus.FILLED)
             }
+
+            // If the order failed-fast (e.g. code 399 after-hours completes deferred immediately),
+            // the timeout path didn't run, so cancel the IBKR order now before repricing.
+            if (!cancelledByTimeout) cancelAndWait(orderId)
 
             if (attempt < config.orderChaseMaxRetries) {
                 price =

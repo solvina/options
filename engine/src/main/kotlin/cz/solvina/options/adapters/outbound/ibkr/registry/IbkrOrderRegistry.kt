@@ -53,9 +53,11 @@ class IbkrOrderRegistry {
         // 201 = order rejected, 202 = order cancelled — business outcomes, not technical failures.
         // Paper-account "guaranteed-to-lose" limit is expected and logged at WARN.
         // Any other 201 (permissions, risk limits, etc.) is unexpected and logged at ERROR.
-        // 399 = "order will not be placed until market opens" — just a timing warning; order is queued
+        // 399 = order queued for next market open. Fail-fast so the chase exits immediately;
+        // the caller (OrderChaseService) will cancel the queued order and not reprice.
         if (code == 399) {
-            logger.info { "Order $id after-hours warning [code=399]: $msg" }
+            logger.warn { "Order $id queued for after-hours [code=399] — failing fast to avoid stale overnight fill" }
+            pendingOrderStatus.remove(id)?.complete(OrderStatus.CANCELLED)
             return
         }
         if (code == 201 || code == 202) {

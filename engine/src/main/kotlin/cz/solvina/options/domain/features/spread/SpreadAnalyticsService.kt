@@ -61,7 +61,7 @@ class SpreadAnalyticsService(
         val cumulativePnl: BigDecimal,
     )
 
-    private val closedStatuses =
+    private val terminalStatuses =
         setOf(
             SpreadStatus.CLOSED_PROFIT,
             SpreadStatus.CLOSED_STOP,
@@ -71,8 +71,8 @@ class SpreadAnalyticsService(
 
     suspend fun compute(): Analytics {
         val all = spreadPort.findAll()
-        val closed = all.filter { it.status in closedStatuses && it.closePricePerShare != null && it.closedAt != null }
-        val open = all.filter { it.status == SpreadStatus.OPEN }
+        val closed = all.filter { it.status in terminalStatuses && it.closePricePerShare != null && it.closedAt != null }
+        val open = all.filter { it.status == SpreadStatus.OPEN || it.status == SpreadStatus.CLOSING }
 
         val winRate =
             if (closed.isEmpty()) {
@@ -93,7 +93,7 @@ class SpreadAnalyticsService(
         return Analytics(
             summary =
                 Summary(
-                    totalTrades = all.size,
+                    totalTrades = closed.size + open.size,
                     openTrades = open.size,
                     winRate = winRate,
                     totalRealizedPnl = totalPnl,

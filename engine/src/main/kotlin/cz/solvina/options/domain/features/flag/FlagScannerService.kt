@@ -7,6 +7,7 @@ import cz.solvina.options.domain.features.bars.BarStorePort
 import cz.solvina.options.domain.features.bars.EquityHistoricalBarsPort
 import cz.solvina.options.domain.features.bars.RealTimeBarsPort
 import cz.solvina.options.domain.features.bars.VolumeAnalysis
+import cz.solvina.options.domain.features.connection.status.ConnectionStatusPort
 import cz.solvina.options.domain.features.flag.FlagExecutionService.ExecutionRequest
 import cz.solvina.options.domain.features.flag.config.FlagStrategyConfig
 import cz.solvina.options.domain.features.flag.config.FlagTradingConfig
@@ -38,6 +39,8 @@ import cz.solvina.options.domain.features.flag.model.FlagStatus
 
 private val logger = KotlinLogging.logger {}
 
+private const val STALE_BAR_MINUTES = 10L
+
 @Service
 class FlagScannerService(
     private val realTimeBarsPort: RealTimeBarsPort,
@@ -48,6 +51,7 @@ class FlagScannerService(
     private val flagTradingConfigPort: FlagTradingConfigPort,
     private val barStorePort: BarStorePort,
     private val strategyConfig: FlagStrategyConfig,
+    private val connectionStatusPort: ConnectionStatusPort,
     private val scope: CoroutineScope,
     private val clock: Clock,
 ) {
@@ -95,6 +99,33 @@ class FlagScannerService(
 
     @Scheduled(cron = "0 31 9 * * MON-FRI", zone = "America/New_York")
     fun onUsMarketOpen() = resubscribeWatchlist(strategyConfig.usWatchlist, "US open resubscription")
+
+    // Runs every 5 minutes. Detects symbols whose last bar is older than STALE_BAR_MINUTES during
+    // market hours and resubscribes them — handles silent IBKR subscription drops.
+    @Scheduled(fixedDelay = 5 * 60 * 1000)
+    fun watchdogCheck() {
+        if (!connectionStatusPort.isConnected()) return
+        val now = ZonedDateTime.now(clock)
+        if (!isEuMarketOpen(now) && !isUsMarketOpen(now)) return
+
+        val staleThreshold = Instant.now(clock).minus(STALE_BAR_MINUTES, ChronoUnit.MINUTES)
+        val stale = subscriptions.keys.filter { symbol ->
+            val lastBar = buffers[symbol]?.snapshot()?.lastOrNull()
+            val jobActive = subscriptions[symbol]?.isActive == true
+            // Stale: job alive but no bar received within the staleness window.
+            // A dead job is handled by onEuMarketOpen/onUsMarketOpen; we only resubscribe
+            // jobs that are still alive (from Kotlin's perspective) but IBKR stopped sending.
+            jobActive && (lastBar == null || lastBar.time.isBefore(staleThreshold))
+        }
+
+        if (stale.isEmpty()) return
+        logger.warn { "Flag scanner watchdog: ${stale.map { it.value }} appear stale (no bar in ${STALE_BAR_MINUTES}min) — resubscribing" }
+        stale.forEach { symbol ->
+            subscriptions[symbol]?.cancel()
+            subscriptions.remove(symbol)
+            subscribe(symbol)
+        }
+    }
 
     private fun resubscribeWatchlist(watchlist: List<String>, reason: String) {
         val symbols = watchlist.map { Symbol(it) }

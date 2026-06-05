@@ -7,6 +7,9 @@ interface UniversePort {
 
     fun getActiveSymbols(): List<Symbol>
 
+    /** Returns true if the underlying exchange for [symbol] is currently within regular trading hours. */
+    fun isMarketOpen(symbol: Symbol): Boolean
+
     suspend fun getAll(): List<InstrumentConfig>
 
     suspend fun get(symbol: Symbol): InstrumentConfig?

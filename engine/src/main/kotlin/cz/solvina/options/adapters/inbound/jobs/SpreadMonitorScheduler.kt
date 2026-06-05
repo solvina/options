@@ -1,5 +1,6 @@
 package cz.solvina.options.adapters.inbound.jobs
 
+import cz.solvina.options.adapters.outbound.ibkr.IbkrInstrumentsConfig
 import cz.solvina.options.domain.features.connection.status.ConnectionStatusPort
 import cz.solvina.options.domain.features.scanner.TradingKillSwitch
 import cz.solvina.options.domain.features.spread.SpreadManagementService
@@ -11,18 +12,19 @@ import kotlinx.coroutines.launch
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 import java.time.DayOfWeek
+import java.time.LocalTime
 import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.util.concurrent.atomic.AtomicBoolean
 
 private val logger = KotlinLogging.logger {}
-private val BERLIN = ZoneId.of("Europe/Berlin")
 
 @Component
 class SpreadMonitorScheduler(
     private val spreadManagementService: SpreadManagementService,
     private val connectionStatusPort: ConnectionStatusPort,
     private val killSwitch: TradingKillSwitch,
+    private val instrumentsConfig: IbkrInstrumentsConfig,
 ) {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val running = AtomicBoolean(false)
@@ -37,8 +39,8 @@ class SpreadMonitorScheduler(
             logger.debug { "Spread monitor skipped: IBKR not connected" }
             return
         }
-        if (!isMarketHours()) {
-            logger.debug { "Spread monitor skipped: outside market hours" }
+        if (!isAnyExchangeOpen()) {
+            logger.debug { "Spread monitor skipped: no exchange currently open" }
             return
         }
         if (!running.compareAndSet(false, true)) {
@@ -55,12 +57,12 @@ class SpreadMonitorScheduler(
         }
     }
 
-    private fun isMarketHours(): Boolean {
-        val now = ZonedDateTime.now(BERLIN)
-        val dow = now.dayOfWeek
-        if (dow == DayOfWeek.SATURDAY || dow == DayOfWeek.SUNDAY) return false
-        val minuteOfDay = now.hour * 60 + now.minute
-        // EU opens 09:00 Berlin; US closes 16:00 ET = 22:00 CEST (use 22:30 for safety margin)
-        return minuteOfDay in (9 * 60)..(22 * 60 + 30)
-    }
+    private fun isAnyExchangeOpen(): Boolean =
+        instrumentsConfig.exchanges.values.any { hours ->
+            val zone = ZoneId.of(hours.timezone)
+            val now = ZonedDateTime.now(zone)
+            if (now.dayOfWeek == DayOfWeek.SATURDAY || now.dayOfWeek == DayOfWeek.SUNDAY) return@any false
+            val time = now.toLocalTime()
+            !time.isBefore(LocalTime.parse(hours.open)) && time.isBefore(LocalTime.parse(hours.close))
+        }
 }

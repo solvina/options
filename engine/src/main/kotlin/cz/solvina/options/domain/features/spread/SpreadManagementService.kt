@@ -111,17 +111,24 @@ class SpreadManagementService(
             return
         }
 
-        if (openSpreads.isNotEmpty()) {
-            logger.info { "Checking exits for ${openSpreads.size} open spread(s)" }
-            for (spread in openSpreads) {
+        val tradableOpen = openSpreads.filter { universePort.isMarketOpen(it.symbol) }
+        val tradableClosing = closingSpreads.filter { universePort.isMarketOpen(it.symbol) }
+        val skipped = (openSpreads.size - tradableOpen.size) + (closingSpreads.size - tradableClosing.size)
+        if (skipped > 0) {
+            logger.debug { "Skipped $skipped spread(s): exchange not in regular trading hours" }
+        }
+
+        if (tradableOpen.isNotEmpty()) {
+            logger.info { "Checking exits for ${tradableOpen.size} open spread(s)" }
+            for (spread in tradableOpen) {
                 runCatching { checkSpreadExit(spread) }
                     .onFailure { e -> logger.error(e) { "[${spread.symbol}] Error checking spread exit: ${e.message}" } }
             }
         }
 
-        if (closingSpreads.isNotEmpty()) {
-            logger.info { "Retrying close for ${closingSpreads.size} stuck CLOSING spread(s)" }
-            for (spread in closingSpreads) {
+        if (tradableClosing.isNotEmpty()) {
+            logger.info { "Retrying close for ${tradableClosing.size} stuck CLOSING spread(s)" }
+            for (spread in tradableClosing) {
                 runCatching { retryClose(spread) }
                     .onFailure { e -> logger.error(e) { "[${spread.symbol}] Error retrying close: ${e.message}" } }
             }
@@ -135,12 +142,12 @@ class SpreadManagementService(
                 ?.getOrNull()
                 ?.takeIf { it != SpreadStatus.CLOSING }
                 ?: SpreadStatus.CLOSED_MANUAL
-        logger.info { "[${spread.symbol}] Retrying close (target=$targetStatus closeReason=${spread.closeReason})" }
+        logger.info { "[${spread.symbol}] Market-closing stuck CLOSING spread (target=$targetStatus)" }
         val soldMid = marketDataPort.getOptionMid(spread.soldLeg.contract)
         val boughtMid = marketDataPort.getOptionMid(spread.boughtLeg.contract)
         val currentSpreadValue = soldMid.amount.subtract(boughtMid.amount)
         val exitContext = captureExitContext(spread)
-        closeSpread(spread, targetStatus, soldMid, boughtMid, currentSpreadValue, exitContext)
+        forceCloseSpread(spread, currentSpreadValue, targetStatus, targetStatus.name, exitContext)
     }
 
     private suspend fun checkSpreadExit(spread: BullPutSpread) {
@@ -185,8 +192,8 @@ class SpreadManagementService(
         val (closeStatus, reason) = exitSignal
         val exitContext = captureExitContext(spread)
 
-        logger.info { "[${spread.symbol}] Closing spread — $reason" }
-        closeSpread(spread, closeStatus, soldMid, boughtMid, currentSpreadValue, exitContext)
+        logger.info { "[${spread.symbol}] Closing spread at market — $reason" }
+        forceCloseSpread(spread, currentSpreadValue, closeStatus, reason, exitContext)
     }
 
     private suspend fun captureExitContext(spread: BullPutSpread): Pair<BigDecimal?, BigDecimal?> {
