@@ -40,7 +40,9 @@ import java.time.LocalDate
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.async
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -563,4 +565,97 @@ class TradeExecutionServiceTest {
             underlyingPriceAtEntry = BigDecimal("500"),
             openedAt = java.time.Instant.now(),
         )
+
+    // -------------------------------------------------------------------------
+    // Fee deduction
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `net credit deducts IBKR fees for both legs from the gross fill price`() =
+        runTest {
+            // IBKR charges $0.65 per contract. A spread has 2 legs → 2 × $0.65 / 100 = $0.013 per share.
+            // Gross fill at $1.00 → net credit = $1.00 − $0.013 = $0.987.
+            val fillChannel = Channel<OrderStatus>(1)
+            val service = buildService(
+                marketTickPort = fixedMarketTickPort(500.0, flow {}),
+                orderExecutionPort = immediateComboOrderPort(fillChannel) { _, _, _ ->
+                    fillChannel.send(OrderStatus.FILLED)
+                },
+                config = baseConfig.copy(feePerContract = BigDecimal("0.65")),
+            )
+
+            val result = service.execute(buildRequest(targetCredit = BigDecimal("1.00")))
+
+            assertEquals(ExecutionOutcome.FILLED, result.outcome)
+            assertEquals(
+                0,
+                BigDecimal("0.9870").compareTo(result.creditAchieved),
+                "Net credit must be gross($1.00) − fees(2×$0.65/100=$0.013) = $0.987",
+            )
+        }
+
+    // -------------------------------------------------------------------------
+    // Entry cooldown
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `blockEntry makes the symbol ineligible for new entries until the duration expires`() =
+        runTest {
+            val service = buildService(
+                marketTickPort = fixedMarketTickPort(500.0, flow {}),
+                orderExecutionPort = neverFillOrderPort(),
+            )
+
+            assertFalse(service.isCoolingDown(symbol), "Symbol should be eligible before any block")
+            service.blockEntry(symbol, java.time.Duration.ofHours(2))
+            assertTrue(service.isCoolingDown(symbol), "Symbol must be ineligible while the block is active")
+        }
+
+    @Test
+    fun `entry cooldown is applied after a timed-out execution`() =
+        runTest {
+            val service = buildService(
+                marketTickPort = fixedMarketTickPort(500.0, flow {}),
+                orderExecutionPort = neverFillOrderPort(),
+                config = baseConfig.copy(executionTimeoutMinutes = 1, entryCooldownMinutes = 60),
+            )
+
+            assertFalse(service.isCoolingDown(symbol))
+
+            val resultDeferred = backgroundScope.async { service.execute(buildRequest()) }
+            advanceTimeBy(baseConfig.executionTimeoutMinutes * 60_000 + 1)
+            val result = resultDeferred.await()
+
+            assertEquals(ExecutionOutcome.TIMED_OUT, result.outcome)
+            assertTrue(service.isCoolingDown(symbol), "Symbol must be blocked after a timeout to avoid hammering the same strike")
+        }
+
+    @Test
+    fun `entry cooldown is applied after the credit floor is reached`() =
+        runTest {
+            // All order replacements are forced to the floor immediately by the timer ladder.
+            // Once the floor is hit the service cancels and applies the cooldown.
+            val service = buildService(
+                marketTickPort = fixedMarketTickPort(500.0, flow {}),
+                orderExecutionPort = neverFillOrderPort(),
+                config = baseConfig.copy(
+                    executionTimeoutMinutes = 5,
+                    entryCooldownMinutes = 60,
+                    priceAdjustIntervalSeconds = 1,
+                ),
+            )
+
+            assertFalse(service.isCoolingDown(symbol))
+
+            val resultDeferred = backgroundScope.async {
+                // floor=$0.50, start=$1.00; ladder steps by $0.05 each timer tick → hits floor after ~10 ticks
+                service.execute(buildRequest(targetCredit = BigDecimal("0.60"), floorCredit = BigDecimal("0.50")))
+            }
+            // Advance enough ticks for the price to ladder down to the floor
+            repeat(15) { advanceTimeBy(1_000) }
+            val result = resultDeferred.await()
+
+            assertEquals(ExecutionOutcome.FLOOR_REACHED, result.outcome)
+            assertTrue(service.isCoolingDown(symbol), "Symbol must be blocked after the credit floor is reached")
+        }
 }

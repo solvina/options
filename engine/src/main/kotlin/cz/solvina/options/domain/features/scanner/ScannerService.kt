@@ -28,9 +28,9 @@ class ScannerService(
     private val spreadPort: SpreadPort,
     private val config: ScannerConfig,
     private val clock: Clock,
+    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
 ) : ScannerPort {
     private val ivRanksSnapshot = ConcurrentHashMap<String, Double>()
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     @Volatile private var lastRunAt: Instant? = null
 

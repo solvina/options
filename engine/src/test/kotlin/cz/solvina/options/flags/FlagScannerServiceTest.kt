@@ -15,6 +15,7 @@ import cz.solvina.options.domain.models.Symbol
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
+import java.time.Clock
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -62,7 +63,9 @@ class FlagScannerServiceTest {
         flagTradingConfigPort = flagTradingConfigPort,
         barStorePort = barStorePort,
         strategyConfig = strategyConfig,
+        connectionStatusPort = mockk(relaxed = true),
         scope = testScope,
+        clock = Clock.systemUTC(),
     )
 
     // ─────────────────────────────────────────────────────────────────────────

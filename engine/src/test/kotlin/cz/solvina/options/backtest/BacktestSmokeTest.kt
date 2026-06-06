@@ -74,6 +74,8 @@ class BacktestSmokeTest {
 
                 override fun getActiveSymbols() = listOf(Symbol("SPY"))
 
+                override fun isMarketOpen(symbol: Symbol) = true
+
                 override suspend fun getAll(): List<InstrumentConfig> = listOf(InstrumentConfig(Symbol("SPY")))
 
                 override suspend fun get(symbol: Symbol): InstrumentConfig? = null
@@ -130,6 +132,7 @@ class BacktestSmokeTest {
                 orderPort = orderAdapter,
                 universePort = universePort,
                 volatilityPort = ivRankService,
+                executionPort = executionService,
                 config = config,
                 clock = clock,
             )
