@@ -12,13 +12,14 @@ import org.springframework.stereotype.Component
 class FlagConfigPersistenceAdapter(
     private val repository: FlagTradingConfigRepository,
 ) : FlagTradingConfigPort {
-
     override suspend fun get(): FlagTradingConfig =
         withContext(Dispatchers.IO) {
-            repository.findById(1L).orElseGet {
-                // Seed the default row if not present (should already be seeded by Liquibase)
-                repository.save(FlagTradingConfigEntity())
-            }.toDomain()
+            repository
+                .findById(1L)
+                .orElseGet {
+                    // Seed the default row if not present (should already be seeded by Liquibase)
+                    repository.save(FlagTradingConfigEntity())
+                }.toDomain()
         }
 
     override suspend fun update(config: FlagTradingConfig): FlagTradingConfig =

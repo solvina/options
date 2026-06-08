@@ -11,7 +11,10 @@ interface FlagPositionRepository : JpaRepository<FlagPositionEntity, UUID> {
 
     fun findAllByOrderByOpenedAtDesc(): List<FlagPositionEntity>
 
-    fun findByStatus(status: String, pageable: Pageable): Page<FlagPositionEntity>
+    fun findByStatus(
+        status: String,
+        pageable: Pageable,
+    ): Page<FlagPositionEntity>
 
     fun findAllBy(pageable: Pageable): Page<FlagPositionEntity>
 

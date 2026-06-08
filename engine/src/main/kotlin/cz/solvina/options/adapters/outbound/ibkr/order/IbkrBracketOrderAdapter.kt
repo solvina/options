@@ -29,7 +29,6 @@ class IbkrBracketOrderAdapter(
     private val contractFactory: IbkrContractFactory,
     private val connectionConfig: IbkrConnectionConfig,
 ) : BracketOrderPort {
-
     override suspend fun submitBracketOrder(
         symbol: Symbol,
         shares: Int,
@@ -53,7 +52,7 @@ class IbkrBracketOrderAdapter(
                 auxPrice(entryPrice.toDouble())
                 totalQuantity(qty)
                 tif("DAY")
-                transmit(false)  // hold — submit as a group
+                transmit(false) // hold — submit as a group
                 if (connectionConfig.account.isNotBlank()) account(connectionConfig.account)
             }
 
@@ -67,7 +66,7 @@ class IbkrBracketOrderAdapter(
                 tif("GTC")
                 parentId(entryId)
                 ocaGroup(ocaGroup)
-                ocaType(1)  // cancel other orders on fill
+                ocaType(1) // cancel other orders on fill
                 transmit(false)
                 if (connectionConfig.account.isNotBlank()) account(connectionConfig.account)
             }
@@ -83,7 +82,7 @@ class IbkrBracketOrderAdapter(
                 parentId(entryId)
                 ocaGroup(ocaGroup)
                 ocaType(1)
-                transmit(true)  // transmit the entire bracket
+                transmit(true) // transmit the entire bracket
                 if (connectionConfig.account.isNotBlank()) account(connectionConfig.account)
             }
 
@@ -93,7 +92,7 @@ class IbkrBracketOrderAdapter(
         registry.pendingOrderStatus[ptId] = CompletableDeferred()
 
         logger.info {
-            "[$symbol] Placing bracket order: entry=${entryPrice} SL=${stopLossPrice} PT=${profitTargetPrice} " +
+            "[$symbol] Placing bracket order: entry=$entryPrice SL=$stopLossPrice PT=$profitTargetPrice " +
                 "qty=$shares entryId=$entryId slId=$slId ptId=$ptId ocaGroup=$ocaGroup"
         }
 
@@ -145,7 +144,10 @@ class IbkrBracketOrderAdapter(
         return orderId
     }
 
-    private suspend fun awaitFill(orderId: Int, timeoutMs: Long): OrderStatus {
+    private suspend fun awaitFill(
+        orderId: Int,
+        timeoutMs: Long,
+    ): OrderStatus {
         val deferred = registry.pendingOrderStatus[orderId] ?: return OrderStatus.CANCELLED
         return try {
             withTimeout(timeoutMs) { deferred.await() }
@@ -158,7 +160,7 @@ class IbkrBracketOrderAdapter(
     }
 
     companion object {
-        private const val PARENT_TIMEOUT_MS = 10L * 3_600_000   // 10 h — one trading session
-        private const val CHILD_TIMEOUT_MS  = 30L * 24 * 3_600_000  // 30 days — GTC safety net
+        private const val PARENT_TIMEOUT_MS = 10L * 3_600_000 // 10 h — one trading session
+        private const val CHILD_TIMEOUT_MS = 30L * 24 * 3_600_000 // 30 days — GTC safety net
     }
 }

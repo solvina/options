@@ -1,5 +1,7 @@
 package cz.solvina.options.adapters.outbound.ibkr
 
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.SerializationFeature
 import com.ib.client.Bar
 import com.ib.client.CommissionReport
 import com.ib.client.Contract
@@ -33,8 +35,6 @@ import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrHistoricalDataRegi
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.TickByTickBidAsk
-import com.fasterxml.jackson.databind.ObjectMapper
-import com.fasterxml.jackson.databind.SerializationFeature
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.stereotype.Component
 import java.time.Instant
@@ -43,26 +43,51 @@ private val logger = KotlinLogging.logger {}
 private val twsRaw = KotlinLogging.logger("TWS_RAW")
 private val jsonMapper = ObjectMapper().disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
 
-private fun twsJson(type: String, vararg fields: Pair<String, Any?>): String {
+private fun twsJson(
+    type: String,
+    vararg fields: Pair<String, Any?>,
+): String {
     val map = linkedMapOf<String, Any?>("ts" to Instant.now().toString(), "type" to type)
     fields.forEach { (k, v) -> if (v != null) map[k] = v }
     return jsonMapper.writeValueAsString(map)
 }
 
-private fun tickFieldName(field: Int) = when (field) {
-    0 -> "BID_SIZE"; 1 -> "BID"; 2 -> "ASK"; 3 -> "ASK_SIZE"
-    4 -> "LAST"; 5 -> "LAST_SIZE"; 6 -> "HIGH"; 7 -> "LOW"
-    9 -> "CLOSE_PREV"; 14 -> "OPEN"; 24 -> "VOLUME"; 37 -> "MARK"
-    10 -> "BID_OPT"; 11 -> "ASK_OPT"; 12 -> "LAST_OPT"; 13 -> "MODEL"
-    66 -> "DELAYED_BID"; 67 -> "DELAYED_ASK"; 68 -> "DELAYED_LAST"
-    72 -> "DELAYED_HIGH"; 73 -> "DELAYED_LOW"; 75 -> "DELAYED_CLOSE"
-    else -> "FIELD_$field"
-}
+private fun tickFieldName(field: Int) =
+    when (field) {
+        0 -> "BID_SIZE"
+        1 -> "BID"
+        2 -> "ASK"
+        3 -> "ASK_SIZE"
+        4 -> "LAST"
+        5 -> "LAST_SIZE"
+        6 -> "HIGH"
+        7 -> "LOW"
+        9 -> "CLOSE_PREV"
+        14 -> "OPEN"
+        24 -> "VOLUME"
+        37 -> "MARK"
+        10 -> "BID_OPT"
+        11 -> "ASK_OPT"
+        12 -> "LAST_OPT"
+        13 -> "MODEL"
+        66 -> "DELAYED_BID"
+        67 -> "DELAYED_ASK"
+        68 -> "DELAYED_LAST"
+        72 -> "DELAYED_HIGH"
+        73 -> "DELAYED_LOW"
+        75 -> "DELAYED_CLOSE"
+        else -> "FIELD_$field"
+    }
 
-private fun optFieldName(field: Int) = when (field) {
-    10 -> "BID"; 11 -> "ASK"; 12 -> "LAST"; 13 -> "MODEL"; 53 -> "CUSTOM"
-    else -> "FIELD_$field"
-}
+private fun optFieldName(field: Int) =
+    when (field) {
+        10 -> "BID"
+        11 -> "ASK"
+        12 -> "LAST"
+        13 -> "MODEL"
+        53 -> "CUSTOM"
+        else -> "FIELD_$field"
+    }
 
 @Component
 class IbkrEWrapper(
@@ -112,10 +137,15 @@ class IbkrEWrapper(
         twsRaw.debug {
             twsJson(
                 "OPT_COMPUTE",
-                "tid" to tickerId, "field" to optFieldName(field),
-                "iv" to impliedVol, "delta" to delta, "gamma" to gamma,
-                "vega" to vega, "theta" to theta,
-                "optPrice" to optPrice, "undPrice" to undPrice,
+                "tid" to tickerId,
+                "field" to optFieldName(field),
+                "iv" to impliedVol,
+                "delta" to delta,
+                "gamma" to gamma,
+                "vega" to vega,
+                "theta" to theta,
+                "optPrice" to optPrice,
+                "undPrice" to undPrice,
             )
         }
         marketDataRegistry.onTickOptionComputation(tickerId, field, impliedVol, delta, gamma, vega, theta)
@@ -168,10 +198,14 @@ class IbkrEWrapper(
         twsRaw.debug {
             twsJson(
                 "ORDER_STATUS",
-                "orderId" to orderId, "status" to status,
-                "filled" to filled.toString(), "remaining" to remaining.toString(),
-                "avgFill" to avgFillPrice, "lastFill" to lastFillPrice,
-                "parentId" to parentId, "whyHeld" to whyHeld,
+                "orderId" to orderId,
+                "status" to status,
+                "filled" to filled.toString(),
+                "remaining" to remaining.toString(),
+                "avgFill" to avgFillPrice,
+                "lastFill" to lastFillPrice,
+                "parentId" to parentId,
+                "whyHeld" to whyHeld,
             )
         }
         orderRegistry.onOrderStatus(orderId, status, avgFillPrice)
@@ -187,11 +221,19 @@ class IbkrEWrapper(
         twsRaw.debug {
             twsJson(
                 "OPEN_ORDER",
-                "orderId" to orderId, "sym" to contract.symbol(), "secType" to contract.secType().toString(),
-                "expiry" to contract.lastTradeDateOrContractMonth(), "strike" to contract.strike(), "right" to contract.right().toString(),
-                "action" to order.action().toString(), "qty" to order.totalQuantity().toString(),
-                "orderType" to order.orderType().toString(), "lmtPrice" to order.lmtPrice(), "auxPrice" to order.auxPrice(),
-                "tif" to order.tif().toString(), "status" to orderState.status(),
+                "orderId" to orderId,
+                "sym" to contract.symbol(),
+                "secType" to contract.secType().toString(),
+                "expiry" to contract.lastTradeDateOrContractMonth(),
+                "strike" to contract.strike(),
+                "right" to contract.right().toString(),
+                "action" to order.action().toString(),
+                "qty" to order.totalQuantity().toString(),
+                "orderType" to order.orderType().toString(),
+                "lmtPrice" to order.lmtPrice(),
+                "auxPrice" to order.auxPrice(),
+                "tif" to order.tif().toString(),
+                "status" to orderState.status(),
             )
         }
         openOrdersRegistry.onOpenOrder(orderId, contract, order, orderState)
@@ -226,10 +268,17 @@ class IbkrEWrapper(
         twsRaw.debug {
             twsJson(
                 "PORTFOLIO",
-                "sym" to contract.symbol(), "secType" to contract.secType().toString(),
-                "expiry" to contract.lastTradeDateOrContractMonth(), "strike" to contract.strike(), "right" to contract.right().toString(),
-                "pos" to position.toString(), "mktPrice" to marketPrice, "mktValue" to marketValue,
-                "avgCost" to averageCost, "unrealPnl" to unrealizedPNL, "realPnl" to realizedPNL,
+                "sym" to contract.symbol(),
+                "secType" to contract.secType().toString(),
+                "expiry" to contract.lastTradeDateOrContractMonth(),
+                "strike" to contract.strike(),
+                "right" to contract.right().toString(),
+                "pos" to position.toString(),
+                "mktPrice" to marketPrice,
+                "mktValue" to marketValue,
+                "avgCost" to averageCost,
+                "unrealPnl" to unrealizedPNL,
+                "realPnl" to realizedPNL,
             )
         }
     }
@@ -256,10 +305,18 @@ class IbkrEWrapper(
         twsRaw.debug {
             twsJson(
                 "CONTRACT_DET",
-                "reqId" to reqId, "sym" to c.symbol(), "secType" to c.secType().toString(), "conId" to c.conid(),
-                "expiry" to c.lastTradeDateOrContractMonth(), "strike" to c.strike(), "right" to c.right().toString(),
-                "exchange" to c.exchange(), "currency" to c.currency(), "multiplier" to c.multiplier(),
-                "tradingClass" to c.tradingClass(), "minTick" to contractDetails.minTick(),
+                "reqId" to reqId,
+                "sym" to c.symbol(),
+                "secType" to c.secType().toString(),
+                "conId" to c.conid(),
+                "expiry" to c.lastTradeDateOrContractMonth(),
+                "strike" to c.strike(),
+                "right" to c.right().toString(),
+                "exchange" to c.exchange(),
+                "currency" to c.currency(),
+                "multiplier" to c.multiplier(),
+                "tradingClass" to c.tradingClass(),
+                "minTick" to contractDetails.minTick(),
                 "orderTypes" to contractDetails.orderTypes(),
             )
         }
@@ -287,11 +344,19 @@ class IbkrEWrapper(
         twsRaw.debug {
             twsJson(
                 "EXEC_DETAILS",
-                "reqId" to reqId, "sym" to contract.symbol(), "secType" to contract.secType().toString(),
-                "expiry" to contract.lastTradeDateOrContractMonth(), "strike" to contract.strike(), "right" to contract.right().toString(),
-                "side" to execution.side(), "qty" to execution.shares().toString(),
-                "price" to execution.price(), "avgPrice" to execution.avgPrice(),
-                "execId" to execution.execId(), "orderId" to execution.orderId(), "time" to execution.time(),
+                "reqId" to reqId,
+                "sym" to contract.symbol(),
+                "secType" to contract.secType().toString(),
+                "expiry" to contract.lastTradeDateOrContractMonth(),
+                "strike" to contract.strike(),
+                "right" to contract.right().toString(),
+                "side" to execution.side(),
+                "qty" to execution.shares().toString(),
+                "price" to execution.price(),
+                "avgPrice" to execution.avgPrice(),
+                "execId" to execution.execId(),
+                "orderId" to execution.orderId(),
+                "time" to execution.time(),
             )
         }
     }
@@ -353,9 +418,15 @@ class IbkrEWrapper(
         twsRaw.debug {
             twsJson(
                 "HIST_BAR",
-                "reqId" to reqId, "time" to bar.time(),
-                "open" to bar.open(), "high" to bar.high(), "low" to bar.low(), "close" to bar.close(),
-                "vol" to bar.volume().toString(), "wap" to bar.wap().toString(), "count" to bar.count(),
+                "reqId" to reqId,
+                "time" to bar.time(),
+                "open" to bar.open(),
+                "high" to bar.high(),
+                "low" to bar.low(),
+                "close" to bar.close(),
+                "vol" to bar.volume().toString(),
+                "wap" to bar.wap().toString(),
+                "count" to bar.count(),
             )
         }
         historicalRegistry.onHistoricalBar(reqId, bar)
@@ -396,9 +467,15 @@ class IbkrEWrapper(
         twsRaw.debug {
             twsJson(
                 "REALTIME_BAR",
-                "reqId" to reqId, "time" to time,
-                "open" to open, "high" to high, "low" to low, "close" to close,
-                "vol" to volume.toString(), "wap" to wap.toString(), "count" to count,
+                "reqId" to reqId,
+                "time" to time,
+                "open" to open,
+                "high" to high,
+                "low" to low,
+                "close" to close,
+                "vol" to volume.toString(),
+                "wap" to wap.toString(),
+                "count" to count,
             )
         }
         marketDataRegistry.onRealtimeBar(reqId, time, open, high, low, close, volume.value().toLong(), wap.value().toDouble())
@@ -594,8 +671,12 @@ class IbkrEWrapper(
         twsRaw.debug {
             twsJson(
                 "OPT_PARAMS",
-                "reqId" to reqId, "exchange" to exchange, "tradingClass" to tradingClass, "multiplier" to multiplier,
-                "expirations" to expirations.sorted(), "strikes" to strikes.sorted(),
+                "reqId" to reqId,
+                "exchange" to exchange,
+                "tradingClass" to tradingClass,
+                "multiplier" to multiplier,
+                "expirations" to expirations.sorted(),
+                "strikes" to strikes.sorted(),
             )
         }
         contractRegistry.onSecurityDefinitionOptionalParameter(reqId, exchange, tradingClass, multiplier, expirations, strikes)
@@ -807,8 +888,12 @@ class IbkrEWrapper(
         twsRaw.debug {
             twsJson(
                 "TICK_BIDASK",
-                "reqId" to reqId, "time" to time,
-                "bid" to bidPrice, "ask" to askPrice, "bidSize" to bidSize.toString(), "askSize" to askSize.toString(),
+                "reqId" to reqId,
+                "time" to time,
+                "bid" to bidPrice,
+                "ask" to askPrice,
+                "bidSize" to bidSize.toString(),
+                "askSize" to askSize.toString(),
             )
         }
         marketDataRegistry.onTickByTickBidAsk(reqId, TickByTickBidAsk(time, bidPrice, askPrice))

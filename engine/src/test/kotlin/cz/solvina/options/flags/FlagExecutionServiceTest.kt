@@ -6,9 +6,9 @@ import cz.solvina.options.domain.features.flag.EntryFill
 import cz.solvina.options.domain.features.flag.FlagExecutionService
 import cz.solvina.options.domain.features.flag.FlagPage
 import cz.solvina.options.domain.features.flag.FlagPort
+import cz.solvina.options.domain.features.flag.config.FlagTradingConfig
 import cz.solvina.options.domain.features.flag.model.FlagPosition
 import cz.solvina.options.domain.features.flag.model.FlagStatus
-import cz.solvina.options.domain.features.flag.config.FlagTradingConfig
 import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.models.Symbol
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -35,7 +35,6 @@ import kotlin.test.assertNotNull
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class FlagExecutionServiceTest {
-
     private val symbol = Symbol("AAPL")
     private val fixedClock = Clock.fixed(Instant.parse("2025-06-05T14:00:00Z"), ZoneOffset.UTC)
 
@@ -179,14 +178,26 @@ class FlagExecutionServiceTest {
         val saved = mutableListOf<FlagPosition>()
 
         override suspend fun save(position: FlagPosition) = position.also { saved.add(it) }
+
         override suspend fun update(position: FlagPosition) = position.also { saved.add(it) }
+
         override suspend fun findById(id: UUID) = saved.lastOrNull { it.id == id }
+
         override suspend fun findOpen() = saved.filter { it.status == FlagStatus.OPEN }
+
         override suspend fun findAll() = saved.toList()
+
         override suspend fun findByStatus(status: FlagStatus) = saved.filter { it.status == status }
+
         override suspend fun countByStatus(status: FlagStatus) = saved.count { it.status == status }.toLong()
-        override suspend fun findPage(status: FlagStatus?, page: Int, size: Int, sort: String, sortDir: String) =
-            FlagPage(emptyList(), 0, 0, page, size)
+
+        override suspend fun findPage(
+            status: FlagStatus?,
+            page: Int,
+            size: Int,
+            sort: String,
+            sortDir: String,
+        ) = FlagPage(emptyList(), 0, 0, page, size)
     }
 
     /** Bracket port that immediately reports a filled entry at [entryFillPrice]. */
@@ -203,13 +214,15 @@ class FlagExecutionServiceTest {
 
         override suspend fun cancelOrder(orderId: Int) {}
 
-        override suspend fun awaitParentFill(orderId: Int) =
-            EntryFill(status = OrderStatus.FILLED, avgPrice = entryFillPrice)
+        override suspend fun awaitParentFill(orderId: Int) = EntryFill(status = OrderStatus.FILLED, avgPrice = entryFillPrice)
 
         // Children never fill — we only test up to entry in these tests
         override suspend fun awaitChildFill(orderId: Int): OrderStatus =
             kotlinx.coroutines.delay(Long.MAX_VALUE).let { OrderStatus.CANCELLED }
 
-        override suspend fun submitMarketSell(symbol: Symbol, shares: Int) = 99
+        override suspend fun submitMarketSell(
+            symbol: Symbol,
+            shares: Int,
+        ) = 99
     }
 }

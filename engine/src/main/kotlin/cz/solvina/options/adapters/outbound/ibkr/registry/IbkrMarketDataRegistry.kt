@@ -54,15 +54,16 @@ class IbkrMarketDataRegistry(
         volume: Long,
         wap: Double,
     ) {
-        val bar = RealTimeBar(
-            time = Instant.ofEpochSecond(time),
-            open = open,
-            high = high,
-            low = low,
-            close = close,
-            volume = volume,
-            wap = wap,
-        )
+        val bar =
+            RealTimeBar(
+                time = Instant.ofEpochSecond(time),
+                open = open,
+                high = high,
+                low = low,
+                close = close,
+                volume = volume,
+                wap = wap,
+            )
         pendingRealTimeBars[reqId]?.invoke(bar)
     }
 

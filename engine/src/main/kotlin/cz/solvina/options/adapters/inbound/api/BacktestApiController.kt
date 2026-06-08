@@ -7,7 +7,6 @@ import cz.solvina.options.domain.features.bars.BarStorePort
 import cz.solvina.options.domain.features.flag.config.FlagStrategyConfig
 import cz.solvina.options.domain.features.flag.config.FlagTradingConfig
 import cz.solvina.options.domain.features.flag.model.FlagPosition
-import cz.solvina.options.domain.features.flag.model.FlagStatus
 import cz.solvina.options.domain.models.Symbol
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.PostMapping
@@ -102,29 +101,32 @@ class BacktestApiController(
         if (request.symbols.isEmpty()) return ResponseEntity.badRequest().build()
         if (request.from.isAfter(request.to)) return ResponseEntity.badRequest().build()
 
-        val tradingConfig = FlagTradingConfig(
-            riskPerTrade = request.riskPerTrade,
-            maxOpenPositions = request.maxOpenPositions,
-            enabled = true,
-            entryBlockMinutesBeforeClose = request.entryBlockMinutesBeforeClose,
-        )
-        val effectiveStrategyConfig = strategyConfig.copy(
-            skipFirstRthMinutes = request.skipFirstRthMinutes ?: strategyConfig.skipFirstRthMinutes,
-            requireNegativeChannelSlope = request.requireNegativeChannelSlope ?: strategyConfig.requireNegativeChannelSlope,
-            minFlagpoleAtrMultiple = request.minFlagpoleAtrMultiple ?: strategyConfig.minFlagpoleAtrMultiple,
-            maxFlagpoleAtrMultiple = request.maxFlagpoleAtrMultiple ?: strategyConfig.maxFlagpoleAtrMultiple,
-            minFlagRetracementPct = request.minFlagRetracementPct ?: strategyConfig.minFlagRetracementPct,
-            minFlagBarsForEntry = request.minFlagBarsForEntry ?: strategyConfig.minFlagBarsForEntry,
-        )
+        val tradingConfig =
+            FlagTradingConfig(
+                riskPerTrade = request.riskPerTrade,
+                maxOpenPositions = request.maxOpenPositions,
+                enabled = true,
+                entryBlockMinutesBeforeClose = request.entryBlockMinutesBeforeClose,
+            )
+        val effectiveStrategyConfig =
+            strategyConfig.copy(
+                skipFirstRthMinutes = request.skipFirstRthMinutes ?: strategyConfig.skipFirstRthMinutes,
+                requireNegativeChannelSlope = request.requireNegativeChannelSlope ?: strategyConfig.requireNegativeChannelSlope,
+                minFlagpoleAtrMultiple = request.minFlagpoleAtrMultiple ?: strategyConfig.minFlagpoleAtrMultiple,
+                maxFlagpoleAtrMultiple = request.maxFlagpoleAtrMultiple ?: strategyConfig.maxFlagpoleAtrMultiple,
+                minFlagRetracementPct = request.minFlagRetracementPct ?: strategyConfig.minFlagRetracementPct,
+                minFlagBarsForEntry = request.minFlagBarsForEntry ?: strategyConfig.minFlagBarsForEntry,
+            )
         val strategy = FlagBacktestStrategy(effectiveStrategyConfig, tradingConfig)
         val engine = BacktestEngine(barStore)
-        val engineRequest = BacktestEngine.Request(
-            symbols = request.symbols.map { Symbol(it.uppercase()) },
-            from = request.from,
-            to = request.to,
-            initialCapital = request.initialCapital,
-            maxOpenPositions = request.maxOpenPositions,
-        )
+        val engineRequest =
+            BacktestEngine.Request(
+                symbols = request.symbols.map { Symbol(it.uppercase()) },
+                from = request.from,
+                to = request.to,
+                initialCapital = request.initialCapital,
+                maxOpenPositions = request.maxOpenPositions,
+            )
 
         val result = engine.run<FlagPosition>(engineRequest, strategy)
         val s = result.summary
@@ -153,34 +155,35 @@ class BacktestApiController(
         )
     }
 
-    private fun FlagPosition.toDto() = BacktestTradeDto(
-        id = id ?: UUID.randomUUID(),
-        symbol = symbol.value,
-        status = status.name,
-        openedAt = OffsetDateTime.ofInstant(openedAt, ZoneOffset.UTC),
-        closedAt = closedAt?.let { OffsetDateTime.ofInstant(it, ZoneOffset.UTC) },
-        closeReason = closeReason,
-        entryPrice = entryPrice,
-        actualEntryPrice = actualEntryPrice,
-        stopLossPrice = stopLossPrice,
-        profitTargetPrice = profitTargetPrice,
-        closePriceActual = closePriceActual,
-        shares = shares,
-        riskAmount = riskAmount,
-        realizedPnl = realizedPnl,
-        rMultiple = rMultiple,
-        mfeR = mfeR,
-        maeR = maeR,
-        timeInTradeSeconds = timeInTradeSeconds,
-        marketSession = marketSession,
-        breakoutType = breakoutType,
-        flagpoleHeight = flagpoleHeight,
-        flagRetracement = flagRetracement,
-        flagBarCount = flagBarCount,
-        flagpoleBarCount = flagpoleBarCount,
-        atrAtEntry = atrAtEntry,
-        channelSlope = channelSlope,
-        vwapAtEntry = vwapAtEntry,
-        stopDistancePct = stopDistancePct,
-    )
+    private fun FlagPosition.toDto() =
+        BacktestTradeDto(
+            id = id ?: UUID.randomUUID(),
+            symbol = symbol.value,
+            status = status.name,
+            openedAt = OffsetDateTime.ofInstant(openedAt, ZoneOffset.UTC),
+            closedAt = closedAt?.let { OffsetDateTime.ofInstant(it, ZoneOffset.UTC) },
+            closeReason = closeReason,
+            entryPrice = entryPrice,
+            actualEntryPrice = actualEntryPrice,
+            stopLossPrice = stopLossPrice,
+            profitTargetPrice = profitTargetPrice,
+            closePriceActual = closePriceActual,
+            shares = shares,
+            riskAmount = riskAmount,
+            realizedPnl = realizedPnl,
+            rMultiple = rMultiple,
+            mfeR = mfeR,
+            maeR = maeR,
+            timeInTradeSeconds = timeInTradeSeconds,
+            marketSession = marketSession,
+            breakoutType = breakoutType,
+            flagpoleHeight = flagpoleHeight,
+            flagRetracement = flagRetracement,
+            flagBarCount = flagBarCount,
+            flagpoleBarCount = flagpoleBarCount,
+            atrAtEntry = atrAtEntry,
+            channelSlope = channelSlope,
+            vwapAtEntry = vwapAtEntry,
+            stopDistancePct = stopDistancePct,
+        )
 }

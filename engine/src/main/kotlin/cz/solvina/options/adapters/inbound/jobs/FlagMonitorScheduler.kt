@@ -20,8 +20,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 private val logger = KotlinLogging.logger {}
 private val ET_ZONE = ZoneId.of("America/New_York")
 private val BERLIN_ZONE = ZoneId.of("Europe/Berlin")
-private const val US_CLOSE_MINUTE = 16 * 60       // 16:00 ET
-private const val EU_CLOSE_MINUTE = 17 * 60 + 30  // 17:30 Berlin
+private const val US_CLOSE_MINUTE = 16 * 60 // 16:00 ET
+private const val EU_CLOSE_MINUTE = 17 * 60 + 30 // 17:30 Berlin
 
 @Component
 class FlagMonitorScheduler(
@@ -61,7 +61,10 @@ class FlagMonitorScheduler(
         }
     }
 
-    private suspend fun checkEuClose(now: ZonedDateTime, config: FlagTradingConfig) {
+    private suspend fun checkEuClose(
+        now: ZonedDateTime,
+        config: FlagTradingConfig,
+    ) {
         val eu = now.withZoneSameInstant(BERLIN_ZONE)
         if (eu.dayOfWeek == DayOfWeek.SATURDAY || eu.dayOfWeek == DayOfWeek.SUNDAY) return
         val minuteOfDay = eu.hour * 60 + eu.minute
@@ -73,7 +76,10 @@ class FlagMonitorScheduler(
         flagManagementService.checkEodLiquidation("EU")
     }
 
-    private suspend fun checkUsClose(now: ZonedDateTime, config: FlagTradingConfig) {
+    private suspend fun checkUsClose(
+        now: ZonedDateTime,
+        config: FlagTradingConfig,
+    ) {
         val us = now.withZoneSameInstant(ET_ZONE)
         if (us.dayOfWeek == DayOfWeek.SATURDAY || us.dayOfWeek == DayOfWeek.SUNDAY) return
         val minuteOfDay = us.hour * 60 + us.minute

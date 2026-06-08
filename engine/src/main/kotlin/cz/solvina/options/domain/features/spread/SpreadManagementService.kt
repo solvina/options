@@ -277,7 +277,9 @@ class SpreadManagementService(
             tradeLogger.info {
                 "EXIT   ${spread.symbol}  ${spread.soldLeg.contract.strike}P/${spread.boughtLeg.contract.strike}P" +
                     "  exp=${spread.soldLeg.contract.expiry}  reason=${closeStatus.name}  value=\$0 (worthless)" +
-                    "  credit=\$${spread.creditPerShare}  pnl=\$${spread.creditPerShare.multiply(BigDecimal("100")).multiply(BigDecimal(spread.quantity))}"
+                    "  credit=\$${spread.creditPerShare}  pnl=\$${spread.creditPerShare.multiply(
+                        BigDecimal("100"),
+                    ).multiply(BigDecimal(spread.quantity))}"
             }
             return
         }

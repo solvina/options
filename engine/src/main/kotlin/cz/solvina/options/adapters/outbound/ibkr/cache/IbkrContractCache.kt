@@ -31,7 +31,12 @@ class IbkrContractCache(
     private val optionConIds = ConcurrentHashMap<OptionContractKey, Int>()
     private val missingContracts = ConcurrentHashMap.newKeySet<OptionContractKey>()
 
-    private data class VerifiedKey(val symbol: Symbol, val expiry: LocalDate, val optionType: OptionType)
+    private data class VerifiedKey(
+        val symbol: Symbol,
+        val expiry: LocalDate,
+        val optionType: OptionType,
+    )
+
     private val verifiedStrikes = ConcurrentHashMap<VerifiedKey, TreeSet<BigDecimal>>()
 
     suspend fun getOrFetchUnderlyingConId(symbol: Symbol): Int {
@@ -139,8 +144,11 @@ class IbkrContractCache(
 
     /** Returns the authoritative strike set for a given expiry+right, populated after the first
      *  reqContractDetails call for that expiry. Null means no data yet — fall back to option params. */
-    fun getVerifiedStrikes(symbol: Symbol, expiry: LocalDate, optionType: OptionType): Set<BigDecimal>? =
-        verifiedStrikes[VerifiedKey(symbol, expiry, optionType)]
+    fun getVerifiedStrikes(
+        symbol: Symbol,
+        expiry: LocalDate,
+        optionType: OptionType,
+    ): Set<BigDecimal>? = verifiedStrikes[VerifiedKey(symbol, expiry, optionType)]
 
     private fun evictExpired() {
         val today = LocalDate.now()

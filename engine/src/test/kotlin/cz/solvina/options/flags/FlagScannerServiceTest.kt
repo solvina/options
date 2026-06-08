@@ -2,7 +2,6 @@ package cz.solvina.options.flags
 
 import cz.solvina.options.domain.features.bars.BarStorePort
 import cz.solvina.options.domain.features.bars.EquityHistoricalBarsPort
-import cz.solvina.options.domain.features.bars.FiveMinuteBar
 import cz.solvina.options.domain.features.bars.RealTimeBarsPort
 import cz.solvina.options.domain.features.flag.FlagExecutionService
 import cz.solvina.options.domain.features.flag.FlagManagementService
@@ -18,15 +17,15 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
-import java.time.Clock
-import java.time.LocalTime
-import java.time.ZoneId
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
+import java.time.Clock
 import java.time.Instant
+import java.time.LocalTime
+import java.time.ZoneId
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -40,52 +39,59 @@ import kotlin.test.assertTrue
  *     according to the port, not a hardcoded clock comparison.
  */
 class FlagScannerServiceTest {
-
     private val aapl = Symbol("AAPL")
     private val sap = Symbol("SAP")
 
-    private val strategyConfig = FlagStrategyConfig(
-        usWatchlist = listOf("AAPL"),
-        euWatchlist = listOf("SAP"),
-    )
-    private val tradingConfig = FlagTradingConfig(
-        entryBlockMinutesBeforeClose = 5,
-        enabled = true,
-    )
+    private val strategyConfig =
+        FlagStrategyConfig(
+            usWatchlist = listOf("AAPL"),
+            euWatchlist = listOf("SAP"),
+        )
+    private val tradingConfig =
+        FlagTradingConfig(
+            entryBlockMinutesBeforeClose = 5,
+            enabled = true,
+        )
 
-    private val usSchedule = MarketSchedule(
-        zone = ZoneId.of("America/New_York"),
-        open = LocalTime.of(9, 30),
-        close = LocalTime.of(16, 0),
-        session = "US",
-    )
-    private val euSchedule = MarketSchedule(
-        zone = ZoneId.of("Europe/Berlin"),
-        open = LocalTime.of(9, 0),
-        close = LocalTime.of(17, 30),
-        session = "EU",
-    )
+    private val usSchedule =
+        MarketSchedule(
+            zone = ZoneId.of("America/New_York"),
+            open = LocalTime.of(9, 30),
+            close = LocalTime.of(16, 0),
+            session = "US",
+        )
+    private val euSchedule =
+        MarketSchedule(
+            zone = ZoneId.of("Europe/Berlin"),
+            open = LocalTime.of(9, 0),
+            close = LocalTime.of(17, 30),
+            session = "EU",
+        )
 
-    private val realTimeBarsPort = mockk<RealTimeBarsPort> {
-        every { streamBars(any()) } returns emptyFlow()
-    }
-    private val equityHistoricalBarsPort = mockk<EquityHistoricalBarsPort> {
-        coEvery { fetch5MinBars(any(), any()) } returns emptyList()
-    }
+    private val realTimeBarsPort =
+        mockk<RealTimeBarsPort> {
+            every { streamBars(any()) } returns emptyFlow()
+        }
+    private val equityHistoricalBarsPort =
+        mockk<EquityHistoricalBarsPort> {
+            coEvery { fetch5MinBars(any(), any()) } returns emptyList()
+        }
     private val flagExecutionService = mockk<FlagExecutionService>(relaxed = true)
     private val flagPort = mockk<FlagPort>(relaxed = true)
     private val flagManagementService = mockk<FlagManagementService>(relaxed = true)
-    private val flagTradingConfigPort = mockk<FlagTradingConfigPort> {
-        coEvery { get() } returns tradingConfig
-    }
+    private val flagTradingConfigPort =
+        mockk<FlagTradingConfigPort> {
+            coEvery { get() } returns tradingConfig
+        }
     private val barStorePort = mockk<BarStorePort>(relaxed = true)
 
     // Default universe port: both markets closed, returns US schedule for AAPL and EU for SAP.
-    private val defaultUniversePort = mockk<UniversePort> {
-        every { isMarketOpen(any()) } returns false
-        every { getMarketSchedule(aapl) } returns usSchedule
-        every { getMarketSchedule(sap) } returns euSchedule
-    }
+    private val defaultUniversePort =
+        mockk<UniversePort> {
+            every { isMarketOpen(any()) } returns false
+            every { getMarketSchedule(aapl) } returns usSchedule
+            every { getMarketSchedule(sap) } returns euSchedule
+        }
 
     private val testDispatcher = StandardTestDispatcher()
     private val testScope = TestScope(testDispatcher)
@@ -193,7 +199,7 @@ class FlagScannerServiceTest {
         // A candle opens at 15:54 ET (outside block window) but closes at 15:58:55 ET (inside window).
         // The scanner passes bar.time which BarAggregator sets to the candle close.
         val candleCloseTime = Instant.parse("2024-01-15T20:58:55Z") // 15:58:55 ET
-        val candleOpenTime = Instant.parse("2024-01-15T20:54:00Z")  // 15:54 ET — would not be blocked
+        val candleOpenTime = Instant.parse("2024-01-15T20:54:00Z") // 15:54 ET — would not be blocked
 
         assertTrue(
             service.isEntryBlocked(aapl, config, candleCloseTime),
@@ -213,12 +219,13 @@ class FlagScannerServiceTest {
     fun `onStartup subscribes only symbols whose market is open according to the universe port`() =
         runTest(testDispatcher) {
             // AAPL market is open; SAP market is closed.
-            val universePort = mockk<UniversePort> {
-                every { isMarketOpen(aapl) } returns true
-                every { isMarketOpen(sap) } returns false
-                every { getMarketSchedule(aapl) } returns usSchedule
-                every { getMarketSchedule(sap) } returns euSchedule
-            }
+            val universePort =
+                mockk<UniversePort> {
+                    every { isMarketOpen(aapl) } returns true
+                    every { isMarketOpen(sap) } returns false
+                    every { getMarketSchedule(aapl) } returns usSchedule
+                    every { getMarketSchedule(sap) } returns euSchedule
+                }
             val service = buildService(universePort = universePort)
 
             service.onStartup()
@@ -247,10 +254,11 @@ class FlagScannerServiceTest {
     @Test
     fun `subscribeSymbol returns true for a new symbol and false if already active`() =
         runTest(testDispatcher) {
-            val universePort = mockk<UniversePort> {
-                every { isMarketOpen(any()) } returns false
-                every { getMarketSchedule(any()) } returns usSchedule
-            }
+            val universePort =
+                mockk<UniversePort> {
+                    every { isMarketOpen(any()) } returns false
+                    every { getMarketSchedule(any()) } returns usSchedule
+                }
             val service = buildService(universePort = universePort)
 
             assertTrue(service.subscribeSymbol("AAPL", "US"), "First subscribe should return true")

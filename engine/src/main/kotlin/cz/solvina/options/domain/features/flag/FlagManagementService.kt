@@ -27,9 +27,15 @@ class FlagManagementService(
     private val clock: Clock,
 ) {
     sealed interface ManualCloseResult {
-        data class Closed(val position: FlagPosition) : ManualCloseResult
+        data class Closed(
+            val position: FlagPosition,
+        ) : ManualCloseResult
+
         data object NotFound : ManualCloseResult
-        data class AlreadyClosed(val position: FlagPosition) : ManualCloseResult
+
+        data class AlreadyClosed(
+            val position: FlagPosition,
+        ) : ManualCloseResult
     }
 
     // -------------------------------------------------------------------------
@@ -42,15 +48,18 @@ class FlagManagementService(
      */
     suspend fun checkEodLiquidation(session: String? = null) {
         val open = flagPort.findOpen()
-        val toClose = when {
-            session == null -> open
-            session == "EU" -> open.filter { it.marketSession == "EU" }
-            else -> open.filter { it.marketSession == session || it.marketSession == null }
-        }
+        val toClose =
+            when {
+                session == null -> open
+                session == "EU" -> open.filter { it.marketSession == "EU" }
+                else -> open.filter { it.marketSession == session || it.marketSession == null }
+            }
         if (toClose.isEmpty()) return
 
         for (position in toClose) {
-            logger.info { "[${position.symbol}] EOD liquidation (session=${session ?: "ALL"}): cancelling bracket orders and selling ${position.shares} shares" }
+            logger.info {
+                "[${position.symbol}] EOD liquidation (session=${session ?: "ALL"}): cancelling bracket orders and selling ${position.shares} shares"
+            }
             performClose(position, FlagStatus.CLOSED_EOD, "eod_liquidation")
         }
     }
@@ -103,7 +112,10 @@ class FlagManagementService(
         }
     }
 
-    suspend fun updateWatermarksForSymbol(symbol: Symbol, price: BigDecimal) {
+    suspend fun updateWatermarksForSymbol(
+        symbol: Symbol,
+        price: BigDecimal,
+    ) {
         val open = flagPort.findOpen().filter { it.symbol == symbol }
         for (position in open) {
             val newHigh = position.highestPriceSeen?.max(price) ?: price
@@ -134,52 +146,69 @@ class FlagManagementService(
                 .onFailure { e -> logger.error(e) { "[${position.symbol}] Market sell failed: ${e.message}" } }
 
             // Best-effort price capture
-            closePriceActual = runCatching {
-                marketDataPort.getUnderlyingPrice(position.symbol).amount
-            }.getOrNull()
+            closePriceActual =
+                runCatching {
+                    marketDataPort.getUnderlyingPrice(position.symbol).amount
+                }.getOrNull()
 
             val effectiveEntry = position.actualEntryPrice ?: position.entryPrice
             if (closePriceActual != null) {
-                realizedPnl = closePriceActual
-                    .subtract(effectiveEntry)
-                    .multiply(BigDecimal(position.shares))
-                    .setScale(2, RoundingMode.HALF_UP)
+                realizedPnl =
+                    closePriceActual
+                        .subtract(effectiveEntry)
+                        .multiply(BigDecimal(position.shares))
+                        .setScale(2, RoundingMode.HALF_UP)
             }
         }
 
         val shares = BigDecimal(position.shares)
         val effectiveEntry = position.actualEntryPrice ?: position.entryPrice
-        val mfe = position.highestPriceSeen
-            ?.subtract(effectiveEntry)
-            ?.multiply(shares)
-            ?.setScale(2, RoundingMode.HALF_UP)
-        val mae = position.lowestPriceSeen
-            ?.let { effectiveEntry.subtract(it) }
-            ?.multiply(shares)
-            ?.setScale(2, RoundingMode.HALF_UP)
+        val mfe =
+            position.highestPriceSeen
+                ?.subtract(effectiveEntry)
+                ?.multiply(shares)
+                ?.setScale(2, RoundingMode.HALF_UP)
+        val mae =
+            position.lowestPriceSeen
+                ?.let { effectiveEntry.subtract(it) }
+                ?.multiply(shares)
+                ?.setScale(2, RoundingMode.HALF_UP)
 
         val closedAt = Instant.now(clock)
-        val rMultiple = if (realizedPnl != null && position.riskAmount > BigDecimal.ZERO)
-            realizedPnl.divide(position.riskAmount, 2, RoundingMode.HALF_UP) else null
-        val mfeR = if (mfe != null && position.riskAmount > BigDecimal.ZERO)
-            mfe.divide(position.riskAmount, 2, RoundingMode.HALF_UP) else null
-        val maeR = if (mae != null && position.riskAmount > BigDecimal.ZERO)
-            mae.divide(position.riskAmount, 2, RoundingMode.HALF_UP) else null
+        val rMultiple =
+            if (realizedPnl != null && position.riskAmount > BigDecimal.ZERO) {
+                realizedPnl.divide(position.riskAmount, 2, RoundingMode.HALF_UP)
+            } else {
+                null
+            }
+        val mfeR =
+            if (mfe != null && position.riskAmount > BigDecimal.ZERO) {
+                mfe.divide(position.riskAmount, 2, RoundingMode.HALF_UP)
+            } else {
+                null
+            }
+        val maeR =
+            if (mae != null && position.riskAmount > BigDecimal.ZERO) {
+                mae.divide(position.riskAmount, 2, RoundingMode.HALF_UP)
+            } else {
+                null
+            }
         val timeInTrade = ChronoUnit.SECONDS.between(position.openedAt, closedAt).toInt()
 
-        val closed = position.copy(
-            status = closeStatus,
-            closedAt = closedAt,
-            closeReason = reason,
-            closePriceActual = closePriceActual,
-            realizedPnl = realizedPnl,
-            maxFavorableExcursion = mfe,
-            maxAdverseExcursion = mae,
-            rMultiple = rMultiple,
-            mfeR = mfeR,
-            maeR = maeR,
-            timeInTradeSeconds = timeInTrade,
-        )
+        val closed =
+            position.copy(
+                status = closeStatus,
+                closedAt = closedAt,
+                closeReason = reason,
+                closePriceActual = closePriceActual,
+                realizedPnl = realizedPnl,
+                maxFavorableExcursion = mfe,
+                maxAdverseExcursion = mae,
+                rMultiple = rMultiple,
+                mfeR = mfeR,
+                maeR = maeR,
+                timeInTradeSeconds = timeInTrade,
+            )
         flagPort.update(closed)
         tradeLogger.info { "${closeStatus.name} ${position.symbol} reason=$reason pnl=${realizedPnl ?: "n/a"} R=$rMultiple" }
         return closed

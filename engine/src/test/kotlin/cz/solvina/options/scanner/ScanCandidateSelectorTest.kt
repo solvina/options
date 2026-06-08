@@ -38,7 +38,6 @@ import kotlin.test.assertNull
  *   7. maxRiskPerContract ≤ totalCapital × maxRiskPercent  (money management)
  */
 class ScanCandidateSelectorTest {
-
     // -------------------------------------------------------------------------
     // Shared fixtures
     // -------------------------------------------------------------------------
@@ -52,16 +51,17 @@ class ScanCandidateSelectorTest {
 
     // Put with delta −0.15 (target) around strike $480; underlying at $500.
     private val soldStrike = BigDecimal("480")
-    private val boughtStrike = BigDecimal("475")   // soldStrike − $5 spread width
+    private val boughtStrike = BigDecimal("475") // soldStrike − $5 spread width
 
     private val soldContract = OptionContract(symbol, expiry38d, soldStrike, OptionType.PUT)
     private val boughtContract = OptionContract(symbol, expiry38d, boughtStrike, OptionType.PUT)
 
     // A passing option chain: two puts where sold has 0.15 delta and a $0.80 mid credit.
-    private val validChain = listOf(
-        put(strike = soldStrike, delta = -0.15, bid = 1.40, ask = 1.60),  // mid=$1.50
-        put(strike = boughtStrike, delta = -0.08, bid = 0.65, ask = 0.75), // mid=$0.70 → credit=$0.80
-    )
+    private val validChain =
+        listOf(
+            put(strike = soldStrike, delta = -0.15, bid = 1.40, ask = 1.60), // mid=$1.50
+            put(strike = boughtStrike, delta = -0.08, bid = 0.65, ask = 0.75), // mid=$0.70 → credit=$0.80
+        )
 
     private val capitalOf50k = Money(BigDecimal("50000"))
 
@@ -98,9 +98,10 @@ class ScanCandidateSelectorTest {
         runTest {
             // Available expirations: 10 DTE (too soon) and 70 DTE (too far).
             // Default window: [30, 50]. Neither qualifies.
-            val result = buildSelector(
-                expirations = setOf(today.plusDays(10), today.plusDays(70)),
-            ).select(symbol, capitalOf50k)
+            val result =
+                buildSelector(
+                    expirations = setOf(today.plusDays(10), today.plusDays(70)),
+                ).select(symbol, capitalOf50k)
 
             assertNull(result, "No valid expiry must prevent entry")
         }
@@ -112,15 +113,17 @@ class ScanCandidateSelectorTest {
             val expiry35d = today.plusDays(35)
             val expiry48d = today.plusDays(48)
 
-            val chain48 = listOf(
-                put(strike = soldStrike, delta = -0.15, bid = 1.40, ask = 1.60, expiry = expiry48d),
-                put(strike = boughtStrike, delta = -0.08, bid = 0.65, ask = 0.75, expiry = expiry48d),
-            )
+            val chain48 =
+                listOf(
+                    put(strike = soldStrike, delta = -0.15, bid = 1.40, ask = 1.60, expiry = expiry48d),
+                    put(strike = boughtStrike, delta = -0.08, bid = 0.65, ask = 0.75, expiry = expiry48d),
+                )
 
-            val result = buildSelector(
-                expirations = setOf(expiry35d, expiry38d, expiry48d),
-                chain = chain48,
-            ).select(symbol, capitalOf50k)
+            val result =
+                buildSelector(
+                    expirations = setOf(expiry35d, expiry38d, expiry48d),
+                    chain = chain48,
+                ).select(symbol, capitalOf50k)
 
             assertNotNull(result)
             assertEquals(expiry48d, result.soldContract.expiry)
@@ -135,10 +138,11 @@ class ScanCandidateSelectorTest {
         runTest {
             // All available puts are either too high or too low delta.
             // Default band: [−0.20, −0.10]; here both are outside it.
-            val chain = listOf(
-                put(strike = soldStrike, delta = -0.05, bid = 0.20, ask = 0.30),   // too small
-                put(strike = boughtStrike, delta = -0.25, bid = 0.80, ask = 1.00), // too large
-            )
+            val chain =
+                listOf(
+                    put(strike = soldStrike, delta = -0.05, bid = 0.20, ask = 0.30), // too small
+                    put(strike = boughtStrike, delta = -0.25, bid = 0.80, ask = 1.00), // too large
+                )
 
             val result = buildSelector(chain = chain).select(symbol, capitalOf50k)
 
@@ -150,17 +154,18 @@ class ScanCandidateSelectorTest {
         runTest {
             // Three puts all within [−0.10, −0.20]; the one at −0.14 is closest to target −0.15.
             // strikeC is at 490 (not 475) to avoid a strike collision with the bought leg of strikeB.
-            val strikeA = BigDecimal("485")   // delta −0.12 — farther from target
-            val strikeB = BigDecimal("480")   // delta −0.14 — closest to target −0.15
-            val strikeC = BigDecimal("490")   // delta −0.18 — farther from target
+            val strikeA = BigDecimal("485") // delta −0.12 — farther from target
+            val strikeB = BigDecimal("480") // delta −0.14 — closest to target −0.15
+            val strikeC = BigDecimal("490") // delta −0.18 — farther from target
 
-            val chain = listOf(
-                put(strike = strikeA, delta = -0.12, bid = 1.00, ask = 1.20),
-                put(strike = strikeB, delta = -0.14, bid = 1.35, ask = 1.55),
-                put(strike = strikeC, delta = -0.18, bid = 1.60, ask = 1.80),
-                // bought leg for strikeB (strikeB − $5 = $475)
-                put(strike = BigDecimal("475"), delta = -0.08, bid = 0.65, ask = 0.75),
-            )
+            val chain =
+                listOf(
+                    put(strike = strikeA, delta = -0.12, bid = 1.00, ask = 1.20),
+                    put(strike = strikeB, delta = -0.14, bid = 1.35, ask = 1.55),
+                    put(strike = strikeC, delta = -0.18, bid = 1.60, ask = 1.80),
+                    // bought leg for strikeB (strikeB − $5 = $475)
+                    put(strike = BigDecimal("475"), delta = -0.08, bid = 0.65, ask = 0.75),
+                )
 
             val result = buildSelector(chain = chain).select(symbol, capitalOf50k)
 
@@ -176,10 +181,11 @@ class ScanCandidateSelectorTest {
     fun `no candidate when mid credit is below minCreditPerShare`() =
         runTest {
             // sold mid=$0.25, bought mid=$0.10 → net credit=$0.15 < minCredit=$0.30.
-            val cheapChain = listOf(
-                put(strike = soldStrike, delta = -0.15, bid = 0.20, ask = 0.30),
-                put(strike = boughtStrike, delta = -0.08, bid = 0.05, ask = 0.15),
-            )
+            val cheapChain =
+                listOf(
+                    put(strike = soldStrike, delta = -0.15, bid = 0.20, ask = 0.30),
+                    put(strike = boughtStrike, delta = -0.08, bid = 0.05, ask = 0.15),
+                )
 
             val result = buildSelector(chain = cheapChain).select(symbol, capitalOf50k)
 
@@ -226,15 +232,17 @@ class ScanCandidateSelectorTest {
         runTest {
             // SPY is configured with a higher IV rank threshold (50 %) than the global default (30 %).
             // IV Rank = 40 % passes globally but must be rejected by the symbol-level override.
-            val symbolConfig = InstrumentConfig(
-                symbol = symbol,
-                ivRankThreshold = 50.0,
-            )
+            val symbolConfig =
+                InstrumentConfig(
+                    symbol = symbol,
+                    ivRankThreshold = 50.0,
+                )
 
-            val result = buildSelector(
-                ivRank = 40.0,
-                instrumentConfig = symbolConfig,
-            ).select(symbol, capitalOf50k)
+            val result =
+                buildSelector(
+                    ivRank = 40.0,
+                    instrumentConfig = symbolConfig,
+                ).select(symbol, capitalOf50k)
 
             assertNull(result, "Symbol-level IV Rank threshold must override the global default")
         }
@@ -254,37 +262,50 @@ class ScanCandidateSelectorTest {
         instrumentConfig: InstrumentConfig? = null,
         config: ScannerConfig = defaultConfig,
     ) = ScanCandidateSelector(
-        volatilityPort = object : VolatilityPort {
-            override suspend fun getIvRank(symbol: Symbol) =
-                IvRank(rank = ivRank, currentIv = 0.25, calculatedAt = Instant.now())
-        },
-        marketDataPort = object : MarketDataPort {
-            override suspend fun getUnderlyingPrice(symbol: Symbol) = Money(BigDecimal("500"))
-            override suspend fun getOptionMid(contract: OptionContract) = Money(BigDecimal.ZERO)
-        },
-        optionChainPort = object : OptionChainPort {
-            override suspend fun getAvailableExpirations(symbol: Symbol) = expirations
-            override suspend fun getOptionChain(
-                symbol: Symbol,
-                expiry: LocalDate,
-                underlyingPrice: Money,
-            ) = chain.filter { it.contract.expiry == expiry }
-        },
-        universePort = object : UniversePort {
-            override fun getWatchlist() = emptyList<Symbol>()
-            override fun getActiveSymbols() = emptyList<Symbol>()
-            override fun isMarketOpen(symbol: Symbol) = true
-            override fun getMarketSchedule(symbol: Symbol) = cz.solvina.options.domain.features.universe.MarketSchedule(
-                zone = java.time.ZoneId.of("America/New_York"),
-                open = java.time.LocalTime.of(9, 30),
-                close = java.time.LocalTime.of(16, 0),
-                session = "US",
-            )
-            override suspend fun getAll() = emptyList<InstrumentConfig>()
-            override suspend fun get(symbol: Symbol) = instrumentConfig
-            override suspend fun save(config: InstrumentConfig) = config
-            override suspend fun delete(symbol: Symbol) {}
-        },
+        volatilityPort =
+            object : VolatilityPort {
+                override suspend fun getIvRank(symbol: Symbol) = IvRank(rank = ivRank, currentIv = 0.25, calculatedAt = Instant.now())
+            },
+        marketDataPort =
+            object : MarketDataPort {
+                override suspend fun getUnderlyingPrice(symbol: Symbol) = Money(BigDecimal("500"))
+
+                override suspend fun getOptionMid(contract: OptionContract) = Money(BigDecimal.ZERO)
+            },
+        optionChainPort =
+            object : OptionChainPort {
+                override suspend fun getAvailableExpirations(symbol: Symbol) = expirations
+
+                override suspend fun getOptionChain(
+                    symbol: Symbol,
+                    expiry: LocalDate,
+                    underlyingPrice: Money,
+                ) = chain.filter { it.contract.expiry == expiry }
+            },
+        universePort =
+            object : UniversePort {
+                override fun getWatchlist() = emptyList<Symbol>()
+
+                override fun getActiveSymbols() = emptyList<Symbol>()
+
+                override fun isMarketOpen(symbol: Symbol) = true
+
+                override fun getMarketSchedule(symbol: Symbol) =
+                    cz.solvina.options.domain.features.universe.MarketSchedule(
+                        zone = java.time.ZoneId.of("America/New_York"),
+                        open = java.time.LocalTime.of(9, 30),
+                        close = java.time.LocalTime.of(16, 0),
+                        session = "US",
+                    )
+
+                override suspend fun getAll() = emptyList<InstrumentConfig>()
+
+                override suspend fun get(symbol: Symbol) = instrumentConfig
+
+                override suspend fun save(config: InstrumentConfig) = config
+
+                override suspend fun delete(symbol: Symbol) {}
+            },
         config = config,
         clock = clock,
     )

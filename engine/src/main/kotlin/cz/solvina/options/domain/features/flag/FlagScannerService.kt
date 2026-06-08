@@ -12,6 +12,7 @@ import cz.solvina.options.domain.features.flag.FlagExecutionService.ExecutionReq
 import cz.solvina.options.domain.features.flag.config.FlagStrategyConfig
 import cz.solvina.options.domain.features.flag.config.FlagTradingConfig
 import cz.solvina.options.domain.features.flag.config.FlagTradingConfigPort
+import cz.solvina.options.domain.features.flag.model.FlagStatus
 import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -30,11 +31,8 @@ import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.Clock
 import java.time.Instant
-import java.time.LocalTime
-import java.time.ZonedDateTime
 import java.time.temporal.ChronoUnit
 import java.util.concurrent.ConcurrentHashMap
-import cz.solvina.options.domain.features.flag.model.FlagStatus
 
 private val logger = KotlinLogging.logger {}
 
@@ -59,6 +57,7 @@ class FlagScannerService(
     private val aggregators = ConcurrentHashMap<Symbol, BarAggregator>()
     private val buffers = ConcurrentHashMap<Symbol, BarBuffer>()
     private val detectors = ConcurrentHashMap<Symbol, PatternDetector>()
+
     // Serialises the open-position count check and order submission so two concurrent breakout
     // signals cannot both read below maxOpenPositions before either one persists PENDING.
     private val entryMutex = Mutex()
@@ -77,7 +76,10 @@ class FlagScannerService(
         logger.info { "Flag scanner stopped — all bar subscriptions cancelled" }
     }
 
-    fun subscribeSymbol(symbolStr: String, session: String): Boolean {
+    fun subscribeSymbol(
+        symbolStr: String,
+        session: String,
+    ): Boolean {
         val symbol = Symbol(symbolStr.uppercase())
         if (subscriptions[symbol]?.isActive == true) {
             logger.info { "[${symbol.value}] Hot-subscribe: already active (session=$session)" }
@@ -105,14 +107,15 @@ class FlagScannerService(
         if (!anyMarketOpen) return
 
         val staleThreshold = Instant.now(clock).minus(STALE_BAR_MINUTES, ChronoUnit.MINUTES)
-        val stale = subscriptions.keys.filter { symbol ->
-            val lastBar = buffers[symbol]?.snapshot()?.lastOrNull()
-            val jobActive = subscriptions[symbol]?.isActive == true
-            // Stale: job alive but no bar received within the staleness window.
-            // A dead job is handled by onEuMarketOpen/onUsMarketOpen; we only resubscribe
-            // jobs that are still alive (from Kotlin's perspective) but IBKR stopped sending.
-            jobActive && (lastBar == null || lastBar.time.isBefore(staleThreshold))
-        }
+        val stale =
+            subscriptions.keys.filter { symbol ->
+                val lastBar = buffers[symbol]?.snapshot()?.lastOrNull()
+                val jobActive = subscriptions[symbol]?.isActive == true
+                // Stale: job alive but no bar received within the staleness window.
+                // A dead job is handled by onEuMarketOpen/onUsMarketOpen; we only resubscribe
+                // jobs that are still alive (from Kotlin's perspective) but IBKR stopped sending.
+                jobActive && (lastBar == null || lastBar.time.isBefore(staleThreshold))
+            }
 
         if (stale.isEmpty()) return
         logger.warn { "Flag scanner watchdog: ${stale.map { it.value }} appear stale (no bar in ${STALE_BAR_MINUTES}min) — resubscribing" }
@@ -123,7 +126,10 @@ class FlagScannerService(
         }
     }
 
-    private fun resubscribeWatchlist(watchlist: List<String>, reason: String) {
+    private fun resubscribeWatchlist(
+        watchlist: List<String>,
+        reason: String,
+    ) {
         val symbols = watchlist.map { Symbol(it) }
         val stale = symbols.filter { subscriptions[it]?.isActive != true }
         if (stale.isEmpty()) {
@@ -144,7 +150,11 @@ class FlagScannerService(
         return open
     }
 
-    internal fun isEntryBlocked(symbol: Symbol, config: FlagTradingConfig, barTime: Instant): Boolean {
+    internal fun isEntryBlocked(
+        symbol: Symbol,
+        config: FlagTradingConfig,
+        barTime: Instant,
+    ): Boolean {
         val schedule = universePort.getMarketSchedule(symbol)
         val barLocal = barTime.atZone(schedule.zone).toLocalTime()
         return !barLocal.isBefore(schedule.close.minusMinutes(config.entryBlockMinutesBeforeClose.toLong()))
@@ -166,7 +176,9 @@ class FlagScannerService(
                     val historical = equityHistoricalBarsPort.fetch5MinBars(symbol, strategyConfig.historicalBootstrapDays)
                     buffer.addAll(historical)
                     historical.forEach { bar -> detector.onNewBar(bar) }
-                    logger.info { "[${symbol.value}] Bootstrapped ${historical.size} historical bars — pattern state: ${detector.state.label()}" }
+                    logger.info {
+                        "[${symbol.value}] Bootstrapped ${historical.size} historical bars — pattern state: ${detector.state.label()}"
+                    }
                 }.onFailure { e ->
                     logger.warn { "[${symbol.value}] Historical bootstrap failed: ${e.message}" }
                 }
@@ -232,39 +244,69 @@ class FlagScannerService(
             }
 
             val entryPrice = BigDecimal(breakout.resistanceLevel).setScale(2, RoundingMode.HALF_UP)
-            val stopLossPrice = BigDecimal(breakout.flag.lowestLow)
-                .subtract(BigDecimal("0.01"))
-                .setScale(2, RoundingMode.HALF_UP)
+            val stopLossPrice =
+                BigDecimal(breakout.flag.lowestLow)
+                    .subtract(BigDecimal("0.01"))
+                    .setScale(2, RoundingMode.HALF_UP)
 
             val schedule = universePort.getMarketSchedule(symbol)
             val marketSession = schedule.session
             val zone = schedule.zone
             val closeTime = schedule.close
             val barZoned = barTime.atZone(zone)
-            val minutesToClose = ChronoUnit.MINUTES.between(barZoned.toLocalTime(), closeTime).toInt().coerceAtLeast(0)
-            val flagAvgVolume = breakout.flag.bars.map { it.volume.toLong() }.average().toLong()
+            val minutesToClose =
+                ChronoUnit.MINUTES
+                    .between(barZoned.toLocalTime(), closeTime)
+                    .toInt()
+                    .coerceAtLeast(0)
+            val flagAvgVolume =
+                breakout.flag.bars
+                    .map { it.volume.toLong() }
+                    .average()
+                    .toLong()
 
             val bars = buffers[symbol]?.snapshot() ?: emptyList()
             val atrAtEntry = AtrCalculator.atr(bars, strategyConfig.atrPeriod).takeIf { !it.isNaN() }
             val volumeMaRaw = VolumeAnalysis.volumeMa(bars, strategyConfig.volumeMaPeriod).takeIf { !it.isNaN() }
             val volumeMaAtEntry = volumeMaRaw?.toLong()
-            val flagpoleVolumeRatio = if (volumeMaRaw != null && volumeMaRaw > 0)
-                breakout.pole.avgVolume / volumeMaRaw else null
+            val flagpoleVolumeRatio =
+                if (volumeMaRaw != null && volumeMaRaw > 0) {
+                    breakout.pole.avgVolume / volumeMaRaw
+                } else {
+                    null
+                }
 
             val sessionOpenLocal = schedule.open
-            val sessionStart = barZoned.toLocalDate().atTime(sessionOpenLocal).atZone(zone).toInstant()
+            val sessionStart =
+                barZoned
+                    .toLocalDate()
+                    .atTime(sessionOpenLocal)
+                    .atZone(zone)
+                    .toInstant()
             val todayBars = bars.filter { !it.time.isBefore(sessionStart) }
             val dayOpenPrice = todayBars.firstOrNull()?.open
-            val vwapAtEntry = if (todayBars.isNotEmpty()) {
-                val totalVol = todayBars.sumOf { it.volume.toDouble() }
-                if (totalVol > 0) todayBars.sumOf { ((it.high + it.low + it.close) / 3.0) * it.volume } / totalVol
-                else null
-            } else null
+            val vwapAtEntry =
+                if (todayBars.isNotEmpty()) {
+                    val totalVol = todayBars.sumOf { it.volume.toDouble() }
+                    if (totalVol > 0) {
+                        todayBars.sumOf { ((it.high + it.low + it.close) / 3.0) * it.volume } / totalVol
+                    } else {
+                        null
+                    }
+                } else {
+                    null
+                }
 
             // Quality filters
-            val minutesSinceOpen = ChronoUnit.MINUTES.between(sessionStart, barTime).toInt().coerceAtLeast(0)
+            val minutesSinceOpen =
+                ChronoUnit.MINUTES
+                    .between(sessionStart, barTime)
+                    .toInt()
+                    .coerceAtLeast(0)
             if (minutesSinceOpen < strategyConfig.skipFirstRthMinutes) {
-                logger.debug { "[${symbol.value}] Entry skipped — ${minutesSinceOpen}min since open < skipFirstRthMinutes(${strategyConfig.skipFirstRthMinutes})" }
+                logger.debug {
+                    "[${symbol.value}] Entry skipped — ${minutesSinceOpen}min since open < skipFirstRthMinutes(${strategyConfig.skipFirstRthMinutes})"
+                }
                 detectors[symbol]?.reset()
                 return@launch
             }
@@ -276,32 +318,42 @@ class FlagScannerService(
             if (atrAtEntry != null && atrAtEntry > 0) {
                 val poleAtrRatio = breakout.pole.height / atrAtEntry
                 if (poleAtrRatio < strategyConfig.minFlagpoleAtrMultiple) {
-                    logger.debug { "[${symbol.value}] Entry skipped — pole/ATR ratio ${poleAtrRatio} < min(${strategyConfig.minFlagpoleAtrMultiple})" }
+                    logger.debug {
+                        "[${symbol.value}] Entry skipped — pole/ATR ratio $poleAtrRatio < min(${strategyConfig.minFlagpoleAtrMultiple})"
+                    }
                     detectors[symbol]?.reset()
                     return@launch
                 }
                 if (poleAtrRatio > strategyConfig.maxFlagpoleAtrMultiple) {
-                    logger.debug { "[${symbol.value}] Entry skipped — pole/ATR ratio ${poleAtrRatio} > max(${strategyConfig.maxFlagpoleAtrMultiple})" }
+                    logger.debug {
+                        "[${symbol.value}] Entry skipped — pole/ATR ratio $poleAtrRatio > max(${strategyConfig.maxFlagpoleAtrMultiple})"
+                    }
                     detectors[symbol]?.reset()
                     return@launch
                 }
             }
             val retracementPct = Math.abs(breakout.flag.retracement)
             if (retracementPct < strategyConfig.minFlagRetracementPct) {
-                logger.debug { "[${symbol.value}] Entry skipped — retracement ${retracementPct * 100}% < min(${strategyConfig.minFlagRetracementPct * 100}%)" }
+                logger.debug {
+                    "[${symbol.value}] Entry skipped — retracement ${retracementPct * 100}% < min(${strategyConfig.minFlagRetracementPct * 100}%)"
+                }
                 detectors[symbol]?.reset()
                 return@launch
             }
             if (breakout.flag.bars.size < strategyConfig.minFlagBarsForEntry) {
-                logger.debug { "[${symbol.value}] Entry skipped — flag bars ${breakout.flag.bars.size} < min(${strategyConfig.minFlagBarsForEntry})" }
+                logger.debug {
+                    "[${symbol.value}] Entry skipped — flag bars ${breakout.flag.bars.size} < min(${strategyConfig.minFlagBarsForEntry})"
+                }
                 detectors[symbol]?.reset()
                 return@launch
             }
 
-            val stopDistancePct = entryPrice.subtract(stopLossPrice)
-                .divide(entryPrice, 6, RoundingMode.HALF_UP)
-                .multiply(BigDecimal("100"))
-                .setScale(4, RoundingMode.HALF_UP)
+            val stopDistancePct =
+                entryPrice
+                    .subtract(stopLossPrice)
+                    .divide(entryPrice, 6, RoundingMode.HALF_UP)
+                    .multiply(BigDecimal("100"))
+                    .setScale(4, RoundingMode.HALF_UP)
 
             val request =
                 ExecutionRequest(
@@ -333,8 +385,9 @@ class FlagScannerService(
             // Serialise position count check + submission to close the TOCTOU window where two
             // concurrent breakout signals could both read below maxOpenPositions before either persists.
             entryMutex.withLock {
-                val openCount = flagPort.findOpen().size +
-                    flagPort.findByStatus(FlagStatus.PENDING).size
+                val openCount =
+                    flagPort.findOpen().size +
+                        flagPort.findByStatus(FlagStatus.PENDING).size
                 if (openCount >= config.maxOpenPositions) {
                     logger.info { "[${symbol.value}] Max open positions (${config.maxOpenPositions}) reached — skipping" }
                     detectors[symbol]?.reset()
@@ -362,41 +415,45 @@ class FlagScannerService(
     )
 
     fun getScannerStatus(): List<SymbolScannerStatus> =
-        subscriptions.keys.map { symbol ->
-            val buffer = buffers[symbol]
-            val lastCandle = buffer?.snapshot()?.lastOrNull()
-            val state = detectors[symbol]?.state ?: PatternState.Idle
-            SymbolScannerStatus(
-                symbol = symbol.value,
-                subscriptionActive = subscriptions[symbol]?.isActive == true,
-                candlesBuffered = buffer?.size ?: 0,
-                lastCandleAt = lastCandle?.time,
-                patternState = state.label(),
-                poleHeightPct = state.pole()?.let { round1(it.height / it.startBar.close * 100) },
-                flagBars = state.flag()?.bars?.size,
-                flagRetracementPct = state.flag()?.let { round1(it.retracement * 100) },
-            )
-        }.sortedBy { it.symbol }
+        subscriptions.keys
+            .map { symbol ->
+                val buffer = buffers[symbol]
+                val lastCandle = buffer?.snapshot()?.lastOrNull()
+                val state = detectors[symbol]?.state ?: PatternState.Idle
+                SymbolScannerStatus(
+                    symbol = symbol.value,
+                    subscriptionActive = subscriptions[symbol]?.isActive == true,
+                    candlesBuffered = buffer?.size ?: 0,
+                    lastCandleAt = lastCandle?.time,
+                    patternState = state.label(),
+                    poleHeightPct = state.pole()?.let { round1(it.height / it.startBar.close * 100) },
+                    flagBars = state.flag()?.bars?.size,
+                    flagRetracementPct = state.flag()?.let { round1(it.retracement * 100) },
+                )
+            }.sortedBy { it.symbol }
 
-    private fun PatternState.label(): String = when (this) {
-        is PatternState.Idle -> "Idle"
-        is PatternState.FlagpoleDetected -> "Pole (${consolidationBars} consol. bars)"
-        is PatternState.FlagForming -> "Flag forming (${flag.bars.size} bars)"
-        is PatternState.BreakoutReady -> "BREAKOUT READY"
-    }
+    private fun PatternState.label(): String =
+        when (this) {
+            is PatternState.Idle -> "Idle"
+            is PatternState.FlagpoleDetected -> "Pole ($consolidationBars consol. bars)"
+            is PatternState.FlagForming -> "Flag forming (${flag.bars.size} bars)"
+            is PatternState.BreakoutReady -> "BREAKOUT READY"
+        }
 
-    private fun PatternState.pole(): Flagpole? = when (this) {
-        is PatternState.FlagpoleDetected -> pole
-        is PatternState.FlagForming -> pole
-        is PatternState.BreakoutReady -> pole
-        else -> null
-    }
+    private fun PatternState.pole(): Flagpole? =
+        when (this) {
+            is PatternState.FlagpoleDetected -> pole
+            is PatternState.FlagForming -> pole
+            is PatternState.BreakoutReady -> pole
+            else -> null
+        }
 
-    private fun PatternState.flag(): Flag? = when (this) {
-        is PatternState.FlagForming -> flag
-        is PatternState.BreakoutReady -> flag
-        else -> null
-    }
+    private fun PatternState.flag(): Flag? =
+        when (this) {
+            is PatternState.FlagForming -> flag
+            is PatternState.BreakoutReady -> flag
+            else -> null
+        }
 
     private fun round1(v: Double): Double = Math.round(v * 10.0) / 10.0
 }

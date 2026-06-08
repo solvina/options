@@ -46,7 +46,9 @@ class StartupRecoveryService(
             val closingSymbols = closingSpreads.map { it.symbol.value }.toSet()
             val staleOrders = openOrders.filter { it.symbol in closingSymbols && it.action.equals("BUY", ignoreCase = true) }
             for (order in staleOrders) {
-                logger.info { "Recovery: cancelling stale CLOSING order ${order.orderId} (${order.symbol} ${order.action} @ ${order.limitPrice})" }
+                logger.info {
+                    "Recovery: cancelling stale CLOSING order ${order.orderId} (${order.symbol} ${order.action} @ ${order.limitPrice})"
+                }
                 runCatching { client.cancelOrder(order.orderId, OrderCancel()) }
                     .onFailure { e -> logger.warn(e) { "Recovery: failed to cancel order ${order.orderId}" } }
             }

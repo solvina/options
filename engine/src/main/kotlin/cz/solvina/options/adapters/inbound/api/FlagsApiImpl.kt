@@ -1,15 +1,5 @@
 package cz.solvina.options.adapters.inbound.api
 
-import `cz.solvina.options.flags`.api.FlagsApi
-import `cz.solvina.options.flags`.dto.FlagAnalyticsDto
-import `cz.solvina.options.flags`.dto.FlagPositionDto
-import `cz.solvina.options.flags`.dto.FlagPnlTimelinePointDto
-import `cz.solvina.options.flags`.dto.FlagStatusBreakdownDto
-import `cz.solvina.options.flags`.dto.FlagSummaryDto
-import `cz.solvina.options.flags`.dto.FlagSymbolBreakdownDto
-import `cz.solvina.options.flags`.dto.FlagTradingConfigDto
-import `cz.solvina.options.flags`.dto.PagedFlagsDto
-import `cz.solvina.options.flags`.dto.ScannerSubscribeRequestDto
 import cz.solvina.options.domain.features.flag.FlagAnalyticsService
 import cz.solvina.options.domain.features.flag.FlagManagementService
 import cz.solvina.options.domain.features.flag.FlagPort
@@ -19,6 +9,16 @@ import cz.solvina.options.domain.features.flag.config.FlagTradingConfigPort
 import cz.solvina.options.domain.features.flag.model.FlagPosition
 import cz.solvina.options.domain.features.flag.model.FlagStatus
 import cz.solvina.options.domain.features.market.MarketDataPort
+import `cz.solvina.options.flags`.api.FlagsApi
+import `cz.solvina.options.flags`.dto.FlagAnalyticsDto
+import `cz.solvina.options.flags`.dto.FlagPnlTimelinePointDto
+import `cz.solvina.options.flags`.dto.FlagPositionDto
+import `cz.solvina.options.flags`.dto.FlagStatusBreakdownDto
+import `cz.solvina.options.flags`.dto.FlagSummaryDto
+import `cz.solvina.options.flags`.dto.FlagSymbolBreakdownDto
+import `cz.solvina.options.flags`.dto.FlagTradingConfigDto
+import `cz.solvina.options.flags`.dto.PagedFlagsDto
+import `cz.solvina.options.flags`.dto.ScannerSubscribeRequestDto
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
@@ -36,7 +36,6 @@ class FlagsApiImpl(
     private val marketDataPort: MarketDataPort,
     private val flagScannerService: FlagScannerService,
 ) : FlagsApi {
-
     override suspend fun listFlags(
         status: String?,
         page: Int,
@@ -68,51 +67,55 @@ class FlagsApiImpl(
         val a = flagAnalyticsService.compute()
         return ResponseEntity.ok(
             FlagAnalyticsDto(
-                summary = FlagSummaryDto(
-                    totalTrades = a.summary.totalTrades,
-                    openTrades = a.summary.openTrades,
-                    winRate = a.summary.winRate.toBigDecimal(),
-                    totalRealizedPnl = a.summary.totalRealizedPnl,
-                    avgWinner = a.summary.avgWinner,
-                    avgLoser = a.summary.avgLoser,
-                    eodCutPct = a.summary.eodCutPct.toBigDecimal(),
-                    avgHoldMinutes = a.summary.avgHoldMinutes.toBigDecimal(),
-                    avgRMultiple = a.summary.avgRMultiple,
-                    profitFactor = a.summary.profitFactor,
-                ),
-                byStatus = a.byStatus.map { s ->
-                    FlagStatusBreakdownDto(status = s.status, count = s.count, totalPnl = s.totalPnl, avgPnl = s.avgPnl)
-                },
-                bySymbol = a.bySymbol.map { s ->
-                    FlagSymbolBreakdownDto(
-                        symbol = s.symbol,
-                        count = s.count,
-                        wins = s.wins,
-                        winRate = s.winRate.toBigDecimal(),
-                        totalPnl = s.totalPnl,
-                        avgPnl = s.avgPnl,
-                    )
-                },
-                pnlTimeline = a.pnlTimeline.map { p ->
-                    FlagPnlTimelinePointDto(date = p.date, dailyPnl = p.dailyPnl, cumulativePnl = p.cumulativePnl)
-                },
+                summary =
+                    FlagSummaryDto(
+                        totalTrades = a.summary.totalTrades,
+                        openTrades = a.summary.openTrades,
+                        winRate = a.summary.winRate.toBigDecimal(),
+                        totalRealizedPnl = a.summary.totalRealizedPnl,
+                        avgWinner = a.summary.avgWinner,
+                        avgLoser = a.summary.avgLoser,
+                        eodCutPct = a.summary.eodCutPct.toBigDecimal(),
+                        avgHoldMinutes = a.summary.avgHoldMinutes.toBigDecimal(),
+                        avgRMultiple = a.summary.avgRMultiple,
+                        profitFactor = a.summary.profitFactor,
+                    ),
+                byStatus =
+                    a.byStatus.map { s ->
+                        FlagStatusBreakdownDto(status = s.status, count = s.count, totalPnl = s.totalPnl, avgPnl = s.avgPnl)
+                    },
+                bySymbol =
+                    a.bySymbol.map { s ->
+                        FlagSymbolBreakdownDto(
+                            symbol = s.symbol,
+                            count = s.count,
+                            wins = s.wins,
+                            winRate = s.winRate.toBigDecimal(),
+                            totalPnl = s.totalPnl,
+                            avgPnl = s.avgPnl,
+                        )
+                    },
+                pnlTimeline =
+                    a.pnlTimeline.map { p ->
+                        FlagPnlTimelinePointDto(date = p.date, dailyPnl = p.dailyPnl, cumulativePnl = p.cumulativePnl)
+                    },
             ),
         )
     }
 
-    override suspend fun getFlagConfig(): ResponseEntity<FlagTradingConfigDto> =
-        ResponseEntity.ok(flagTradingConfigPort.get().toDto())
+    override suspend fun getFlagConfig(): ResponseEntity<FlagTradingConfigDto> = ResponseEntity.ok(flagTradingConfigPort.get().toDto())
 
     override suspend fun updateFlagConfig(flagTradingConfigDto: FlagTradingConfigDto): ResponseEntity<FlagTradingConfigDto> {
-        val updated = flagTradingConfigPort.update(
-            FlagTradingConfig(
-                riskPerTrade = flagTradingConfigDto.riskPerTrade,
-                maxOpenPositions = flagTradingConfigDto.maxOpenPositions,
-                enabled = flagTradingConfigDto.enabled,
-                entryBlockMinutesBeforeClose = flagTradingConfigDto.entryBlockMinutesBeforeClose,
-                eodLiqMinutesBeforeClose = flagTradingConfigDto.eodLiqMinutesBeforeClose,
-            ),
-        )
+        val updated =
+            flagTradingConfigPort.update(
+                FlagTradingConfig(
+                    riskPerTrade = flagTradingConfigDto.riskPerTrade,
+                    maxOpenPositions = flagTradingConfigDto.maxOpenPositions,
+                    enabled = flagTradingConfigDto.enabled,
+                    entryBlockMinutesBeforeClose = flagTradingConfigDto.entryBlockMinutesBeforeClose,
+                    eodLiqMinutesBeforeClose = flagTradingConfigDto.eodLiqMinutesBeforeClose,
+                ),
+            )
         return ResponseEntity.ok(updated.toDto())
     }
 
@@ -141,14 +144,19 @@ class FlagsApiImpl(
     }
 
     private suspend fun FlagPosition.toDto(): FlagPositionDto {
-        val livePrice = if (status == FlagStatus.OPEN || status == FlagStatus.PENDING) {
-            runCatching { marketDataPort.getUnderlyingPrice(symbol).amount }.getOrNull()
-        } else null
-        val unrealized = livePrice?.let { price ->
-            price.subtract(entryPrice)
-                .multiply(java.math.BigDecimal(shares))
-                .setScale(2, java.math.RoundingMode.HALF_UP)
-        }
+        val livePrice =
+            if (status == FlagStatus.OPEN || status == FlagStatus.PENDING) {
+                runCatching { marketDataPort.getUnderlyingPrice(symbol).amount }.getOrNull()
+            } else {
+                null
+            }
+        val unrealized =
+            livePrice?.let { price ->
+                price
+                    .subtract(entryPrice)
+                    .multiply(java.math.BigDecimal(shares))
+                    .setScale(2, java.math.RoundingMode.HALF_UP)
+            }
         return FlagPositionDto(
             id = requireNotNull(id),
             symbol = symbol.value,

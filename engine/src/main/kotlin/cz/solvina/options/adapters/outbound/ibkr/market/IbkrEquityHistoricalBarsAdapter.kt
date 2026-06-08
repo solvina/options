@@ -39,11 +39,16 @@ class IbkrEquityHistoricalBarsAdapter(
     private val client: EClientSocket,
     private val contractFactory: IbkrContractFactory,
 ) : EquityHistoricalBarsPort {
+    override suspend fun fetch5MinBars(
+        symbol: Symbol,
+        days: Int,
+    ): List<FiveMinuteBar> = fetchBarsRaw(symbol, endDateTime = "", durationStr = "$days D")
 
-    override suspend fun fetch5MinBars(symbol: Symbol, days: Int): List<FiveMinuteBar> =
-        fetchBarsRaw(symbol, endDateTime = "", durationStr = "$days D")
-
-    override suspend fun fetch5MinBarsForRange(symbol: Symbol, from: LocalDate, to: LocalDate): List<FiveMinuteBar> {
+    override suspend fun fetch5MinBarsForRange(
+        symbol: Symbol,
+        from: LocalDate,
+        to: LocalDate,
+    ): List<FiveMinuteBar> {
         val allBars = mutableListOf<FiveMinuteBar>()
         var chunkTo = to
         while (!chunkTo.isBefore(from)) {
@@ -52,11 +57,12 @@ class IbkrEquityHistoricalBarsAdapter(
             // Use midnight UTC of the day after chunkTo as the IBKR end timestamp
             val endDt = chunkTo.plusDays(1).atStartOfDay(ZoneOffset.UTC).format(END_DATE_FORMAT)
             logger.debug { "[${symbol.value}] Fetching chunk $chunkFrom..$chunkTo (${days}d, endDt=$endDt)" }
-            val bars = runCatching { fetchBarsRaw(symbol, endDt, "${days} D") }
-                .getOrElse { e ->
-                    logger.warn { "[${symbol.value}] Chunk $chunkFrom..$chunkTo failed: ${e.message}" }
-                    emptyList()
-                }
+            val bars =
+                runCatching { fetchBarsRaw(symbol, endDt, "$days D") }
+                    .getOrElse { e ->
+                        logger.warn { "[${symbol.value}] Chunk $chunkFrom..$chunkTo failed: ${e.message}" }
+                        emptyList()
+                    }
             allBars.addAll(bars)
             chunkTo = chunkFrom.minusDays(1)
         }
@@ -71,35 +77,45 @@ class IbkrEquityHistoricalBarsAdapter(
         callbackFlow {
             val reqId = registry.nextReqId()
             val contract = contractFactory.stockContract(symbol)
-            registry.pendingRawBars[reqId] = PendingRawBarsRequest(
-                onBar = { bar -> parseBar(bar)?.let { trySend(it) } },
-                onEnd = { close() },
-                onError = { e -> close(e) },
-            )
+            registry.pendingRawBars[reqId] =
+                PendingRawBarsRequest(
+                    onBar = { bar -> parseBar(bar)?.let { trySend(it) } },
+                    onEnd = { close() },
+                    onError = { e -> close(e) },
+                )
             logger.debug { "[${symbol.value}] reqHistoricalData reqId=$reqId endDateTime='$endDateTime' duration='$durationStr'" }
             client.reqHistoricalData(
-                reqId, contract, endDateTime, durationStr,
-                /* barSizeSetting */ "5 mins",
-                /* whatToShow */ "TRADES",
-                /* useRTH */ 1,
-                /* formatDate */ 2,
-                /* keepUpToDate */ false,
-                /* chartOptions */ null,
+                reqId,
+                contract,
+                endDateTime,
+                durationStr,
+                // barSizeSetting
+                "5 mins",
+                // whatToShow
+                "TRADES",
+                // useRTH
+                1,
+                // formatDate
+                2,
+                // keepUpToDate
+                false,
+                // chartOptions
+                null,
             )
             awaitClose { registry.pendingRawBars.remove(reqId) }
-        }
-            .buffer(Channel.UNLIMITED)
+        }.buffer(Channel.UNLIMITED)
             .toList()
 
     private fun parseBar(bar: Bar): FiveMinuteBar? =
         runCatching {
             val epochSec = bar.time().trim().toLongOrNull()
-            val time: Instant = if (epochSec != null) {
-                Instant.ofEpochSecond(epochSec)
-            } else {
-                val ldt = LocalDateTime.parse(bar.time().trim().take(17), BAR_TIME_FORMAT)
-                ldt.atZone(ET).toInstant()
-            }
+            val time: Instant =
+                if (epochSec != null) {
+                    Instant.ofEpochSecond(epochSec)
+                } else {
+                    val ldt = LocalDateTime.parse(bar.time().trim().take(17), BAR_TIME_FORMAT)
+                    ldt.atZone(ET).toInstant()
+                }
             FiveMinuteBar(
                 time = time,
                 open = bar.open(),

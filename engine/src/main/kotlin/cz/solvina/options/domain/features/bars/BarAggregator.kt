@@ -16,6 +16,7 @@ class BarAggregator(
 ) {
     private val buffer = ArrayDeque<RealTimeBar>(60)
     private var lastBarTime: Long? = null
+
     // Start in boundary-wait mode: discard bars until the first 5-min boundary so the
     // first emitted candle aligns with historical bars stored in InfluxDB.
     private var awaitingBoundary = true

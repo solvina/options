@@ -7,7 +7,6 @@ import org.springframework.context.annotation.Configuration
 
 @Configuration
 class InfluxDbConfig {
-
     @Bean(destroyMethod = "close")
     fun influxDbClient(props: InfluxDbProperties): InfluxDBClientKotlin =
         InfluxDBClientKotlinFactory.create(

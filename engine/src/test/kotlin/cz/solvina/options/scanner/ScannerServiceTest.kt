@@ -44,7 +44,6 @@ import kotlin.test.assertEquals
  *   — For all other symbols the selector is invoked; a non-null result triggers an async execution.
  */
 class ScannerServiceTest {
-
     // -------------------------------------------------------------------------
     // Shared fixtures
     // -------------------------------------------------------------------------
@@ -58,21 +57,22 @@ class ScannerServiceTest {
     // (see ScanCandidateSelectorTest). Here we only need to control whether it returns a result.
     private val selector = mockk<ScanCandidateSelector>()
 
-    private val dummyRequest = TradeExecutionRequest(
-        soldContract = OptionContract(spy, expiry, BigDecimal("480"), OptionType.PUT),
-        boughtContract = OptionContract(spy, expiry, BigDecimal("475"), OptionType.PUT),
-        underlyingSymbol = spy,
-        targetCredit = BigDecimal("0.80"),
-        floorCredit = BigDecimal("0.40"),
-        maxRiskPerShare = BigDecimal("4.20"),
-        ivRankAtEntry = 35.0,
-        soldBid = BigDecimal("1.40"),
-        soldAsk = BigDecimal("1.60"),
-        boughtBid = BigDecimal("0.65"),
-        boughtAsk = BigDecimal("0.75"),
-        boughtMid = BigDecimal("0.70"),
-        underlyingPriceAtEntry = BigDecimal("500"),
-    )
+    private val dummyRequest =
+        TradeExecutionRequest(
+            soldContract = OptionContract(spy, expiry, BigDecimal("480"), OptionType.PUT),
+            boughtContract = OptionContract(spy, expiry, BigDecimal("475"), OptionType.PUT),
+            underlyingSymbol = spy,
+            targetCredit = BigDecimal("0.80"),
+            floorCredit = BigDecimal("0.40"),
+            maxRiskPerShare = BigDecimal("4.20"),
+            ivRankAtEntry = 35.0,
+            soldBid = BigDecimal("1.40"),
+            soldAsk = BigDecimal("1.60"),
+            boughtBid = BigDecimal("0.65"),
+            boughtAsk = BigDecimal("0.75"),
+            boughtMid = BigDecimal("0.70"),
+            underlyingPriceAtEntry = BigDecimal("500"),
+        )
 
     // -------------------------------------------------------------------------
     // maxOpenSpreads gate
@@ -185,30 +185,41 @@ class ScannerServiceTest {
         watchlist: List<Symbol> = listOf(spy, qqq),
         scope: CoroutineScope = CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO),
     ): ScannerService {
-        val universePort = object : UniversePort {
-            override fun getWatchlist() = watchlist
-            override fun getActiveSymbols() = watchlist
-            override fun isMarketOpen(symbol: Symbol) = true
-            override fun getMarketSchedule(symbol: Symbol) = cz.solvina.options.domain.features.universe.MarketSchedule(
-                zone = java.time.ZoneId.of("America/New_York"),
-                open = java.time.LocalTime.of(9, 30),
-                close = java.time.LocalTime.of(16, 0),
-                session = "US",
-            )
-            override suspend fun getAll() = emptyList<InstrumentConfig>()
-            override suspend fun get(symbol: Symbol) = null
-            override suspend fun save(config: InstrumentConfig) = config
-            override suspend fun delete(symbol: Symbol) {}
-        }
+        val universePort =
+            object : UniversePort {
+                override fun getWatchlist() = watchlist
 
-        val accountPort = object : AccountPort {
-            override val accountDetail = MutableStateFlow(
-                AccountDetail(
-                    totalCapital = Money(BigDecimal("50000")),
-                    availableFunds = Money(BigDecimal("40000")),
-                ),
-            )
-        }
+                override fun getActiveSymbols() = watchlist
+
+                override fun isMarketOpen(symbol: Symbol) = true
+
+                override fun getMarketSchedule(symbol: Symbol) =
+                    cz.solvina.options.domain.features.universe.MarketSchedule(
+                        zone = java.time.ZoneId.of("America/New_York"),
+                        open = java.time.LocalTime.of(9, 30),
+                        close = java.time.LocalTime.of(16, 0),
+                        session = "US",
+                    )
+
+                override suspend fun getAll() = emptyList<InstrumentConfig>()
+
+                override suspend fun get(symbol: Symbol) = null
+
+                override suspend fun save(config: InstrumentConfig) = config
+
+                override suspend fun delete(symbol: Symbol) {}
+            }
+
+        val accountPort =
+            object : AccountPort {
+                override val accountDetail =
+                    MutableStateFlow(
+                        AccountDetail(
+                            totalCapital = Money(BigDecimal("50000")),
+                            availableFunds = Money(BigDecimal("40000")),
+                        ),
+                    )
+            }
 
         // Default: selector returns no candidate (symbol is skipped after evaluation)
         coEvery { selector.select(any(), any()) } returns null
@@ -231,18 +242,20 @@ class ScannerServiceTest {
     ) = BullPutSpread(
         id = UUID.randomUUID(),
         symbol = symbol,
-        soldLeg = SpreadLeg(
-            OptionContract(symbol, expiry, BigDecimal("480"), OptionType.PUT),
-            cz.solvina.options.domain.features.order.LegAction.SELL,
-            Money(BigDecimal("1.50")),
-            orderId = 1,
-        ),
-        boughtLeg = SpreadLeg(
-            OptionContract(symbol, expiry, BigDecimal("475"), OptionType.PUT),
-            cz.solvina.options.domain.features.order.LegAction.BUY,
-            Money(BigDecimal("0.70")),
-            orderId = 2,
-        ),
+        soldLeg =
+            SpreadLeg(
+                OptionContract(symbol, expiry, BigDecimal("480"), OptionType.PUT),
+                cz.solvina.options.domain.features.order.LegAction.SELL,
+                Money(BigDecimal("1.50")),
+                orderId = 1,
+            ),
+        boughtLeg =
+            SpreadLeg(
+                OptionContract(symbol, expiry, BigDecimal("475"), OptionType.PUT),
+                cz.solvina.options.domain.features.order.LegAction.BUY,
+                Money(BigDecimal("0.70")),
+                orderId = 2,
+            ),
         creditPerShare = BigDecimal("0.80"),
         maxRiskPerShare = BigDecimal("4.20"),
         status = status,
@@ -263,20 +276,29 @@ class ScannerServiceTest {
         private val derivedOpenCount = if (openCount >= 0) openCount.toLong() else openSpreads.size.toLong()
 
         override suspend fun findOpen() = openSpreads
-        override suspend fun findByStatus(status: SpreadStatus) = when (status) {
-            SpreadStatus.CLOSING -> closingSpreads
-            SpreadStatus.PENDING -> pendingSpreads
-            else -> emptyList()
-        }
-        override suspend fun countByStatus(status: SpreadStatus) =
-            if (status == SpreadStatus.OPEN) derivedOpenCount else 0L
+
+        override suspend fun findByStatus(status: SpreadStatus) =
+            when (status) {
+                SpreadStatus.CLOSING -> closingSpreads
+                SpreadStatus.PENDING -> pendingSpreads
+                else -> emptyList()
+            }
+
+        override suspend fun countByStatus(status: SpreadStatus) = if (status == SpreadStatus.OPEN) derivedOpenCount else 0L
 
         override suspend fun save(spread: BullPutSpread) = spread
+
         override suspend fun update(spread: BullPutSpread) = spread
+
         override suspend fun findById(id: UUID) = null
+
         override suspend fun findAll() = emptyList<BullPutSpread>()
-        override suspend fun findPage(status: SpreadStatus?, page: Int, size: Int) =
-            SpreadPage(emptyList(), 0, 0, page, size)
+
+        override suspend fun findPage(
+            status: SpreadStatus?,
+            page: Int,
+            size: Int,
+        ) = SpreadPage(emptyList(), 0, 0, page, size)
     }
 
     /**
@@ -298,6 +320,9 @@ class ScannerServiceTest {
 
         override fun isCoolingDown(symbol: Symbol) = symbol in coolingDown
 
-        override fun blockEntry(symbol: Symbol, duration: java.time.Duration) {}
+        override fun blockEntry(
+            symbol: Symbol,
+            duration: java.time.Duration,
+        ) {}
     }
 }

@@ -10,16 +10,27 @@ interface BacktestableStrategy {
      * Called once before simulation starts with pre-period warm-up bars only.
      * Implementations should seed internal state (buffers, detectors) but must not trade.
      */
-    fun initialize(symbols: List<Symbol>, warmupBars: Map<Symbol, List<FiveMinuteBar>>)
+    fun initialize(
+        symbols: List<Symbol>,
+        warmupBars: Map<Symbol, List<FiveMinuteBar>>,
+    )
 
     /**
      * Called for every bar in the backtest period, in chronological order.
      * Returns zero or more entry signals; the engine handles fill simulation.
      */
-    fun onBar(symbol: Symbol, bar: FiveMinuteBar, account: BacktestAccountView): List<BacktestSignal>
+    fun onBar(
+        symbol: Symbol,
+        bar: FiveMinuteBar,
+        account: BacktestAccountView,
+    ): List<BacktestSignal>
 
     /** Engine notifies the strategy that a pending entry was filled at [fillPrice]. */
-    fun onEntryFilled(tradeId: String, fillPrice: BigDecimal, filledAt: Instant)
+    fun onEntryFilled(
+        tradeId: String,
+        fillPrice: BigDecimal,
+        filledAt: Instant,
+    )
 
     /** Engine notifies the strategy that a pending entry expired unfilled (EOD cancel). */
     fun onEntryExpired(tradeId: String)

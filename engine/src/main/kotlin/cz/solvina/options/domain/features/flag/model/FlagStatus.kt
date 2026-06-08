@@ -24,4 +24,12 @@ enum class FlagStatus {
 }
 
 val FlagStatus.isTerminal: Boolean
-    get() = this in setOf(FlagStatus.CLOSED_PROFIT, FlagStatus.CLOSED_STOP, FlagStatus.CLOSED_EOD, FlagStatus.CLOSED_MANUAL, FlagStatus.ENTRY_TIMEOUT)
+    get() =
+        this in
+            setOf(
+                FlagStatus.CLOSED_PROFIT,
+                FlagStatus.CLOSED_STOP,
+                FlagStatus.CLOSED_EOD,
+                FlagStatus.CLOSED_MANUAL,
+                FlagStatus.ENTRY_TIMEOUT,
+            )

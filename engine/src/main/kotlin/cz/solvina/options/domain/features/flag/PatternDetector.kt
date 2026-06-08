@@ -111,7 +111,11 @@ class PatternDetector(
         val lowestLow = consolBars.minOf { it.low }
         val retracement = (pole.endBar.high - lowestLow) / pole.height
         if (retracement > config.maxRetracementPct) {
-            logger.debug { "[$symbol] Retracement ${"%.1f".format(retracement * 100)}% > max ${config.maxRetracementPct * 100}% — resetting" }
+            logger.debug {
+                "[$symbol] Retracement ${"%.1f".format(
+                    retracement * 100,
+                )}% > max ${config.maxRetracementPct * 100}% — resetting"
+            }
             return PatternState.Idle
         }
 
@@ -131,7 +135,9 @@ class PatternDetector(
         val volMa = VolumeAnalysis.volumeMa(bars, config.volumeMaPeriod)
         val consolidationAvgVol = consolBars.map { it.volume.toDouble() }.average()
         if (!volMa.isNaN() && consolidationAvgVol >= volMa) {
-            logger.debug { "[$symbol] Flag volume not drying up (${consolidationAvgVol.toLong()} >= ${volMa.toLong()}) — continuing to watch" }
+            logger.debug {
+                "[$symbol] Flag volume not drying up (${consolidationAvgVol.toLong()} >= ${volMa.toLong()}) — continuing to watch"
+            }
             // Not a hard rejection — keep watching; volume may dry up
         }
 
@@ -193,7 +199,14 @@ class PatternDetector(
 
         val upperLine = LinearRegression.fit(updatedBars.map { it.high }) ?: return PatternState.FlagForming(pole, flag)
         val lowerLine = LinearRegression.fit(updatedBars.map { it.low }) ?: return PatternState.FlagForming(pole, flag)
-        val updatedFlag = flag.copy(bars = updatedBars, lowestLow = lowestLow, upperResistance = upperLine, lowerSupport = lowerLine, retracement = retracement)
+        val updatedFlag =
+            flag.copy(
+                bars = updatedBars,
+                lowestLow = lowestLow,
+                upperResistance = upperLine,
+                lowerSupport = lowerLine,
+                retracement = retracement,
+            )
 
         return PatternState.FlagForming(pole, updatedFlag)
     }

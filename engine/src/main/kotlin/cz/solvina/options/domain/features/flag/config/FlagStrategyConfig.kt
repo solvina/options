@@ -17,8 +17,6 @@ data class FlagStrategyConfig(
     val flagMaxBars: Int = 20,
     val maxRetracementPct: Double = 0.50,
     val historicalBootstrapDays: Int = 3,
-
-    // Entry quality filters — default to permissive (no filter) so existing live behaviour is unchanged
     /** Skip entries for this many minutes after session open (avoids opening-bell chop). */
     val skipFirstRthMinutes: Int = 0,
     /** Require downward-sloping flag channel (rising wedge is not a bull flag). */

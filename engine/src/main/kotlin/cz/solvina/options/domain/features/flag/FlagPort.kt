@@ -6,12 +6,25 @@ import java.util.UUID
 
 interface FlagPort {
     suspend fun save(position: FlagPosition): FlagPosition
+
     suspend fun update(position: FlagPosition): FlagPosition
+
     suspend fun findById(id: UUID): FlagPosition?
+
     suspend fun findOpen(): List<FlagPosition>
+
     suspend fun findAll(): List<FlagPosition>
-    suspend fun findPage(status: FlagStatus?, page: Int, size: Int, sort: String = "openedAt", sortDir: String = "DESC"): FlagPage
+
+    suspend fun findPage(
+        status: FlagStatus?,
+        page: Int,
+        size: Int,
+        sort: String = "openedAt",
+        sortDir: String = "DESC",
+    ): FlagPage
+
     suspend fun countByStatus(status: FlagStatus): Long
+
     suspend fun findByStatus(status: FlagStatus): List<FlagPosition>
 }
 

@@ -12,11 +12,9 @@ import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.features.scanner.ScannerConfig
 import cz.solvina.options.domain.features.spread.SpreadManagementService
 import cz.solvina.options.domain.features.spread.SpreadPort
-import cz.solvina.options.domain.features.spread.SpreadPage
 import cz.solvina.options.domain.features.spread.model.BullPutSpread
 import cz.solvina.options.domain.features.spread.model.SpreadLeg
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
-import cz.solvina.options.domain.features.universe.InstrumentConfig
 import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.features.volatility.VolatilityPort
 import cz.solvina.options.domain.models.IvRank
@@ -39,7 +37,6 @@ import java.time.Instant
 import java.time.LocalDate
 import java.util.UUID
 import kotlin.test.assertEquals
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -55,7 +52,6 @@ import kotlin.test.assertTrue
  *                  prices so a recovered SL can be relabeled CLOSED_PROFIT.
  */
 class SpreadManagementServiceTest {
-
     // -------------------------------------------------------------------------
     // Shared fixtures
     // -------------------------------------------------------------------------
@@ -114,9 +110,10 @@ class SpreadManagementServiceTest {
         marketDataPort = marketDataPort,
         orderPort = orderPort,
         universePort = universePort,
-        volatilityPort = object : VolatilityPort {
-            override suspend fun getIvRank(symbol: Symbol) = IvRank(35.0, 0.25, Instant.now())
-        },
+        volatilityPort =
+            object : VolatilityPort {
+                override suspend fun getIvRank(symbol: Symbol) = IvRank(35.0, 0.25, Instant.now())
+            },
         executionPort = executionPort,
         config = config,
         clock = clock,
@@ -362,10 +359,11 @@ class SpreadManagementServiceTest {
             //
             // Original trigger: CLOSED_STOP (stored as closeReason).
             // Current market:  spread value = $0.20  ≤  TP threshold $0.50 → CLOSED_PROFIT.
-            val closingSpread = buildOpenSpread(creditPerShare = BigDecimal("1.00")).copy(
-                status = SpreadStatus.CLOSING,
-                closeReason = SpreadStatus.CLOSED_STOP.name,
-            )
+            val closingSpread =
+                buildOpenSpread(creditPerShare = BigDecimal("1.00")).copy(
+                    status = SpreadStatus.CLOSING,
+                    closeReason = SpreadStatus.CLOSED_STOP.name,
+                )
 
             val spreadPort = mockk<SpreadPort>()
             val marketDataPort = mockk<MarketDataPort>()
@@ -398,10 +396,11 @@ class SpreadManagementServiceTest {
             // Status stays CLOSED_STOP and the re-entry block is applied.
             //
             // spread value = $1.60  ≥  SL threshold $1.50 → CLOSED_STOP + block.
-            val closingSpread = buildOpenSpread(creditPerShare = BigDecimal("1.00")).copy(
-                status = SpreadStatus.CLOSING,
-                closeReason = SpreadStatus.CLOSED_STOP.name,
-            )
+            val closingSpread =
+                buildOpenSpread(creditPerShare = BigDecimal("1.00")).copy(
+                    status = SpreadStatus.CLOSING,
+                    closeReason = SpreadStatus.CLOSED_STOP.name,
+                )
 
             val spreadPort = mockk<SpreadPort>()
             val marketDataPort = mockk<MarketDataPort>()
@@ -433,10 +432,11 @@ class SpreadManagementServiceTest {
             //
             // Original trigger: CLOSED_TIME.
             // spread value = $0.80 — above TP($0.50) and below SL($1.50) → neither rule applies.
-            val closingSpread = buildOpenSpread(creditPerShare = BigDecimal("1.00")).copy(
-                status = SpreadStatus.CLOSING,
-                closeReason = SpreadStatus.CLOSED_TIME.name,
-            )
+            val closingSpread =
+                buildOpenSpread(creditPerShare = BigDecimal("1.00")).copy(
+                    status = SpreadStatus.CLOSING,
+                    closeReason = SpreadStatus.CLOSED_TIME.name,
+                )
 
             val spreadPort = mockk<SpreadPort>()
             val marketDataPort = mockk<MarketDataPort>()
@@ -545,18 +545,23 @@ class SpreadManagementServiceTest {
      * Captures [blockEntry] calls so tests can assert which symbol was blocked and for how long.
      */
     private class RecordingExecutionPort : TradeExecutionPort {
-        data class BlockedEntry(val symbol: Symbol, val duration: Duration)
+        data class BlockedEntry(
+            val symbol: Symbol,
+            val duration: Duration,
+        )
 
         val blockedEntries = mutableListOf<BlockedEntry>()
 
-        override suspend fun execute(request: TradeExecutionRequest) =
-            TradeExecutionResult(ExecutionOutcome.DIAGNOSTIC_SKIPPED)
+        override suspend fun execute(request: TradeExecutionRequest) = TradeExecutionResult(ExecutionOutcome.DIAGNOSTIC_SKIPPED)
 
         override fun isInFlight(symbol: Symbol) = false
 
         override fun isCoolingDown(symbol: Symbol) = false
 
-        override fun blockEntry(symbol: Symbol, duration: Duration) {
+        override fun blockEntry(
+            symbol: Symbol,
+            duration: Duration,
+        ) {
             blockedEntries.add(BlockedEntry(symbol, duration))
         }
     }

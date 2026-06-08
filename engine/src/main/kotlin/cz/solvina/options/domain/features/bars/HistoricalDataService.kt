@@ -35,7 +35,11 @@ class HistoricalDataService(
     private val jobs = ConcurrentHashMap<String, FetchJob>()
     private val scope = CoroutineScope(Dispatchers.IO)
 
-    suspend fun getCoverage(symbols: List<Symbol>, from: LocalDate, to: LocalDate): Map<Symbol, Map<LocalDate, Int>> {
+    suspend fun getCoverage(
+        symbols: List<Symbol>,
+        from: LocalDate,
+        to: LocalDate,
+    ): Map<Symbol, Map<LocalDate, Int>> {
         val result = mutableMapOf<Symbol, Map<LocalDate, Int>>()
         for (symbol in symbols) {
             result[symbol] = barStorePort.coverageByDay(symbol, from, to)
@@ -43,19 +47,24 @@ class HistoricalDataService(
         return result
     }
 
-    fun startFetch(symbols: List<Symbol>, from: LocalDate, to: LocalDate): FetchJob {
+    fun startFetch(
+        symbols: List<Symbol>,
+        from: LocalDate,
+        to: LocalDate,
+    ): FetchJob {
         val id = UUID.randomUUID().toString()
-        val job = FetchJob(
-            id = id,
-            symbols = symbols,
-            from = from,
-            to = to,
-            status = FetchJobStatus.RUNNING,
-            barsWritten = 0,
-            error = null,
-            startedAt = Instant.now(),
-            finishedAt = null,
-        )
+        val job =
+            FetchJob(
+                id = id,
+                symbols = symbols,
+                from = from,
+                to = to,
+                status = FetchJobStatus.RUNNING,
+                barsWritten = 0,
+                error = null,
+                startedAt = Instant.now(),
+                finishedAt = null,
+            )
         jobs[id] = job
         scope.launch {
             var totalBars = 0
@@ -70,12 +79,13 @@ class HistoricalDataService(
                     failure = e.message
                 }
             }
-            jobs[id] = jobs[id]!!.copy(
-                status = if (failure != null && totalBars == 0) FetchJobStatus.FAILED else FetchJobStatus.DONE,
-                barsWritten = totalBars,
-                error = failure,
-                finishedAt = Instant.now(),
-            )
+            jobs[id] =
+                jobs[id]!!.copy(
+                    status = if (failure != null && totalBars == 0) FetchJobStatus.FAILED else FetchJobStatus.DONE,
+                    barsWritten = totalBars,
+                    error = failure,
+                    finishedAt = Instant.now(),
+                )
         }
         return job
     }

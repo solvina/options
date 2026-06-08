@@ -46,5 +46,8 @@ interface BracketOrderPort {
      * Used for EOD liquidation and manual closes of OPEN positions.
      * Returns the new order ID.
      */
-    suspend fun submitMarketSell(symbol: Symbol, shares: Int): Int
+    suspend fun submitMarketSell(
+        symbol: Symbol,
+        shares: Int,
+    ): Int
 }

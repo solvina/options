@@ -12,5 +12,8 @@ interface TradeExecutionPort {
 
     fun isCoolingDown(symbol: Symbol): Boolean
 
-    fun blockEntry(symbol: Symbol, duration: Duration)
+    fun blockEntry(
+        symbol: Symbol,
+        duration: Duration,
+    )
 }

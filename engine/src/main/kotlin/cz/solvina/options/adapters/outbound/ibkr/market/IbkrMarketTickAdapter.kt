@@ -116,22 +116,24 @@ class IbkrMarketTickAdapter(
                 }
             // onUpdate doubles as fallback for bid/ask when reqTickByTickData is not supported
             // (e.g. paper account gets error 10189 + then delayed data via reqMarketDataType(3))
-            registry.pendingContinuousMarketData[soldGreeksReqId] = PendingContinuousMarketDataRequest(
-                onUpdate = { snap ->
-                    val bid = snap.bid.takeIf { !it.isNaN() && it > 0 } ?: return@PendingContinuousMarketDataRequest
-                    val ask = snap.ask.takeIf { !it.isNaN() && it > 0 } ?: return@PendingContinuousMarketDataRequest
-                    soldPrices.set(LegPrices(bid = bid, ask = ask))
-                    emitIfReady()
-                },
-            )
-            registry.pendingContinuousMarketData[boughtGreeksReqId] = PendingContinuousMarketDataRequest(
-                onUpdate = { snap ->
-                    val bid = snap.bid.takeIf { !it.isNaN() && it > 0 } ?: return@PendingContinuousMarketDataRequest
-                    val ask = snap.ask.takeIf { !it.isNaN() && it > 0 } ?: return@PendingContinuousMarketDataRequest
-                    boughtPrices.set(LegPrices(bid = bid, ask = ask))
-                    emitIfReady()
-                },
-            )
+            registry.pendingContinuousMarketData[soldGreeksReqId] =
+                PendingContinuousMarketDataRequest(
+                    onUpdate = { snap ->
+                        val bid = snap.bid.takeIf { !it.isNaN() && it > 0 } ?: return@PendingContinuousMarketDataRequest
+                        val ask = snap.ask.takeIf { !it.isNaN() && it > 0 } ?: return@PendingContinuousMarketDataRequest
+                        soldPrices.set(LegPrices(bid = bid, ask = ask))
+                        emitIfReady()
+                    },
+                )
+            registry.pendingContinuousMarketData[boughtGreeksReqId] =
+                PendingContinuousMarketDataRequest(
+                    onUpdate = { snap ->
+                        val bid = snap.bid.takeIf { !it.isNaN() && it > 0 } ?: return@PendingContinuousMarketDataRequest
+                        val ask = snap.ask.takeIf { !it.isNaN() && it > 0 } ?: return@PendingContinuousMarketDataRequest
+                        boughtPrices.set(LegPrices(bid = bid, ask = ask))
+                        emitIfReady()
+                    },
+                )
 
             val soldContract4Mkt = contractForMktData(soldContract)
             val boughtContract4Mkt = contractForMktData(boughtContract)
@@ -167,7 +169,10 @@ class IbkrMarketTickAdapter(
     private fun contractForMktData(contract: OptionContract): Contract {
         val key = OptionContractKey(contract.symbol, contract.expiry, contract.strike, contract.type)
         val conId = contractCache.getCachedOptionConId(key)
-        return if (conId != null) contractFactory.conIdContract(conId)
-               else contractFactory.optionContract(contract)
+        return if (conId != null) {
+            contractFactory.conIdContract(conId)
+        } else {
+            contractFactory.optionContract(contract)
+        }
     }
 }

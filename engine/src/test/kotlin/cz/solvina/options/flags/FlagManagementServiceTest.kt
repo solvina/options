@@ -2,9 +2,9 @@ package cz.solvina.options.flags
 
 import cz.solvina.options.domain.features.flag.BracketOrderPort
 import cz.solvina.options.domain.features.flag.EntryFill
+import cz.solvina.options.domain.features.flag.FlagManagementService
 import cz.solvina.options.domain.features.flag.FlagPage
 import cz.solvina.options.domain.features.flag.FlagPort
-import cz.solvina.options.domain.features.flag.FlagManagementService
 import cz.solvina.options.domain.features.flag.config.FlagTradingConfig
 import cz.solvina.options.domain.features.flag.config.FlagTradingConfigPort
 import cz.solvina.options.domain.features.flag.model.FlagPosition
@@ -22,8 +22,6 @@ import java.time.Instant
 import java.time.ZoneOffset
 import java.util.UUID
 import kotlin.test.assertEquals
-import kotlin.test.assertNotNull
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -43,7 +41,6 @@ import kotlin.test.assertTrue
  *                 at market. Status transitions to CLOSED_EOD.
  */
 class FlagManagementServiceTest {
-
     // -------------------------------------------------------------------------
     // Shared fixtures
     // -------------------------------------------------------------------------
@@ -67,7 +64,7 @@ class FlagManagementServiceTest {
         profitTargetOrderId = 3,
         entryPrice = entryPrice,
         stopLossPrice = stopLossPrice,
-        profitTargetPrice = BigDecimal("156.00"),  // entry + 2 × (entry − stop) = 150 + 6 = 156
+        profitTargetPrice = BigDecimal("156.00"), // entry + 2 × (entry − stop) = 150 + 6 = 156
         shares = shares,
         riskAmount = BigDecimal("100.00"),
         flagpoleHeight = null,
@@ -132,12 +129,13 @@ class FlagManagementServiceTest {
         runTest {
             // entry=$150, highWatermark=$155, shares=10
             // MFE = ($155 − $150) × 10 = $50
-            val position = openPosition(
-                entryPrice = BigDecimal("150.00"),
-                shares = 10,
-                highestPriceSeen = BigDecimal("155.00"),
-                lowestPriceSeen = BigDecimal("148.00"),
-            )
+            val position =
+                openPosition(
+                    entryPrice = BigDecimal("150.00"),
+                    shares = 10,
+                    highestPriceSeen = BigDecimal("155.00"),
+                    lowestPriceSeen = BigDecimal("148.00"),
+                )
             val flagPort = InMemoryFlagPort(listOf(position))
             val service = buildService(flagPort = flagPort, currentPrice = BigDecimal("154.00"))
 
@@ -156,12 +154,13 @@ class FlagManagementServiceTest {
         runTest {
             // entry=$150, lowWatermark=$148, shares=10
             // MAE = ($150 − $148) × 10 = $20
-            val position = openPosition(
-                entryPrice = BigDecimal("150.00"),
-                shares = 10,
-                highestPriceSeen = BigDecimal("153.00"),
-                lowestPriceSeen = BigDecimal("148.00"),
-            )
+            val position =
+                openPosition(
+                    entryPrice = BigDecimal("150.00"),
+                    shares = 10,
+                    highestPriceSeen = BigDecimal("153.00"),
+                    lowestPriceSeen = BigDecimal("148.00"),
+                )
             val flagPort = InMemoryFlagPort(listOf(position))
             val service = buildService(flagPort = flagPort, currentPrice = BigDecimal("151.00"))
 
@@ -243,15 +242,20 @@ class FlagManagementServiceTest {
     ) = FlagManagementService(
         flagPort = flagPort,
         bracketOrderPort = bracketPort,
-        flagTradingConfigPort = object : FlagTradingConfigPort {
-            private var config = FlagTradingConfig()
-            override suspend fun get() = config
-            override suspend fun update(config: FlagTradingConfig) = config.also { this.config = it }
-        },
-        marketDataPort = object : MarketDataPort {
-            override suspend fun getUnderlyingPrice(symbol: Symbol) = Money(currentPrice)
-            override suspend fun getOptionMid(contract: OptionContract) = Money(BigDecimal.ZERO)
-        },
+        flagTradingConfigPort =
+            object : FlagTradingConfigPort {
+                private var config = FlagTradingConfig()
+
+                override suspend fun get() = config
+
+                override suspend fun update(config: FlagTradingConfig) = config.also { this.config = it }
+            },
+        marketDataPort =
+            object : MarketDataPort {
+                override suspend fun getUnderlyingPrice(symbol: Symbol) = Money(currentPrice)
+
+                override suspend fun getOptionMid(contract: OptionContract) = Money(BigDecimal.ZERO)
+            },
         clock = fixedClock,
     )
 
@@ -265,15 +269,17 @@ class FlagManagementServiceTest {
         private val store = initialPositions.associateBy { it.id!! }.toMutableMap()
         val saved = mutableListOf<FlagPosition>()
 
-        override suspend fun save(position: FlagPosition) = position.also {
-            store[position.id!!] = position
-            saved.add(position)
-        }
+        override suspend fun save(position: FlagPosition) =
+            position.also {
+                store[position.id!!] = position
+                saved.add(position)
+            }
 
-        override suspend fun update(position: FlagPosition) = position.also {
-            store[position.id!!] = position
-            saved.add(position)
-        }
+        override suspend fun update(position: FlagPosition) =
+            position.also {
+                store[position.id!!] = position
+                saved.add(position)
+            }
 
         override suspend fun findOpen() = store.values.filter { !it.status.isTerminal() }
 
@@ -281,11 +287,9 @@ class FlagManagementServiceTest {
 
         override suspend fun findAll() = store.values.toList()
 
-        override suspend fun findByStatus(status: FlagStatus) =
-            store.values.filter { it.status == status }
+        override suspend fun findByStatus(status: FlagStatus) = store.values.filter { it.status == status }
 
-        override suspend fun countByStatus(status: FlagStatus) =
-            store.values.count { it.status == status }.toLong()
+        override suspend fun countByStatus(status: FlagStatus) = store.values.count { it.status == status }.toLong()
 
         override suspend fun findPage(
             status: FlagStatus?,
@@ -295,10 +299,15 @@ class FlagManagementServiceTest {
             sortDir: String,
         ) = FlagPage(emptyList(), 0, 0, page, size)
 
-        private fun FlagStatus.isTerminal() = this in setOf(
-            FlagStatus.CLOSED_PROFIT, FlagStatus.CLOSED_STOP, FlagStatus.CLOSED_EOD,
-            FlagStatus.CLOSED_MANUAL, FlagStatus.ENTRY_TIMEOUT,
-        )
+        private fun FlagStatus.isTerminal() =
+            this in
+                setOf(
+                    FlagStatus.CLOSED_PROFIT,
+                    FlagStatus.CLOSED_STOP,
+                    FlagStatus.CLOSED_EOD,
+                    FlagStatus.CLOSED_MANUAL,
+                    FlagStatus.ENTRY_TIMEOUT,
+                )
     }
 
     /** Records all cancel and market-sell calls so tests can verify what was submitted. */
@@ -318,12 +327,14 @@ class FlagManagementServiceTest {
             cancelledOrders.add(orderId)
         }
 
-        override suspend fun awaitParentFill(orderId: Int) =
-            EntryFill(status = OrderStatus.FILLED, avgPrice = BigDecimal("150.00"))
+        override suspend fun awaitParentFill(orderId: Int) = EntryFill(status = OrderStatus.FILLED, avgPrice = BigDecimal("150.00"))
 
         override suspend fun awaitChildFill(orderId: Int): OrderStatus = OrderStatus.FILLED
 
-        override suspend fun submitMarketSell(symbol: Symbol, shares: Int): Int {
+        override suspend fun submitMarketSell(
+            symbol: Symbol,
+            shares: Int,
+        ): Int {
             marketSells.add(symbol to shares)
             return 999
         }

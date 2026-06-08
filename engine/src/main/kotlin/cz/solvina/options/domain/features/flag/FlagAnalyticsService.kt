@@ -55,12 +55,13 @@ class FlagAnalyticsService(
         val cumulativePnl: BigDecimal,
     )
 
-    private val closedStatuses = setOf(
-        FlagStatus.CLOSED_PROFIT,
-        FlagStatus.CLOSED_STOP,
-        FlagStatus.CLOSED_EOD,
-        FlagStatus.CLOSED_MANUAL,
-    )
+    private val closedStatuses =
+        setOf(
+            FlagStatus.CLOSED_PROFIT,
+            FlagStatus.CLOSED_STOP,
+            FlagStatus.CLOSED_EOD,
+            FlagStatus.CLOSED_MANUAL,
+        )
 
     suspend fun compute(): Analytics {
         val all = flagPort.findAll()
@@ -72,34 +73,56 @@ class FlagAnalyticsService(
         val eodCuts = closed.filter { it.status == FlagStatus.CLOSED_EOD }
 
         val totalPnl = closed.fold(BigDecimal.ZERO) { acc, p -> acc + (p.realizedPnl ?: BigDecimal.ZERO) }
-        val avgWinner = if (wins.isEmpty()) BigDecimal.ZERO else wins.fold(BigDecimal.ZERO) { acc, p -> acc + (p.realizedPnl!!) }
-            .divide(BigDecimal(wins.size), 2, RoundingMode.HALF_UP)
-        val avgLoser = if (losses.isEmpty()) BigDecimal.ZERO else losses.fold(BigDecimal.ZERO) { acc, p -> acc + (p.realizedPnl!!) }
-            .divide(BigDecimal(losses.size), 2, RoundingMode.HALF_UP)
+        val avgWinner =
+            if (wins.isEmpty()) {
+                BigDecimal.ZERO
+            } else {
+                wins
+                    .fold(BigDecimal.ZERO) { acc, p -> acc + (p.realizedPnl!!) }
+                    .divide(BigDecimal(wins.size), 2, RoundingMode.HALF_UP)
+            }
+        val avgLoser =
+            if (losses.isEmpty()) {
+                BigDecimal.ZERO
+            } else {
+                losses
+                    .fold(BigDecimal.ZERO) { acc, p -> acc + (p.realizedPnl!!) }
+                    .divide(BigDecimal(losses.size), 2, RoundingMode.HALF_UP)
+            }
         val avgHoldMin = closed.mapNotNull { it.holdMinutes() }.average().takeIf { !it.isNaN() } ?: 0.0
 
         val rValues = closed.mapNotNull { it.rMultiple }
-        val avgRMultiple = if (rValues.isEmpty()) null
-            else rValues.fold(BigDecimal.ZERO) { acc, r -> acc + r }
-                .divide(BigDecimal(rValues.size), 2, RoundingMode.HALF_UP)
+        val avgRMultiple =
+            if (rValues.isEmpty()) {
+                null
+            } else {
+                rValues
+                    .fold(BigDecimal.ZERO) { acc, r -> acc + r }
+                    .divide(BigDecimal(rValues.size), 2, RoundingMode.HALF_UP)
+            }
         val grossWin = wins.fold(BigDecimal.ZERO) { acc, p -> acc + p.realizedPnl!! }
         val grossLoss = losses.fold(BigDecimal.ZERO) { acc, p -> acc + p.realizedPnl!! }.abs()
-        val profitFactor = if (grossLoss == BigDecimal.ZERO) null
-            else grossWin.divide(grossLoss, 2, RoundingMode.HALF_UP)
+        val profitFactor =
+            if (grossLoss == BigDecimal.ZERO) {
+                null
+            } else {
+                grossWin.divide(grossLoss, 2, RoundingMode.HALF_UP)
+            }
 
         return Analytics(
-            summary = Summary(
-                totalTrades = all.size,
-                openTrades = open.size,
-                winRate = if (closed.isEmpty()) 0.0 else wins.size.toDouble() / closed.size,
-                totalRealizedPnl = totalPnl,
-                avgWinner = avgWinner,
-                avgLoser = avgLoser,
-                eodCutPct = if (closed.isEmpty()) 0.0 else eodCuts.size.toDouble() / closed.size,
-                avgHoldMinutes = avgHoldMin,
-                avgRMultiple = avgRMultiple,
-                profitFactor = profitFactor,
-            ),
+            summary =
+                Summary(
+                    totalTrades = all.size,
+                    openTrades = open.size,
+                    winRate = if (closed.isEmpty()) 0.0 else wins.size.toDouble() / closed.size,
+                    totalRealizedPnl = totalPnl,
+                    avgWinner = avgWinner,
+                    avgLoser = avgLoser,
+                    eodCutPct = if (closed.isEmpty()) 0.0 else eodCuts.size.toDouble() / closed.size,
+                    avgHoldMinutes = avgHoldMin,
+                    avgRMultiple = avgRMultiple,
+                    profitFactor = profitFactor,
+                ),
             byStatus = byStatus(closed),
             bySymbol = bySymbol(closed),
             pnlTimeline = pnlTimeline(closed),
@@ -136,9 +159,10 @@ class FlagAnalyticsService(
             }.sortedByDescending { it.totalPnl }
 
     private fun pnlTimeline(closed: List<FlagPosition>): List<PnlTimelinePoint> {
-        val byDay = closed
-            .groupBy { it.closedAt!!.atOffset(ZoneOffset.UTC).toLocalDate() }
-            .toSortedMap()
+        val byDay =
+            closed
+                .groupBy { it.closedAt!!.atOffset(ZoneOffset.UTC).toLocalDate() }
+                .toSortedMap()
         var cumulative = BigDecimal.ZERO
         return byDay.map { (date, trades) ->
             val daily = trades.fold(BigDecimal.ZERO) { acc, p -> acc + (p.realizedPnl ?: BigDecimal.ZERO) }
@@ -147,6 +171,5 @@ class FlagAnalyticsService(
         }
     }
 
-    private fun FlagPosition.holdMinutes(): Double? =
-        closedAt?.let { ChronoUnit.MINUTES.between(openedAt, it).toDouble() }
+    private fun FlagPosition.holdMinutes(): Double? = closedAt?.let { ChronoUnit.MINUTES.between(openedAt, it).toDouble() }
 }

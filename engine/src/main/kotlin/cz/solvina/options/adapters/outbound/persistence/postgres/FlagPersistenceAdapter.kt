@@ -18,7 +18,6 @@ import java.util.UUID
 class FlagPersistenceAdapter(
     private val repository: FlagPositionRepository,
 ) : FlagPort {
-
     override suspend fun save(position: FlagPosition): FlagPosition =
         withContext(Dispatchers.IO) { repository.save(position.toEntity()).toDomain() }
 
@@ -39,7 +38,7 @@ class FlagPersistenceAdapter(
     override suspend fun findAll(): List<FlagPosition> =
         withContext(Dispatchers.IO) { repository.findAllByOrderByOpenedAtDesc().map { it.toDomain() } }
 
-    private val SORTABLE_FIELDS = setOf("openedAt", "closedAt", "realizedPnl", "rMultiple", "timeInTradeSeconds", "symbol", "entryPrice")
+    private val sortableFields = setOf("openedAt", "closedAt", "realizedPnl", "rMultiple", "timeInTradeSeconds", "symbol", "entryPrice")
 
     override suspend fun findPage(
         status: FlagStatus?,
@@ -50,7 +49,7 @@ class FlagPersistenceAdapter(
     ): FlagPage =
         withContext(Dispatchers.IO) {
             val direction = if (sortDir.uppercase() == "ASC") Sort.Direction.ASC else Sort.Direction.DESC
-            val sortField = if (sort in SORTABLE_FIELDS) sort else "openedAt"
+            val sortField = if (sort in sortableFields) sort else "openedAt"
             val pageable = PageRequest.of(page, size, Sort.by(direction, sortField))
             val result = if (status != null) repository.findByStatus(status.name, pageable) else repository.findAllBy(pageable)
             FlagPage(
@@ -62,8 +61,7 @@ class FlagPersistenceAdapter(
             )
         }
 
-    override suspend fun countByStatus(status: FlagStatus): Long =
-        withContext(Dispatchers.IO) { repository.countByStatus(status.name) }
+    override suspend fun countByStatus(status: FlagStatus): Long = withContext(Dispatchers.IO) { repository.countByStatus(status.name) }
 
     override suspend fun findByStatus(status: FlagStatus): List<FlagPosition> =
         withContext(Dispatchers.IO) {

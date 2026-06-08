@@ -226,7 +226,10 @@ class TradeExecutionService(
                             if (ticksSinceAdjust >= config.ticksBeforePriceAdjust) {
                                 ticksSinceAdjust = 0
                                 val stepped = ladder(request, currentOrderId, currentCredit)
-                                if (stepped == null) { outcome = ExecutionOutcome.FLOOR_REACHED; break }
+                                if (stepped == null) {
+                                    outcome = ExecutionOutcome.FLOOR_REACHED
+                                    break
+                                }
                                 currentCredit = stepped.first
                                 currentOrderId = stepped.second
                                 launchFillWatcher(currentOrderId)
@@ -236,7 +239,10 @@ class TradeExecutionService(
                         is ExecutionEvent.Timer -> {
                             ticksSinceAdjust = 0
                             val stepped = ladder(request, currentOrderId, currentCredit)
-                            if (stepped == null) { outcome = ExecutionOutcome.FLOOR_REACHED; break }
+                            if (stepped == null) {
+                                outcome = ExecutionOutcome.FLOOR_REACHED
+                                break
+                            }
                             currentCredit = stepped.first
                             currentOrderId = stepped.second
                             launchFillWatcher(currentOrderId)
@@ -292,7 +298,9 @@ class TradeExecutionService(
         spreadPort.update(pendingSpread.copy(status = abortStatus, closeReason = outcome.name.lowercase()))
         val cooldownExpiry = Instant.now(clock).plusSeconds(config.entryCooldownMinutes * 60)
         cooldownUntil[request.underlyingSymbol] = cooldownExpiry
-        logger.info { "[${request.underlyingSymbol}] Entry cooldown set — won't retry until $cooldownExpiry (${config.entryCooldownMinutes} min)" }
+        logger.info {
+            "[${request.underlyingSymbol}] Entry cooldown set — won't retry until $cooldownExpiry (${config.entryCooldownMinutes} min)"
+        }
         return TradeExecutionResult(outcome)
     }
 
@@ -312,13 +320,14 @@ class TradeExecutionService(
             orderExecutionPort.cancelAndAwait(currentOrderId)
             return null
         }
-        val newOrderId = orderExecutionPort.replaceComboWithNewPrice(
-            existingOrderId = currentOrderId,
-            soldContract = request.soldContract,
-            boughtContract = request.boughtContract,
-            newCredit = Money(newCredit),
-            qty = request.quantity,
-        )
+        val newOrderId =
+            orderExecutionPort.replaceComboWithNewPrice(
+                existingOrderId = currentOrderId,
+                soldContract = request.soldContract,
+                boughtContract = request.boughtContract,
+                newCredit = Money(newCredit),
+                qty = request.quantity,
+            )
         logger.info { "[${request.underlyingSymbol}] Laddered to \$$newCredit (orderId=$newOrderId)" }
         return Pair(newCredit, newOrderId)
     }

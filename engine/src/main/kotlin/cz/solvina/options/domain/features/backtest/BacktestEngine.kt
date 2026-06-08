@@ -12,8 +12,9 @@ import java.time.ZoneOffset
 
 private val logger = KotlinLogging.logger {}
 
-class BacktestEngine(private val barStore: BarStorePort) {
-
+class BacktestEngine(
+    private val barStore: BarStorePort,
+) {
     data class Request(
         val symbols: List<Symbol>,
         val from: LocalDate,
@@ -49,7 +50,9 @@ class BacktestEngine(private val barStore: BarStorePort) {
         val trades: List<T>,
     )
 
-    private data class PendingEntry(val signal: BacktestSignal.OpenBracket)
+    private data class PendingEntry(
+        val signal: BacktestSignal.OpenBracket,
+    )
 
     private data class OpenPosition(
         val signal: BacktestSignal.OpenBracket,
@@ -59,7 +62,10 @@ class BacktestEngine(private val barStore: BarStorePort) {
     )
 
     @Suppress("UNCHECKED_CAST")
-    suspend fun <T> run(request: Request, strategy: BacktestableStrategy): Result<T> {
+    suspend fun <T> run(
+        request: Request,
+        strategy: BacktestableStrategy,
+    ): Result<T> {
         val nyZone = ZoneId.of("America/New_York")
         val warmupFrom = request.from.minusDays(request.warmupDays)
 
@@ -67,30 +73,49 @@ class BacktestEngine(private val barStore: BarStorePort) {
         val allBars = mutableMapOf<Symbol, List<FiveMinuteBar>>()
         for (symbol in request.symbols) {
             val fromInstant = warmupFrom.atStartOfDay(ZoneOffset.UTC).toInstant()
-            val toInstant = request.to.plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant()
+            val toInstant =
+                request.to
+                    .plusDays(1)
+                    .atStartOfDay(ZoneOffset.UTC)
+                    .toInstant()
             val bars = barStore.readBars(symbol, fromInstant, toInstant)
-            logger.info { "[${symbol.value}] Loaded ${bars.size} bars (${warmupFrom}..${request.to})" }
+            logger.info { "[${symbol.value}] Loaded ${bars.size} bars ($warmupFrom..${request.to})" }
             allBars[symbol] = bars
         }
 
         // Split into warmup bars (before backtest start) and backtest bars
-        val warmupBars = allBars.mapValues { (_, bars) ->
-            bars.filter { it.time.atZone(nyZone).toLocalDate().isBefore(request.from) }
-        }
-        val backtestBars = allBars.mapValues { (_, bars) ->
-            bars.filter { !it.time.atZone(nyZone).toLocalDate().isBefore(request.from) }
-        }
+        val warmupBars =
+            allBars.mapValues { (_, bars) ->
+                bars.filter {
+                    it.time
+                        .atZone(nyZone)
+                        .toLocalDate()
+                        .isBefore(request.from)
+                }
+            }
+        val backtestBars =
+            allBars.mapValues { (_, bars) ->
+                bars.filter {
+                    !it.time
+                        .atZone(nyZone)
+                        .toLocalDate()
+                        .isBefore(request.from)
+                }
+            }
 
         strategy.initialize(request.symbols, warmupBars)
 
         // Merge all backtest bars, sort chronologically, group by trading day
-        val timeline = backtestBars
-            .flatMap { (sym, bars) -> bars.map { sym to it } }
-            .sortedBy { it.second.time }
+        val timeline =
+            backtestBars
+                .flatMap { (sym, bars) -> bars.map { sym to it } }
+                .sortedBy { it.second.time }
 
-        val byDay = timeline
-            .groupBy { (_, bar) -> bar.time.atZone(nyZone).toLocalDate() }
-            .entries.sortedBy { it.key }
+        val byDay =
+            timeline
+                .groupBy { (_, bar) -> bar.time.atZone(nyZone).toLocalDate() }
+                .entries
+                .sortedBy { it.key }
 
         // Account state
         var capital = request.initialCapital
@@ -100,8 +125,11 @@ class BacktestEngine(private val barStore: BarStorePort) {
         val open = mutableListOf<OpenPosition>()
 
         // Trade statistics — winCount=profit_target, lossCount=stop_loss, eodCount=eod_liquidation
-        var winCount = 0; var lossCount = 0; var eodCount = 0
-        var totalWinPnl = BigDecimal.ZERO; var totalLossPnl = BigDecimal.ZERO
+        var winCount = 0
+        var lossCount = 0
+        var eodCount = 0
+        var totalWinPnl = BigDecimal.ZERO
+        var totalLossPnl = BigDecimal.ZERO
         val rList = mutableListOf<BigDecimal>()
         val winRList = mutableListOf<BigDecimal>()
         val lossRList = mutableListOf<BigDecimal>()
@@ -136,16 +164,21 @@ class BacktestEngine(private val barStore: BarStorePort) {
                     op.lowestSeen = op.lowestSeen.min(BigDecimal.valueOf(bar.low))
 
                     val (closePrice, reason) = simulateExit(bar, op) ?: continue
-                    val pnl = closePrice.subtract(op.actualEntryPrice)
-                        .multiply(BigDecimal(op.signal.shares))
-                        .setScale(2, RoundingMode.HALF_UP)
+                    val pnl =
+                        closePrice
+                            .subtract(op.actualEntryPrice)
+                            .multiply(BigDecimal(op.signal.shares))
+                            .setScale(2, RoundingMode.HALF_UP)
                     capital = capital.add(pnl)
                     val (newPeak, drawdown) = updateDrawdown(capital, peakCapital)
                     peakCapital = newPeak
                     if (drawdown > maxDrawdown) maxDrawdown = drawdown
                     recordRMultiple(pnl, op, rList, winRList, lossRList)
-                    if (pnl >= BigDecimal.ZERO) totalWinPnl = totalWinPnl.add(pnl)
-                    else totalLossPnl = totalLossPnl.add(pnl.abs())
+                    if (pnl >= BigDecimal.ZERO) {
+                        totalWinPnl = totalWinPnl.add(pnl)
+                    } else {
+                        totalLossPnl = totalLossPnl.add(pnl.abs())
+                    }
                     when (reason) {
                         "profit_target" -> winCount++
                         "stop_loss" -> lossCount++
@@ -173,17 +206,22 @@ class BacktestEngine(private val barStore: BarStorePort) {
                 op.highestSeen = op.highestSeen.max(BigDecimal.valueOf(lastBar.high))
                 op.lowestSeen = op.lowestSeen.min(BigDecimal.valueOf(lastBar.low))
                 val closePrice = BigDecimal.valueOf(lastBar.close)
-                val pnl = closePrice.subtract(op.actualEntryPrice)
-                    .multiply(BigDecimal(op.signal.shares))
-                    .setScale(2, RoundingMode.HALF_UP)
+                val pnl =
+                    closePrice
+                        .subtract(op.actualEntryPrice)
+                        .multiply(BigDecimal(op.signal.shares))
+                        .setScale(2, RoundingMode.HALF_UP)
                 capital = capital.add(pnl)
                 val (newPeak, drawdown) = updateDrawdown(capital, peakCapital)
                 peakCapital = newPeak
                 if (drawdown > maxDrawdown) maxDrawdown = drawdown
                 eodCount++
                 recordRMultiple(pnl, op, rList, winRList, lossRList)
-                if (pnl >= BigDecimal.ZERO) totalWinPnl = totalWinPnl.add(pnl)
-                else totalLossPnl = totalLossPnl.add(pnl.abs())
+                if (pnl >= BigDecimal.ZERO) {
+                    totalWinPnl = totalWinPnl.add(pnl)
+                } else {
+                    totalLossPnl = totalLossPnl.add(pnl.abs())
+                }
                 strategy.onPositionClosed(op.signal.tradeId, closePrice, "eod_liquidation", lastBar.time, op.highestSeen, op.lowestSeen)
             }
             open.clear()
@@ -194,36 +232,47 @@ class BacktestEngine(private val barStore: BarStorePort) {
         }
 
         val totalPnl = capital.subtract(request.initialCapital)
-        val totalPnlPct = if (request.initialCapital > BigDecimal.ZERO)
-            totalPnl.divide(request.initialCapital, 4, RoundingMode.HALF_UP)
-                .multiply(BigDecimal("100")).setScale(2, RoundingMode.HALF_UP)
-        else BigDecimal.ZERO
+        val totalPnlPct =
+            if (request.initialCapital > BigDecimal.ZERO) {
+                totalPnl
+                    .divide(request.initialCapital, 4, RoundingMode.HALF_UP)
+                    .multiply(BigDecimal("100"))
+                    .setScale(2, RoundingMode.HALF_UP)
+            } else {
+                BigDecimal.ZERO
+            }
 
         // winRate excludes EOD trades (matches production analytics convention)
         val winRate = if (winCount + lossCount > 0) winCount.toDouble() / (winCount + lossCount) else 0.0
 
         return Result(
-            summary = Summary(
-                symbols = request.symbols.map { it.value },
-                from = request.from,
-                to = request.to,
-                initialCapital = request.initialCapital,
-                finalCapital = capital,
-                totalPnl = totalPnl,
-                totalPnlPct = totalPnlPct,
-                tradeCount = winCount + lossCount + eodCount,
-                winCount = winCount,
-                lossCount = lossCount,
-                eodCount = eodCount,
-                winRate = winRate,
-                avgRMultiple = rList.avg(),
-                avgWinR = winRList.avg(),
-                avgLossR = lossRList.avg(),
-                profitFactor = if (totalLossPnl > BigDecimal.ZERO)
-                    totalWinPnl.divide(totalLossPnl, 2, RoundingMode.HALF_UP)
-                else if (totalWinPnl > BigDecimal.ZERO) BigDecimal("999.99") else null,
-                maxDrawdownPct = maxDrawdown.multiply(BigDecimal("100")).setScale(2, RoundingMode.HALF_UP),
-            ),
+            summary =
+                Summary(
+                    symbols = request.symbols.map { it.value },
+                    from = request.from,
+                    to = request.to,
+                    initialCapital = request.initialCapital,
+                    finalCapital = capital,
+                    totalPnl = totalPnl,
+                    totalPnlPct = totalPnlPct,
+                    tradeCount = winCount + lossCount + eodCount,
+                    winCount = winCount,
+                    lossCount = lossCount,
+                    eodCount = eodCount,
+                    winRate = winRate,
+                    avgRMultiple = rList.avg(),
+                    avgWinR = winRList.avg(),
+                    avgLossR = lossRList.avg(),
+                    profitFactor =
+                        if (totalLossPnl > BigDecimal.ZERO) {
+                            totalWinPnl.divide(totalLossPnl, 2, RoundingMode.HALF_UP)
+                        } else if (totalWinPnl > BigDecimal.ZERO) {
+                            BigDecimal("999.99")
+                        } else {
+                            null
+                        },
+                    maxDrawdownPct = maxDrawdown.multiply(BigDecimal("100")).setScale(2, RoundingMode.HALF_UP),
+                ),
             trades = strategy.trades() as List<T>,
         )
     }
@@ -232,25 +281,32 @@ class BacktestEngine(private val barStore: BarStorePort) {
     // Fill simulation
     // -------------------------------------------------------------------------
 
-    private fun simulateEntry(bar: FiveMinuteBar, signal: BacktestSignal.OpenBracket): BigDecimal? {
+    private fun simulateEntry(
+        bar: FiveMinuteBar,
+        signal: BacktestSignal.OpenBracket,
+    ): BigDecimal? {
         val ep = signal.entryPrice.toDouble()
         val pt = signal.profitTargetPrice.toDouble()
-        val fillPrice = when {
-            bar.open >= ep -> bar.open          // gap-up: fill at open
-            bar.high >= ep -> ep                // bar reaches entry level
-            else -> return null
-        }
+        val fillPrice =
+            when {
+                bar.open >= ep -> bar.open // gap-up: fill at open
+                bar.high >= ep -> ep // bar reaches entry level
+                else -> return null
+            }
         // Skip entry if fill is already at or beyond profit target (would be a wash or instant loss)
         return if (fillPrice >= pt) null else BigDecimal.valueOf(fillPrice)
     }
 
-    private fun simulateExit(bar: FiveMinuteBar, op: OpenPosition): Pair<BigDecimal, String>? {
+    private fun simulateExit(
+        bar: FiveMinuteBar,
+        op: OpenPosition,
+    ): Pair<BigDecimal, String>? {
         val sl = op.signal.stopLossPrice.toDouble()
         val pt = op.signal.profitTargetPrice.toDouble()
         return when {
-            bar.open <= sl -> BigDecimal.valueOf(bar.open) to "stop_loss"       // gap-down through stop
-            bar.open >= pt -> BigDecimal.valueOf(bar.open) to "profit_target"   // gap-up through PT
-            bar.low <= sl && bar.high >= pt -> op.signal.stopLossPrice to "stop_loss"  // both hit — conservative
+            bar.open <= sl -> BigDecimal.valueOf(bar.open) to "stop_loss" // gap-down through stop
+            bar.open >= pt -> BigDecimal.valueOf(bar.open) to "profit_target" // gap-up through PT
+            bar.low <= sl && bar.high >= pt -> op.signal.stopLossPrice to "stop_loss" // both hit — conservative
             bar.low <= sl -> op.signal.stopLossPrice to "stop_loss"
             bar.high >= pt -> op.signal.profitTargetPrice to "profit_target"
             else -> null
@@ -261,11 +317,17 @@ class BacktestEngine(private val barStore: BarStorePort) {
     // Helpers
     // -------------------------------------------------------------------------
 
-    private fun updateDrawdown(capital: BigDecimal, peak: BigDecimal): Pair<BigDecimal, BigDecimal> {
+    private fun updateDrawdown(
+        capital: BigDecimal,
+        peak: BigDecimal,
+    ): Pair<BigDecimal, BigDecimal> {
         val newPeak = if (capital > peak) capital else peak
-        val dd = if (newPeak > BigDecimal.ZERO)
-            newPeak.subtract(capital).divide(newPeak, 6, RoundingMode.HALF_UP)
-        else BigDecimal.ZERO
+        val dd =
+            if (newPeak > BigDecimal.ZERO) {
+                newPeak.subtract(capital).divide(newPeak, 6, RoundingMode.HALF_UP)
+            } else {
+                BigDecimal.ZERO
+            }
         return newPeak to dd
     }
 
@@ -276,8 +338,11 @@ class BacktestEngine(private val barStore: BarStorePort) {
         winRList: MutableList<BigDecimal>,
         lossRList: MutableList<BigDecimal>,
     ) {
-        val riskAmount = op.signal.entryPrice.subtract(op.signal.stopLossPrice).abs()
-            .multiply(BigDecimal(op.signal.shares))
+        val riskAmount =
+            op.signal.entryPrice
+                .subtract(op.signal.stopLossPrice)
+                .abs()
+                .multiply(BigDecimal(op.signal.shares))
         if (riskAmount <= BigDecimal.ZERO) return
         val r = pnl.divide(riskAmount, 2, RoundingMode.HALF_UP)
         rList.add(r)

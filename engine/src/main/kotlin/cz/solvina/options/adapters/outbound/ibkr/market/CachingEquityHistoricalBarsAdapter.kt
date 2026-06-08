@@ -19,8 +19,10 @@ class CachingEquityHistoricalBarsAdapter(
     private val ibkr: IbkrEquityHistoricalBarsAdapter,
     private val barStorePort: BarStorePort,
 ) : EquityHistoricalBarsPort {
-
-    override suspend fun fetch5MinBars(symbol: Symbol, days: Int): List<FiveMinuteBar> {
+    override suspend fun fetch5MinBars(
+        symbol: Symbol,
+        days: Int,
+    ): List<FiveMinuteBar> {
         val now = Instant.now()
         val from = now.minus(days.toLong(), ChronoUnit.DAYS)
 
@@ -32,18 +34,20 @@ class CachingEquityHistoricalBarsAdapter(
         }
 
         // Fetch only the missing window from IBKR
-        val fetchDays = if (lastBarTime != null) {
-            (ChronoUnit.HOURS.between(lastBarTime, now) / 24 + 1).toInt().coerceIn(1, days)
-        } else {
-            days
-        }
+        val fetchDays =
+            if (lastBarTime != null) {
+                (ChronoUnit.HOURS.between(lastBarTime, now) / 24 + 1).toInt().coerceIn(1, days)
+            } else {
+                days
+            }
         logger.info { "[${symbol.value}] Fetching $fetchDays day(s) of historical bars from IBKR (cache last: $lastBarTime)" }
 
-        val ibkrBars = runCatching { ibkr.fetch5MinBars(symbol, fetchDays) }
-            .getOrElse { e ->
-                logger.warn { "[${symbol.value}] IBKR historical fetch failed: ${e.message} — falling back to InfluxDB cache" }
-                emptyList()
-            }
+        val ibkrBars =
+            runCatching { ibkr.fetch5MinBars(symbol, fetchDays) }
+                .getOrElse { e ->
+                    logger.warn { "[${symbol.value}] IBKR historical fetch failed: ${e.message} — falling back to InfluxDB cache" }
+                    emptyList()
+                }
 
         if (ibkrBars.isNotEmpty()) {
             barStorePort.writeBars(symbol, ibkrBars)
@@ -57,13 +61,18 @@ class CachingEquityHistoricalBarsAdapter(
         }
     }
 
-    override suspend fun fetch5MinBarsForRange(symbol: Symbol, from: LocalDate, to: LocalDate): List<FiveMinuteBar> {
+    override suspend fun fetch5MinBarsForRange(
+        symbol: Symbol,
+        from: LocalDate,
+        to: LocalDate,
+    ): List<FiveMinuteBar> {
         logger.info { "[${symbol.value}] Fetching range $from..$to from IBKR" }
-        val bars = runCatching { ibkr.fetch5MinBarsForRange(symbol, from, to) }
-            .getOrElse { e ->
-                logger.warn { "[${symbol.value}] IBKR range fetch failed: ${e.message}" }
-                emptyList()
-            }
+        val bars =
+            runCatching { ibkr.fetch5MinBarsForRange(symbol, from, to) }
+                .getOrElse { e ->
+                    logger.warn { "[${symbol.value}] IBKR range fetch failed: ${e.message}" }
+                    emptyList()
+                }
         if (bars.isNotEmpty()) {
             barStorePort.writeBars(symbol, bars)
             logger.info { "[${symbol.value}] Wrote ${bars.size} bars to InfluxDB for range $from..$to" }

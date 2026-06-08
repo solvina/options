@@ -22,7 +22,6 @@ class IbkrRealTimeBarsAdapter(
     private val client: EClientSocket,
     private val contractFactory: IbkrContractFactory,
 ) : RealTimeBarsPort {
-
     override fun streamBars(symbol: Symbol): Flow<RealTimeBar> =
         callbackFlow {
             val reqId = registry.nextReqId()
