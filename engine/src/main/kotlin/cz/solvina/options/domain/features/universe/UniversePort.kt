@@ -10,6 +10,9 @@ interface UniversePort {
     /** Returns true if the underlying exchange for [symbol] is currently within regular trading hours. */
     fun isMarketOpen(symbol: Symbol): Boolean
 
+    /** Returns the exchange schedule (timezone, open/close times, session label) for [symbol]. */
+    fun getMarketSchedule(symbol: Symbol): MarketSchedule
+
     suspend fun getAll(): List<InstrumentConfig>
 
     suspend fun get(symbol: Symbol): InstrumentConfig?

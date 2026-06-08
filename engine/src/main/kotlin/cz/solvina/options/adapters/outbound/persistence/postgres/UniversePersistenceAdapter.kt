@@ -6,6 +6,7 @@ import cz.solvina.options.adapters.outbound.ibkr.InstrumentDef
 import cz.solvina.options.adapters.outbound.persistence.postgres.entity.InstrumentUniverseEntity
 import cz.solvina.options.adapters.outbound.persistence.postgres.repository.InstrumentUniverseRepository
 import cz.solvina.options.domain.features.universe.InstrumentConfig
+import cz.solvina.options.domain.features.universe.MarketSchedule
 import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.models.Symbol
 import jakarta.annotation.PostConstruct
@@ -44,6 +45,17 @@ class UniversePersistenceAdapter(
         val open = LocalTime.parse(hours.open)
         val close = LocalTime.parse(hours.close)
         return !time.isBefore(open) && time.isBefore(close)
+    }
+
+    override fun getMarketSchedule(symbol: Symbol): MarketSchedule {
+        val def = instrumentsConfig.instruments[symbol.value] ?: InstrumentDef()
+        val hours = instrumentsConfig.exchanges[def.marketExchange] ?: US_HOURS
+        return MarketSchedule(
+            zone = ZoneId.of(hours.timezone),
+            open = LocalTime.parse(hours.open),
+            close = LocalTime.parse(hours.close),
+            session = def.marketExchange,
+        )
     }
 
     override suspend fun getAll(): List<InstrumentConfig> =

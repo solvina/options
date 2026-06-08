@@ -12,6 +12,7 @@ import cz.solvina.options.domain.features.flag.FlagExecutionService.ExecutionReq
 import cz.solvina.options.domain.features.flag.config.FlagStrategyConfig
 import cz.solvina.options.domain.features.flag.config.FlagTradingConfig
 import cz.solvina.options.domain.features.flag.config.FlagTradingConfigPort
+import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
 import jakarta.annotation.PreDestroy
@@ -28,10 +29,8 @@ import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.Clock
-import java.time.DayOfWeek
 import java.time.Instant
 import java.time.LocalTime
-import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.time.temporal.ChronoUnit
 import java.util.concurrent.ConcurrentHashMap
@@ -52,6 +51,7 @@ class FlagScannerService(
     private val barStorePort: BarStorePort,
     private val strategyConfig: FlagStrategyConfig,
     private val connectionStatusPort: ConnectionStatusPort,
+    private val universePort: UniversePort,
     private val scope: CoroutineScope,
     private val clock: Clock,
 ) {
@@ -59,7 +59,6 @@ class FlagScannerService(
     private val aggregators = ConcurrentHashMap<Symbol, BarAggregator>()
     private val buffers = ConcurrentHashMap<Symbol, BarBuffer>()
     private val detectors = ConcurrentHashMap<Symbol, PatternDetector>()
-    private val runtimeEuSymbols = ConcurrentHashMap.newKeySet<Symbol>()
     // Serialises the open-position count check and order submission so two concurrent breakout
     // signals cannot both read below maxOpenPositions before either one persists PENDING.
     private val entryMutex = Mutex()
@@ -80,11 +79,8 @@ class FlagScannerService(
 
     fun subscribeSymbol(symbolStr: String, session: String): Boolean {
         val symbol = Symbol(symbolStr.uppercase())
-        // Update session classification before the early-return so that a re-subscribe with a
-        // different session (e.g. US → EU for a dual-listed stock) is always honoured.
-        if (session.uppercase() == "EU") runtimeEuSymbols.add(symbol)
         if (subscriptions[symbol]?.isActive == true) {
-            logger.info { "[${symbol.value}] Hot-subscribe: already active, session updated to $session" }
+            logger.info { "[${symbol.value}] Hot-subscribe: already active (session=$session)" }
             return false
         }
         logger.info { "[${symbol.value}] Hot-subscribe: adding to scanner (session=$session)" }
@@ -105,8 +101,8 @@ class FlagScannerService(
     @Scheduled(fixedDelay = 5 * 60 * 1000)
     fun watchdogCheck() {
         if (!connectionStatusPort.isConnected()) return
-        val now = ZonedDateTime.now(clock)
-        if (!isEuMarketOpen(now) && !isUsMarketOpen(now)) return
+        val anyMarketOpen = subscriptions.keys.any { universePort.isMarketOpen(it) }
+        if (!anyMarketOpen) return
 
         val staleThreshold = Instant.now(clock).minus(STALE_BAR_MINUTES, ChronoUnit.MINUTES)
         val stale = subscriptions.keys.filter { symbol ->
@@ -139,38 +135,19 @@ class FlagScannerService(
     }
 
     private fun resolveWatchlist(): List<Symbol> {
-        val now = ZonedDateTime.now(clock)
-        val eu = if (isEuMarketOpen(now)) strategyConfig.euWatchlist.map { Symbol(it) } else emptyList()
-        val us = if (isUsMarketOpen(now)) strategyConfig.usWatchlist.map { Symbol(it) } else emptyList()
-        val symbols = eu + us
-        if (eu.isNotEmpty()) logger.info { "Flag scanner: EU market open — scanning ${eu.map { it.value }}" }
-        if (us.isNotEmpty()) logger.info { "Flag scanner: US market open — scanning ${us.map { it.value }}" }
-        if (symbols.isEmpty()) logger.warn { "Flag scanner: no markets open at startup — no subscriptions created" }
-        return symbols
+        val all = (strategyConfig.euWatchlist + strategyConfig.usWatchlist).map { Symbol(it) }
+        val open = all.filter { universePort.isMarketOpen(it) }
+        open.groupBy { universePort.getMarketSchedule(it).session }.forEach { (session, symbols) ->
+            logger.info { "Flag scanner: $session market open — scanning ${symbols.map { it.value }}" }
+        }
+        if (open.isEmpty()) logger.warn { "Flag scanner: no markets open at startup — no subscriptions created" }
+        return open
     }
-
-    private fun isEuMarketOpen(now: ZonedDateTime): Boolean {
-        val t = now.withZoneSameInstant(ZoneId.of("Europe/Berlin"))
-        if (t.dayOfWeek == DayOfWeek.SATURDAY || t.dayOfWeek == DayOfWeek.SUNDAY) return false
-        val time = t.toLocalTime()
-        return !time.isBefore(LocalTime.of(9, 0)) && time.isBefore(LocalTime.of(17, 30))
-    }
-
-    private fun isUsMarketOpen(now: ZonedDateTime): Boolean {
-        val t = now.withZoneSameInstant(ZoneId.of("America/New_York"))
-        if (t.dayOfWeek == DayOfWeek.SATURDAY || t.dayOfWeek == DayOfWeek.SUNDAY) return false
-        val time = t.toLocalTime()
-        return !time.isBefore(LocalTime.of(9, 30)) && time.isBefore(LocalTime.of(16, 0))
-    }
-
-    internal fun isEu(symbol: Symbol) = strategyConfig.euWatchlist.contains(symbol.value) || runtimeEuSymbols.contains(symbol)
 
     internal fun isEntryBlocked(symbol: Symbol, config: FlagTradingConfig, barTime: Instant): Boolean {
-        val isEu = isEu(symbol)
-        val zone = if (isEu) ZoneId.of("Europe/Berlin") else ZoneId.of("America/New_York")
-        val closeTime = if (isEu) LocalTime.of(17, 30) else LocalTime.of(16, 0)
-        val barLocal = barTime.atZone(zone).toLocalTime()
-        return !barLocal.isBefore(closeTime.minusMinutes(config.entryBlockMinutesBeforeClose.toLong()))
+        val schedule = universePort.getMarketSchedule(symbol)
+        val barLocal = barTime.atZone(schedule.zone).toLocalTime()
+        return !barLocal.isBefore(schedule.close.minusMinutes(config.entryBlockMinutesBeforeClose.toLong()))
     }
 
     private fun subscribe(symbol: Symbol) {
@@ -259,10 +236,10 @@ class FlagScannerService(
                 .subtract(BigDecimal("0.01"))
                 .setScale(2, RoundingMode.HALF_UP)
 
-            val isEu = isEu(symbol)
-            val marketSession = if (isEu) "EU" else "US"
-            val zone = if (isEu) ZoneId.of("Europe/Berlin") else ZoneId.of("America/New_York")
-            val closeTime = if (isEu) LocalTime.of(17, 30) else LocalTime.of(16, 0)
+            val schedule = universePort.getMarketSchedule(symbol)
+            val marketSession = schedule.session
+            val zone = schedule.zone
+            val closeTime = schedule.close
             val barZoned = barTime.atZone(zone)
             val minutesToClose = ChronoUnit.MINUTES.between(barZoned.toLocalTime(), closeTime).toInt().coerceAtLeast(0)
             val flagAvgVolume = breakout.flag.bars.map { it.volume.toLong() }.average().toLong()
@@ -274,7 +251,7 @@ class FlagScannerService(
             val flagpoleVolumeRatio = if (volumeMaRaw != null && volumeMaRaw > 0)
                 breakout.pole.avgVolume / volumeMaRaw else null
 
-            val sessionOpenLocal = if (isEu) LocalTime.of(9, 0) else LocalTime.of(9, 30)
+            val sessionOpenLocal = schedule.open
             val sessionStart = barZoned.toLocalDate().atTime(sessionOpenLocal).atZone(zone).toInstant()
             val todayBars = bars.filter { !it.time.isBefore(sessionStart) }
             val dayOpenPrice = todayBars.firstOrNull()?.open

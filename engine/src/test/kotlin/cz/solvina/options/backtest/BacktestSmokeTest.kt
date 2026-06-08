@@ -76,6 +76,13 @@ class BacktestSmokeTest {
 
                 override fun isMarketOpen(symbol: Symbol) = true
 
+                override fun getMarketSchedule(symbol: Symbol) = cz.solvina.options.domain.features.universe.MarketSchedule(
+                    zone = java.time.ZoneId.of("America/New_York"),
+                    open = java.time.LocalTime.of(9, 30),
+                    close = java.time.LocalTime.of(16, 0),
+                    session = "US",
+                )
+
                 override suspend fun getAll(): List<InstrumentConfig> = listOf(InstrumentConfig(Symbol("SPY")))
 
                 override suspend fun get(symbol: Symbol): InstrumentConfig? = null

@@ -11,22 +11,38 @@ import cz.solvina.options.domain.features.flag.FlagScannerService
 import cz.solvina.options.domain.features.flag.config.FlagStrategyConfig
 import cz.solvina.options.domain.features.flag.config.FlagTradingConfig
 import cz.solvina.options.domain.features.flag.config.FlagTradingConfigPort
+import cz.solvina.options.domain.features.universe.MarketSchedule
+import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.models.Symbol
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import java.time.Clock
+import java.time.LocalTime
+import java.time.ZoneId
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import java.time.Instant
-import java.time.ZoneId
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
+/**
+ * Market-hours routing rules for the flag scanner:
+ *
+ *   — Exchange schedule (timezone, open, close, session label) is owned by UniversePort.
+ *   — FlagScannerService must not contain hardcoded timezone strings or exchange hours.
+ *   — isEntryBlocked uses the port-provided close time in the port-provided timezone.
+ *   — resolveWatchlist (called by onStartup) subscribes only symbols whose market is open
+ *     according to the port, not a hardcoded clock comparison.
+ */
 class FlagScannerServiceTest {
+
+    private val aapl = Symbol("AAPL")
+    private val sap = Symbol("SAP")
 
     private val strategyConfig = FlagStrategyConfig(
         usWatchlist = listOf("AAPL"),
@@ -35,6 +51,19 @@ class FlagScannerServiceTest {
     private val tradingConfig = FlagTradingConfig(
         entryBlockMinutesBeforeClose = 5,
         enabled = true,
+    )
+
+    private val usSchedule = MarketSchedule(
+        zone = ZoneId.of("America/New_York"),
+        open = LocalTime.of(9, 30),
+        close = LocalTime.of(16, 0),
+        session = "US",
+    )
+    private val euSchedule = MarketSchedule(
+        zone = ZoneId.of("Europe/Berlin"),
+        open = LocalTime.of(9, 0),
+        close = LocalTime.of(17, 30),
+        session = "EU",
     )
 
     private val realTimeBarsPort = mockk<RealTimeBarsPort> {
@@ -51,10 +80,20 @@ class FlagScannerServiceTest {
     }
     private val barStorePort = mockk<BarStorePort>(relaxed = true)
 
+    // Default universe port: both markets closed, returns US schedule for AAPL and EU for SAP.
+    private val defaultUniversePort = mockk<UniversePort> {
+        every { isMarketOpen(any()) } returns false
+        every { getMarketSchedule(aapl) } returns usSchedule
+        every { getMarketSchedule(sap) } returns euSchedule
+    }
+
     private val testDispatcher = StandardTestDispatcher()
     private val testScope = TestScope(testDispatcher)
 
-    private fun buildService() = FlagScannerService(
+    private fun buildService(
+        universePort: UniversePort = defaultUniversePort,
+        clock: Clock = Clock.systemUTC(),
+    ) = FlagScannerService(
         realTimeBarsPort = realTimeBarsPort,
         equityHistoricalBarsPort = equityHistoricalBarsPort,
         flagExecutionService = flagExecutionService,
@@ -64,103 +103,157 @@ class FlagScannerServiceTest {
         barStorePort = barStorePort,
         strategyConfig = strategyConfig,
         connectionStatusPort = mockk(relaxed = true),
+        universePort = universePort,
         scope = testScope,
-        clock = Clock.systemUTC(),
+        clock = clock,
     )
 
     // ─────────────────────────────────────────────────────────────────────────
-    // isEntryBlocked — bar time is candle close time
+    // isEntryBlocked — US exchange (AAPL)
     // ─────────────────────────────────────────────────────────────────────────
 
     @Test
-    fun `isEntryBlocked returns true when bar close time is inside the block window`() {
+    fun `isEntryBlocked returns true when bar close time is inside the US block window`() {
         val service = buildService()
-        val usConfig = FlagTradingConfig(entryBlockMinutesBeforeClose = 5)
+        val config = FlagTradingConfig(entryBlockMinutesBeforeClose = 5)
 
-        // A candle whose close time is 15:58:00 ET — 2 min before US close of 16:00
-        // With a 5-minute block, this should be blocked.
-        val closeTime = Instant.parse("2024-01-15T20:58:00Z") // 15:58 ET (UTC-5)
+        // 15:58 ET (UTC-5 in January) = 20:58 UTC — 2 min before US close of 16:00.
+        // With a 5-minute block (cutoff 15:55 ET) this should be blocked.
+        val barTime = Instant.parse("2024-01-15T20:58:00Z")
 
         assertTrue(
-            service.isEntryBlocked(Symbol("AAPL"), usConfig, closeTime),
-            "Entry at 15:58 ET should be blocked when entryBlockMinutesBeforeClose=5"
+            service.isEntryBlocked(aapl, config, barTime),
+            "Entry at 15:58 ET should be blocked when entryBlockMinutesBeforeClose=5",
         )
     }
 
     @Test
-    fun `isEntryBlocked returns false when bar close time is outside the block window`() {
+    fun `isEntryBlocked returns false when bar close time is outside the US block window`() {
         val service = buildService()
-        val usConfig = FlagTradingConfig(entryBlockMinutesBeforeClose = 5)
+        val config = FlagTradingConfig(entryBlockMinutesBeforeClose = 5)
 
-        // A candle whose close time is 15:53:00 ET — 7 min before close
-        // With a 5-minute block, this should NOT be blocked.
-        val closeTime = Instant.parse("2024-01-15T20:53:00Z") // 15:53 ET
+        // 15:53 ET = 20:53 UTC — 7 min before US close. Outside the 5-minute block.
+        val barTime = Instant.parse("2024-01-15T20:53:00Z")
 
         assertFalse(
-            service.isEntryBlocked(Symbol("AAPL"), usConfig, closeTime),
-            "Entry at 15:53 ET should not be blocked when entryBlockMinutesBeforeClose=5"
-        )
-    }
-
-    @Test
-    fun `isEntryBlocked with FIVE_MIN candle open time falsely allows entry inside block window`() {
-        val service = buildService()
-        val usConfig = FlagTradingConfig(entryBlockMinutesBeforeClose = 5)
-
-        // Simulate a candle that OPENS at 15:54:00 but CLOSES at 15:58:55.
-        // With the current bug, BarAggregator sets candle.time = open time (15:54).
-        // isEntryBlocked receives 15:54 and incorrectly allows entry.
-        val candleOpenTime = Instant.parse("2024-01-15T20:54:00Z") // 15:54 ET — candle open
-        // 15:54 is OUTSIDE the 5-min block window → isEntryBlocked incorrectly returns false.
-        // This test documents the bug: it passes before the BarAggregator fix but should fail.
-        // After fixing BarAggregator to use close time (15:58:55), this behaviour is corrected:
-        // the caller passes 15:58:55 and isEntryBlocked correctly returns true.
-
-        // Before the fix: isEntryBlocked(candleOpenTime) == false (not blocked — BUG)
-        // After the fix:  isEntryBlocked(candleCloseTime) == true  (blocked — CORRECT)
-        // This test asserts the CORRECT post-fix behavior (candle close time inside window → blocked).
-        val candleCloseTime = Instant.parse("2024-01-15T20:58:55Z") // 15:58:55 ET — candle close
-        assertTrue(
-            service.isEntryBlocked(Symbol("AAPL"), usConfig, candleCloseTime),
-            "Entry using candle close time 15:58:55 should be blocked; passing open time 15:54 would incorrectly allow it"
+            service.isEntryBlocked(aapl, config, barTime),
+            "Entry at 15:53 ET should not be blocked when entryBlockMinutesBeforeClose=5",
         )
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // subscribeSymbol — EU session must be recorded even when already subscribed
+    // isEntryBlocked — EU exchange (SAP), verifying port-driven schedule is used
     // ─────────────────────────────────────────────────────────────────────────
 
     @Test
-    fun `subscribeSymbol applies EU session to already-subscribed symbol`() = runTest(testDispatcher) {
+    fun `isEntryBlocked uses EU close time for an EU-configured symbol`() {
         val service = buildService()
+        val config = FlagTradingConfig(entryBlockMinutesBeforeClose = 5)
 
-        // First subscribe AAPL as a US symbol (not in euWatchlist)
-        val firstResult = service.subscribeSymbol("AAPL", "US")
-        assertTrue(firstResult, "First subscribe should return true (new subscription)")
+        // January — CET = UTC+1.
+        // 17:26 Berlin = 16:26 UTC — 4 min before EU close of 17:30.
+        // With a 5-minute block (cutoff 17:25 Berlin) this should be blocked.
+        val barTime = Instant.parse("2024-01-15T16:26:00Z")
 
-        // Now re-subscribe as EU — should update the session even though already running
-        val secondResult = service.subscribeSymbol("AAPL", "EU")
-        assertFalse(secondResult, "Re-subscribe should return false (already active)")
-
-        // The EU flag must be applied: isEu(AAPL) should now return true
         assertTrue(
-            service.isEu(Symbol("AAPL")),
-            "After re-subscribing AAPL with session=EU, isEu must return true. " +
-                "Currently fails because subscribeSymbol early-returns before adding to runtimeEuSymbols."
+            service.isEntryBlocked(sap, config, barTime),
+            "SAP at 17:26 Berlin should be blocked when entryBlockMinutesBeforeClose=5",
         )
     }
 
     @Test
-    fun `subscribeSymbol does not mark US symbol as EU when session is US`() = runTest(testDispatcher) {
+    fun `isEntryBlocked does not confuse EU and US close times`() {
+        // 16:26 UTC in January = 17:26 Berlin (blocked for SAP) but only 11:26 ET (not blocked for AAPL).
+        // If hardcoded US hours were mistakenly applied to SAP, it would not be blocked.
+        // If hardcoded EU hours were mistakenly applied to AAPL, it would be blocked.
         val service = buildService()
-        service.subscribeSymbol("AAPL", "US")
-        assertFalse(service.isEu(Symbol("AAPL")), "US symbol should not be in EU set")
+        val config = FlagTradingConfig(entryBlockMinutesBeforeClose = 5)
+
+        val barTime = Instant.parse("2024-01-15T16:26:00Z")
+
+        assertTrue(
+            service.isEntryBlocked(sap, config, barTime),
+            "SAP must be blocked: 17:26 Berlin is within 5 min of EU close 17:30",
+        )
+        assertFalse(
+            service.isEntryBlocked(aapl, config, barTime),
+            "AAPL must not be blocked: 11:26 ET is far from US close 16:00",
+        )
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // isEntryBlocked — candle open time vs close time (documents BarAggregator contract)
+    // ─────────────────────────────────────────────────────────────────────────
+
     @Test
-    fun `subscribeSymbol marks new EU symbol correctly`() = runTest(testDispatcher) {
+    fun `isEntryBlocked is correctly evaluated against candle close time not open time`() {
         val service = buildService()
-        service.subscribeSymbol("BMW", "EU")
-        assertTrue(service.isEu(Symbol("BMW")), "Newly subscribed EU symbol should be in EU set")
+        val config = FlagTradingConfig(entryBlockMinutesBeforeClose = 5)
+
+        // A candle opens at 15:54 ET (outside block window) but closes at 15:58:55 ET (inside window).
+        // The scanner passes bar.time which BarAggregator sets to the candle close.
+        val candleCloseTime = Instant.parse("2024-01-15T20:58:55Z") // 15:58:55 ET
+        val candleOpenTime = Instant.parse("2024-01-15T20:54:00Z")  // 15:54 ET — would not be blocked
+
+        assertTrue(
+            service.isEntryBlocked(aapl, config, candleCloseTime),
+            "Candle close at 15:58:55 ET should be blocked",
+        )
+        assertFalse(
+            service.isEntryBlocked(aapl, config, candleOpenTime),
+            "Candle open at 15:54 ET is outside block window — demonstrates why close time must be used",
+        )
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // resolveWatchlist (via onStartup) — driven by UniversePort.isMarketOpen
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `onStartup subscribes only symbols whose market is open according to the universe port`() =
+        runTest(testDispatcher) {
+            // AAPL market is open; SAP market is closed.
+            val universePort = mockk<UniversePort> {
+                every { isMarketOpen(aapl) } returns true
+                every { isMarketOpen(sap) } returns false
+                every { getMarketSchedule(aapl) } returns usSchedule
+                every { getMarketSchedule(sap) } returns euSchedule
+            }
+            val service = buildService(universePort = universePort)
+
+            service.onStartup()
+            testDispatcher.scheduler.advanceUntilIdle()
+
+            coVerify(exactly = 1) { equityHistoricalBarsPort.fetch5MinBars(aapl, any()) }
+            coVerify(exactly = 0) { equityHistoricalBarsPort.fetch5MinBars(sap, any()) }
+        }
+
+    @Test
+    fun `onStartup creates no subscriptions when no market is open`() =
+        runTest(testDispatcher) {
+            // defaultUniversePort returns false for all isMarketOpen calls.
+            val service = buildService()
+
+            service.onStartup()
+            testDispatcher.scheduler.advanceUntilIdle()
+
+            coVerify(exactly = 0) { equityHistoricalBarsPort.fetch5MinBars(any(), any()) }
+        }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // subscribeSymbol — basic hot-subscribe behaviour
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `subscribeSymbol returns true for a new symbol and false if already active`() =
+        runTest(testDispatcher) {
+            val universePort = mockk<UniversePort> {
+                every { isMarketOpen(any()) } returns false
+                every { getMarketSchedule(any()) } returns usSchedule
+            }
+            val service = buildService(universePort = universePort)
+
+            assertTrue(service.subscribeSymbol("AAPL", "US"), "First subscribe should return true")
+            assertFalse(service.subscribeSymbol("AAPL", "US"), "Re-subscribe while active should return false")
+        }
 }

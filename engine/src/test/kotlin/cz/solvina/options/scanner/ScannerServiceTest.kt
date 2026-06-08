@@ -189,6 +189,12 @@ class ScannerServiceTest {
             override fun getWatchlist() = watchlist
             override fun getActiveSymbols() = watchlist
             override fun isMarketOpen(symbol: Symbol) = true
+            override fun getMarketSchedule(symbol: Symbol) = cz.solvina.options.domain.features.universe.MarketSchedule(
+                zone = java.time.ZoneId.of("America/New_York"),
+                open = java.time.LocalTime.of(9, 30),
+                close = java.time.LocalTime.of(16, 0),
+                session = "US",
+            )
             override suspend fun getAll() = emptyList<InstrumentConfig>()
             override suspend fun get(symbol: Symbol) = null
             override suspend fun save(config: InstrumentConfig) = config
