@@ -1,5 +1,6 @@
 package cz.solvina.options.adapters.outbound.ibkr.order
 
+import cz.solvina.options.domain.features.account.PositionsPort
 import cz.solvina.options.domain.models.OptionContract
 import cz.solvina.options.domain.models.OptionType
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -24,6 +25,7 @@ private val logger = KotlinLogging.logger {}
 @Component
 class PositionReconciliationService(
     private val ibkrClient: com.ib.client.EClientSocket,
+    private val positionsPort: PositionsPort,
 ) {
     // Track pending leg-by-leg orders awaiting reconciliation
     private val pendingMatches = mutableMapOf<String, PendingLegMatch>()
@@ -78,49 +80,63 @@ class PositionReconciliationService(
         val matchKey = "${soldContract.symbol}-${soldContract.strike}-${boughtContract.strike}"
 
         while (Instant.now().toEpochMilli() - startTime.toEpochMilli() < timeoutMs) {
-            // Query account positions to check for filled legs
-            // In real implementation, this would query IbkrPositionsAdapter
+            try {
+                // Query account positions to check for filled legs
+                // Check SHORT leg: should have -qty position
+                val shortLegFound =
+                    checkPosition(
+                        symbol = soldContract.symbol.value,
+                        strike = soldContract.strike,
+                        expectedQty = -qty, // SHORT = negative
+                        optionType = soldContract.type,
+                    )
 
-            // Check SHORT leg: should have -qty position
-            val shortLegFound =
-                checkPosition(
-                    symbol = soldContract.symbol.value,
-                    strike = soldContract.strike,
-                    expectedQty = -qty, // SHORT = negative
-                    optionType = soldContract.type,
-                )
+                // Check LONG leg: should have +qty position
+                val longLegFound =
+                    checkPosition(
+                        symbol = boughtContract.symbol.value,
+                        strike = boughtContract.strike,
+                        expectedQty = qty, // LONG = positive
+                        optionType = boughtContract.type,
+                    )
 
-            // Check LONG leg: should have +qty position
-            val longLegFound =
-                checkPosition(
-                    symbol = boughtContract.symbol.value,
-                    strike = boughtContract.strike,
-                    expectedQty = qty, // LONG = positive
-                    optionType = boughtContract.type,
-                )
+                if (shortLegFound && longLegFound) {
+                    logger.info { "✓ Position reconciliation successful: $matchKey" }
+                    pendingMatches.remove(matchKey)
+                    return VerificationResult(
+                        success = true,
+                        shortLegFound = true,
+                        longLegFound = true,
+                        message = "Both legs verified in account",
+                    )
+                }
 
-            if (shortLegFound && longLegFound) {
-                logger.info { "✓ Position reconciliation successful: $matchKey" }
-                pendingMatches.remove(matchKey)
-                return VerificationResult(
-                    success = true,
-                    shortLegFound = true,
-                    longLegFound = true,
-                    message = "Both legs verified in account",
-                )
+                // Not ready yet, wait a moment and retry
+                delay(500)
+            } catch (e: Exception) {
+                logger.warn(e) { "Error querying positions for reconciliation: $matchKey" }
+                // Continue retrying on error
+                delay(500)
             }
-
-            // Not ready yet, wait a moment and retry
-            delay(500)
         }
 
         // Timeout: one or both legs not found
         logger.warn { "✗ Position reconciliation FAILED (timeout): $matchKey" }
 
+        val finalShortLegFound =
+            runCatching {
+                checkPosition(soldContract.symbol.value, soldContract.strike, -qty, soldContract.type)
+            }.getOrElse { false }
+
+        val finalLongLegFound =
+            runCatching {
+                checkPosition(boughtContract.symbol.value, boughtContract.strike, qty, boughtContract.type)
+            }.getOrElse { false }
+
         return VerificationResult(
             success = false,
-            shortLegFound = checkPosition(soldContract.symbol.value, soldContract.strike, -qty, soldContract.type),
-            longLegFound = checkPosition(boughtContract.symbol.value, boughtContract.strike, qty, boughtContract.type),
+            shortLegFound = finalShortLegFound,
+            longLegFound = finalLongLegFound,
             message = "Timeout waiting for position reconciliation (possible broken spread)",
         )
     }
@@ -151,21 +167,48 @@ class PositionReconciliationService(
 
     /**
      * Check if a position exists in the account with expected quantity/direction
-     * This is a stub - in real implementation would query IbkrPositionsAdapter
+     * Queries account positions and matches by symbol, strike, and option type
      */
-    private fun checkPosition(
+    private suspend fun checkPosition(
         symbol: String,
         strike: BigDecimal,
         expectedQty: Int,
         optionType: OptionType,
     ): Boolean {
-        // STUB: In real implementation:
-        // 1. Query account positions from IbkrPositionsAdapter
-        // 2. Find position matching symbol, strike, type
-        // 3. Check if quantity matches (within tolerance)
-        // 4. Return true/false
+        return try {
+            val positions = positionsPort.getPositions()
 
-        return false // Placeholder
+            // Find position matching symbol, strike, and option type
+            val position = positions.firstOrNull { pos ->
+                pos.symbol == symbol &&
+                    pos.strike == strike &&
+                    pos.optionRight == optionType.ibkrCode &&
+                    pos.secType == "OPT"
+            }
+
+            if (position == null) {
+                logger.debug { "Position not found: $symbol $strike ${optionType.ibkrCode}" }
+                return false
+            }
+
+            // Check if quantity matches (allowing small tolerance for rounding)
+            val quantity = position.quantity.toInt()
+            val matches = quantity == expectedQty
+
+            if (matches) {
+                logger.debug { "Position verified: $symbol $strike ${optionType.ibkrCode} qty=$quantity" }
+            } else {
+                logger.debug {
+                    "Position quantity mismatch: $symbol $strike ${optionType.ibkrCode} " +
+                        "expected=$expectedQty, actual=$quantity"
+                }
+            }
+
+            matches
+        } catch (e: Exception) {
+            logger.warn(e) { "Error checking position: $symbol $strike ${optionType.ibkrCode}" }
+            false
+        }
     }
 }
 

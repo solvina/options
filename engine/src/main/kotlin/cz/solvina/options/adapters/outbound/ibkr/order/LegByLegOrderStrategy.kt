@@ -39,6 +39,8 @@ class LegByLegOrderStrategy(
     private val client: EClientSocket,
     private val contractCache: IbkrContractCache,
     private val connectionConfig: IbkrConnectionConfig,
+    private val shortLegCreditPct: BigDecimal = BigDecimal("0.75"), // 75% of credit for SHORT
+    private val longLegCreditPct: BigDecimal = BigDecimal("0.25"), // 25% of credit for LONG
 ) : OrderExecutionStrategy {
     override fun getExchangeId(): String = exchangeId
 
@@ -220,13 +222,12 @@ class LegByLegOrderStrategy(
         action: String,
     ): BigDecimal {
         // For EUREX leg-by-leg: estimate leg price from net credit
-        // SHORT leg: approximately 75% of net credit
-        // LONG leg: approximately 25% of net credit
         // These are heuristics - actual market will determine fills
+        // Configured via constructor parameters for tuning
 
         return when (action) {
-            "SELL" -> (netCredit.amount * BigDecimal("0.75")).floorToTick() // SHORT leg gets most of the credit
-            "BUY" -> (netCredit.amount * BigDecimal("0.25")).floorToTick() // LONG leg costs less
+            "SELL" -> (netCredit.amount * shortLegCreditPct).floorToTick() // SHORT leg gets most of the credit
+            "BUY" -> (netCredit.amount * longLegCreditPct).floorToTick() // LONG leg costs less
             else -> netCredit.amount.floorToTick()
         }
     }
