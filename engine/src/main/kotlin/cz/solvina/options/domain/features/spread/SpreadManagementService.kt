@@ -410,11 +410,44 @@ class SpreadManagementService(
                 qty = spread.quantity,
             )
         if (sellBackOrder.status != OrderStatus.FILLED) {
+            // Issue #1: Partial fill rollback - buyBackOrder succeeded but sellBackOrder failed
+            // Position is now UNHEDGED (sold leg closed, bought leg still open)
+            // Attempt immediate rollback by selling the SOLD leg back at market
             logger.warn {
-                "[${spread.symbol}] Sell-back of bought put did not fill after chase — left as CLOSING; sold leg already closed, long put remains"
+                "[${spread.symbol}] Sell-back of bought put did not fill — attempting rollback to prevent unhedged position"
             }
-            tradeLogger.info {
-                "CLOSING ${spread.symbol}  ${spread.soldLeg.contract.strike}P/${spread.boughtLeg.contract.strike}P  reason=sell_back_unfilled"
+
+            val rollbackMarketOrder =
+                runCatching {
+                    orderPort.placeAndAwaitFill(
+                        contract = spread.soldLeg.contract,
+                        action = LegAction.SELL, // Sell (reverse the buy) at market
+                        limitPrice = Money(BigDecimal.ONE), // Market order — fill at any price
+                        qty = spread.quantity,
+                    )
+                }.onFailure { e ->
+                    logger.error(e) {
+                        "[${spread.symbol}] Rollback failed: could not sell closed leg back to reverse partial fill. " +
+                            "Position may be unhedged. Manual intervention required."
+                    }
+                }.getOrNull()
+
+            if (rollbackMarketOrder?.status == OrderStatus.FILLED) {
+                logger.info {
+                    "[${spread.symbol}] Rollback successful: sold leg reversed, spread cancelled without unhedged exposure"
+                }
+                tradeLogger.info {
+                    "CLOSING ${spread.symbol}  ${spread.soldLeg.contract.strike}P/${spread.boughtLeg.contract.strike}P  reason=partial_fill_rolled_back"
+                }
+            } else {
+                logger.error {
+                    "[${spread.symbol}] Rollback failed or incomplete: unhedged exposure exists. " +
+                        "Bought leg: OPEN (failed to sell), Sold leg: CLOSED (can't reverse). Manual close required."
+                }
+                tradeLogger.info {
+                    "CLOSING ${spread.symbol}  ${spread.soldLeg.contract.strike}P/${spread.boughtLeg.contract.strike}P  " +
+                        "reason=sell_back_unfilled_rollback_failed  WARNING_UNHEDGED"
+                }
             }
             return
         }

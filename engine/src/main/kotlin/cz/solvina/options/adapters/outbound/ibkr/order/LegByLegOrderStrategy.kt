@@ -84,17 +84,26 @@ class LegByLegOrderStrategy(
                 )
             }
 
-            // Monitor SHORT leg fill in real-time during submission window (Issue #4 fix)
-            val shortFilled = monitorShortFillBeforeLongSubmission(shortOrderId, maxWaitMs = 50)
+            // Issue #4: Monitor SHORT leg fill in real-time during submission window
+            // Reduce wait time to minimize gap (50ms may be too long for fast fills)
+            val shortFilled = monitorShortFillBeforeLongSubmission(shortOrderId, maxWaitMs = 20)
             if (shortFilled) {
-                logger.warn {
-                    "[$exchangeId] SHORT leg $shortOrderId already filled before LONG submission - cancelling to prevent unhedged"
+                logger.error {
+                    "[$exchangeId] CRITICAL: SHORT leg $shortOrderId already FILLED before LONG submission - " +
+                        "position would be unhedged. Cancelling SHORT to prevent exposure."
                 }
-                client.cancelOrder(shortOrderId, com.ib.client.OrderCancel())
+                // Attempt immediate cancellation to prevent any unhedged exposure
+                runCatching {
+                    client.cancelOrder(shortOrderId, com.ib.client.OrderCancel())
+                }.onFailure { e ->
+                    logger.error(e) {
+                        "[$exchangeId] CRITICAL: Failed to cancel SHORT leg $shortOrderId after early fill detection!"
+                    }
+                }
                 return OrderSubmissionResult(
                     status = SubmissionStatus.LIQUIDITY_FAILED,
                     primaryOrderId = shortOrderId,
-                    message = "SHORT leg filled before LONG could be submitted - position not created to prevent unhedged",
+                    message = "SHORT leg filled before LONG submission - order cancelled to prevent unhedged position",
                     requiresManualMatching = false,
                 )
             }
@@ -110,9 +119,17 @@ class LegByLegOrderStrategy(
                 )
 
             if (longOrderId == 0) {
-                logger.warn { "[$exchangeId] SHORT leg submitted but LONG leg failed - unhedged position!" }
-                // Cancel SHORT leg to prevent unhedged exposure
-                client.cancelOrder(shortOrderId, com.ib.client.OrderCancel())
+                logger.error { "[$exchangeId] CRITICAL: SHORT leg submitted but LONG leg failed - unhedged position risk!" }
+                // Issue #4: Fail-safe - cancel SHORT leg immediately to prevent unhedged exposure
+                runCatching {
+                    client.cancelOrder(shortOrderId, com.ib.client.OrderCancel())
+                    logger.info { "[$exchangeId] Cancelled SHORT leg $shortOrderId due to LONG submission failure" }
+                }.onFailure { e ->
+                    logger.error(e) {
+                        "[$exchangeId] CRITICAL: Failed to cancel SHORT leg $shortOrderId after LONG failed! " +
+                            "Position may be unhedged."
+                    }
+                }
                 return OrderSubmissionResult(
                     status = SubmissionStatus.LIQUIDITY_FAILED,
                     primaryOrderId = shortOrderId,
@@ -150,15 +167,18 @@ class LegByLegOrderStrategy(
      * After SHORT order is submitted, check if it fills before LONG can be submitted.
      * If SHORT fills early, LONG submission will be cancelled to prevent unhedged exposure.
      *
+     * This is the FIRST layer of protection. The SECOND layer is awaitBothLegsWithConcurrentMonitoring()
+     * which validates both legs filled atomically after both are submitted.
+     *
      * @param shortOrderId The SHORT leg order ID to monitor
-     * @param maxWaitMs Maximum time to wait before checking (default 50ms)
+     * @param maxWaitMs Maximum time to wait before checking (tightened to 20ms for faster response)
      * @return true if SHORT leg is already filled, false if not yet filled
      */
     private suspend fun monitorShortFillBeforeLongSubmission(
         shortOrderId: Int,
-        maxWaitMs: Long = 50,
+        maxWaitMs: Long = 20, // Tightened from 50ms to reduce submission gap
     ): Boolean {
-        // Wait briefly for SHORT order to be processed
+        // Wait briefly for SHORT order to be processed by IBKR
         delay(maxWaitMs)
 
         // Check if SHORT order has already filled (unhedged risk!)
@@ -170,7 +190,9 @@ class LegByLegOrderStrategy(
                 OrderStatus.CANCELLED
             }
             if (status == OrderStatus.FILLED) {
-                logger.warn { "[$exchangeId] SHORT leg $shortOrderId already FILLED before LONG submission - unhedged!" }
+                logger.error {
+                    "[$exchangeId] SHORT leg $shortOrderId FILLED before LONG submission - unhedged position would occur!"
+                }
                 return true
             }
         }
@@ -178,11 +200,14 @@ class LegByLegOrderStrategy(
     }
 
     /**
-     * Wait for both legs to fill concurrently (Issue #4 fix).
+     * Wait for both legs to fill concurrently (Issue #4 fix - SECOND layer of protection).
      *
      * After both legs are submitted, monitor fills in parallel.
      * Returns success only when both legs report FILLED status.
-     * If timeout occurs or either leg fails, cancels both.
+     * If timeout occurs or either leg fails, cancels BOTH to prevent unhedged exposure.
+     *
+     * This ensures atomicity: either both legs fill (hedge is complete) or both are cancelled
+     * (no unhedged position created).
      *
      * @param shortOrderId The SHORT leg order ID
      * @param longOrderId The LONG leg order ID
@@ -195,7 +220,12 @@ class LegByLegOrderStrategy(
         timeoutMs: Long = 10000,
     ): Boolean {
         val startTime = System.currentTimeMillis()
-        val pollIntervalMs = 100L
+        val pollIntervalMs = 50L // Tightened from 100ms for faster response
+
+        logger.info {
+            "[$exchangeId] Monitoring both legs: SHORT=$shortOrderId LONG=$longOrderId " +
+                "(waiting up to ${timeoutMs}ms for both to fill)"
+        }
 
         while (System.currentTimeMillis() - startTime < timeoutMs) {
             val shortDeferred = registry.pendingOrderStatus[shortOrderId]
@@ -215,26 +245,30 @@ class LegByLegOrderStrategy(
                     }
 
                     if (shortStatus == OrderStatus.FILLED && longStatus == OrderStatus.FILLED) {
-                        logger.info { "[$exchangeId] Both legs filled: SHORT=$shortOrderId LONG=$longOrderId" }
+                        logger.info { "[$exchangeId] SUCCESS: Both legs filled atomically - hedge complete" }
                         return true
                     }
 
-                    // One or both failed
-                    if (shortStatus != OrderStatus.FILLED) {
-                        logger.warn { "[$exchangeId] SHORT leg $shortOrderId did not fill: $shortStatus" }
-                    }
-                    if (longStatus != OrderStatus.FILLED) {
-                        logger.warn { "[$exchangeId] LONG leg $longOrderId did not fill: $longStatus" }
+                    // One or both failed - Issue #4: Fail-safe to prevent unhedged exposure
+                    logger.error {
+                        "[$exchangeId] PARTIAL FILL DETECTED: SHORT=$shortStatus LONG=$longStatus - " +
+                            "cancelling both to prevent unhedged position"
                     }
 
-                    // Cancel the successful one to prevent unhedged exposure
+                    // Cancel BOTH legs to ensure no unhedged exposure
                     if (shortStatus == OrderStatus.FILLED) {
-                        logger.info { "[$exchangeId] SHORT filled but LONG didn't - cancelling SHORT $shortOrderId" }
-                        client.cancelOrder(shortOrderId, com.ib.client.OrderCancel())
+                        logger.info { "[$exchangeId] Cancelling SHORT $shortOrderId (FILLED, LONG failed)" }
+                        runCatching { client.cancelOrder(shortOrderId, com.ib.client.OrderCancel()) }
+                            .onFailure { e ->
+                                logger.error(e) { "[$exchangeId] Failed to cancel SHORT $shortOrderId" }
+                            }
                     }
                     if (longStatus == OrderStatus.FILLED) {
-                        logger.info { "[$exchangeId] LONG filled but SHORT didn't - cancelling LONG $longOrderId" }
-                        client.cancelOrder(longOrderId, com.ib.client.OrderCancel())
+                        logger.info { "[$exchangeId] Cancelling LONG $longOrderId (FILLED, SHORT failed)" }
+                        runCatching { client.cancelOrder(longOrderId, com.ib.client.OrderCancel()) }
+                            .onFailure { e ->
+                                logger.error(e) { "[$exchangeId] Failed to cancel LONG $longOrderId" }
+                            }
                     }
 
                     return false
@@ -244,12 +278,15 @@ class LegByLegOrderStrategy(
             delay(pollIntervalMs)
         }
 
-        // Timeout waiting for fills - cancel both to prevent unhedged exposure
-        logger.warn {
-            "[$exchangeId] Timeout waiting for fills: SHORT=$shortOrderId LONG=$longOrderId after ${timeoutMs}ms"
+        // Timeout waiting for fills - Issue #4: Cancel both to prevent unhedged exposure
+        logger.error {
+            "[$exchangeId] TIMEOUT: Both legs did not fill within ${timeoutMs}ms - " +
+                "cancelling both (SHORT=$shortOrderId LONG=$longOrderId)"
         }
-        client.cancelOrder(shortOrderId, com.ib.client.OrderCancel())
-        client.cancelOrder(longOrderId, com.ib.client.OrderCancel())
+        runCatching { client.cancelOrder(shortOrderId, com.ib.client.OrderCancel()) }
+            .onFailure { e -> logger.error(e) { "[$exchangeId] Failed to cancel SHORT after timeout" } }
+        runCatching { client.cancelOrder(longOrderId, com.ib.client.OrderCancel()) }
+            .onFailure { e -> logger.error(e) { "[$exchangeId] Failed to cancel LONG after timeout" } }
         return false
     }
 

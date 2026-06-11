@@ -109,11 +109,24 @@ class IbkrOrderExecutionAdapter(
         newCredit: Money,
         qty: Int,
     ): Int {
-        // Use atomic replacement: verify old order is removed before submitting new
+        // Atomic replacement: must verify old order is completely removed before submitting new
+        // Prevents double-fill scenario where both old and new orders execute
         val verificationSuccess = orderReplacementService.replacementCancel(existingOrderId)
+
         if (!verificationSuccess) {
-            logger.warn { "Order replacement: old order $existingOrderId could not be verified as removed; risking double order" }
+            // CRITICAL: Old order still in IBKR — DO NOT submit new order
+            // Risk: Both orders could fill simultaneously, doubling position
+            logger.error {
+                "Order replacement BLOCKED: old order $existingOrderId still in IBKR after verification attempts. " +
+                "Will not submit replacement to prevent double-order scenario."
+            }
+            throw IllegalStateException(
+                "Order replacement failed: could not verify removal of old order $existingOrderId. " +
+                "Check IBKR manually before retrying."
+            )
         }
+
+        logger.info { "Order replacement verified: old order $existingOrderId removed, submitting replacement" }
         return submitComboLimitOrder(soldContract, boughtContract, newCredit, qty)
     }
 

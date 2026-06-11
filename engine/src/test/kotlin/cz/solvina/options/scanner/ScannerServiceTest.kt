@@ -299,6 +299,8 @@ class ScannerServiceTest {
             page: Int,
             size: Int,
         ) = SpreadPage(emptyList(), 0, 0, page, size)
+
+        override suspend fun findBySymbolWithLock(symbol: Symbol) = emptyList<BullPutSpread>()
     }
 
     /**
