@@ -26,6 +26,7 @@ class IbkrOrderExecutionAdapter(
     private val openOrdersAdapter: IbkrOpenOrdersAdapter,
     private val strategyRouter: ExchangeStrategyRouter,
     private val reconciliationService: PositionReconciliationService,
+    private val orderReplacementService: OrderReplacementService,
 ) : OrderExecutionPort {
     override suspend fun submitComboLimitOrder(
         soldContract: OptionContract,
@@ -108,7 +109,11 @@ class IbkrOrderExecutionAdapter(
         newCredit: Money,
         qty: Int,
     ): Int {
-        cancelAndAwait(existingOrderId)
+        // Use atomic replacement: verify old order is removed before submitting new
+        val verificationSuccess = orderReplacementService.replacementCancel(existingOrderId)
+        if (!verificationSuccess) {
+            logger.warn { "Order replacement: old order $existingOrderId could not be verified as removed; risking double order" }
+        }
         return submitComboLimitOrder(soldContract, boughtContract, newCredit, qty)
     }
 

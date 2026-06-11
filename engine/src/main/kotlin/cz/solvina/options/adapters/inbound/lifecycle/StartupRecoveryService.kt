@@ -4,6 +4,7 @@ import com.ib.client.EClientSocket
 import com.ib.client.OrderCancel
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOpenOrdersAdapter
 import cz.solvina.options.adapters.outbound.ibkr.account.OpenOrder
+import cz.solvina.options.adapters.outbound.ibkr.order.OrderCancellationService
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.features.spread.SpreadPort
@@ -25,6 +26,7 @@ class StartupRecoveryService(
     private val orderRegistry: IbkrOrderRegistry,
     private val openOrdersAdapter: IbkrOpenOrdersAdapter,
     private val client: EClientSocket,
+    private val orderCancellationService: OrderCancellationService,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -51,22 +53,37 @@ class StartupRecoveryService(
             val staleSellOrders = openOrders.filter { it.symbol in closingSymbols && it.action.equals("SELL", ignoreCase = true) }
             val staleOrders = staleBuyOrders + staleSellOrders
 
-            for (order in staleBuyOrders) {
+            if (staleOrders.isNotEmpty()) {
                 logger.info {
-                    "Recovery: cancelling stale BUY order ${order.orderId} (${order.symbol} close leg @ ${order.limitPrice})"
+                    "Recovery: atomically cancelling ${staleBuyOrders.size} stale BUY + ${staleSellOrders.size} stale SELL orders"
                 }
-                runCatching { client.cancelOrder(order.orderId, OrderCancel()) }
-                    .onFailure { e -> logger.warn(e) { "Recovery: failed to cancel BUY order ${order.orderId}" } }
-            }
-            for (order in staleSellOrders) {
-                logger.warn {
-                    "Recovery: cancelling stale SELL order ${order.orderId} (${order.symbol} entry order @ ${order.limitPrice}) — prevents position reversal"
-                }
-                runCatching { client.cancelOrder(order.orderId, OrderCancel()) }
-                    .onFailure { e -> logger.warn(e) { "Recovery: failed to cancel SELL order ${order.orderId}" } }
-            }
 
-            if (staleOrders.isEmpty()) {
+                val buyOrderIds = staleBuyOrders.map { it.orderId }
+                if (buyOrderIds.isNotEmpty()) {
+                    val buyResults = orderCancellationService.cancelOrdersAtomic(buyOrderIds, "recovery_stale_buy")
+                    for (result in buyResults) {
+                        if (result.success) {
+                            logger.info { "Recovery: stale BUY order ${result.orderId} cancelled" }
+                        } else {
+                            logger.warn { "Recovery: stale BUY order ${result.orderId} cancellation failed: ${result.reason}" }
+                        }
+                    }
+                }
+
+                val sellOrderIds = staleSellOrders.map { it.orderId }
+                if (sellOrderIds.isNotEmpty()) {
+                    val sellResults = orderCancellationService.cancelOrdersAtomic(sellOrderIds, "recovery_stale_sell")
+                    for (result in sellResults) {
+                        if (result.success) {
+                            logger.info { "Recovery: stale SELL order ${result.orderId} cancelled — prevents position reversal" }
+                        } else {
+                            logger.warn {
+                                "Recovery: stale SELL order ${result.orderId} cancellation failed: ${result.reason} — position reversal risk"
+                            }
+                        }
+                    }
+                }
+            } else {
                 logger.info { "Recovery: ${closingSpreads.size} CLOSING spread(s) found — no orphaned orders to cancel" }
             }
         }

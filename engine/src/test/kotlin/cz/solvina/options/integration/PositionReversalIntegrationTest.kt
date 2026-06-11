@@ -141,6 +141,7 @@ class PositionReversalIntegrationTest {
                     orderRegistry = mockOrderRegistry,
                     openOrdersAdapter = openOrdersAdapter,
                     client = mockClient,
+                    orderCancellationService = mockk(relaxed = true),
                 )
 
             recoveryService.recover()
@@ -305,6 +306,7 @@ class PositionReversalIntegrationTest {
                     orderRegistry = mockOrderRegistry,
                     openOrdersAdapter = openOrdersAdapter,
                     client = mockClient,
+                    orderCancellationService = mockk(relaxed = true),
                 )
 
             recoveryService.recover()

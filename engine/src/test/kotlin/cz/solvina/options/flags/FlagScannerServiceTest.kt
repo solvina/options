@@ -110,6 +110,7 @@ class FlagScannerServiceTest {
         strategyConfig = strategyConfig,
         connectionStatusPort = mockk(relaxed = true),
         universePort = universePort,
+        symbolMutexManager = mockk(relaxed = true),
         scope = testScope,
         clock = clock,
     )
