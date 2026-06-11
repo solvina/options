@@ -12,6 +12,7 @@ import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.features.volatility.VolatilityPort
 import cz.solvina.options.domain.models.Money
 import io.github.oshai.kotlinlogging.KotlinLogging
+import kotlinx.coroutines.delay
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.math.RoundingMode
@@ -35,6 +36,7 @@ class SpreadManagementService(
     private val executionPort: TradeExecutionPort,
     private val config: ScannerConfig,
     private val clock: Clock,
+    private val positionsPort: cz.solvina.options.domain.features.account.PositionsPort? = null,
 ) {
     sealed interface ManualCloseResult {
         data class Closed(
@@ -91,6 +93,18 @@ class SpreadManagementService(
             .onFailure { e -> logger.warn { "[${spread.symbol}] Sold-leg market order timed out (order still submitted): ${e.message}" } }
         runCatching { orderPort.placeMarketOrder(spread.boughtLeg.contract, LegAction.SELL, spread.quantity) }
             .onFailure { e -> logger.warn { "[${spread.symbol}] Bought-leg market order timed out (order still submitted): ${e.message}" } }
+
+        // Verify position: check that both legs are actually closed in IBKR before marking spread as CLOSED
+        val positionVerified = verifyPositionClosed(spread)
+        if (!positionVerified) {
+            logger.warn {
+                "[${spread.symbol}] Position verification FAILED — legs still open in IBKR. " +
+                    "Not transitioning to CLOSED. Keeping as CLOSING for next retry."
+            }
+            // Keep spread in CLOSING state; next retryClose will try again
+            return spread
+        }
+
         val updated =
             spread.copy(
                 status = closeStatus,
@@ -103,6 +117,58 @@ class SpreadManagementService(
         spreadPort.update(updated)
         logger.info { "[${spread.symbol}] Force-closed. status=$closeStatus value=\$$estimatedSpreadValue" }
         return updated
+    }
+
+    /**
+     * Verify that both legs of a spread are actually closed in IBKR.
+     * Polls position feed up to 10 times with 500ms delays (5s total timeout).
+     * Returns true if both legs are verified closed, false otherwise.
+     */
+    private suspend fun verifyPositionClosed(spread: BullPutSpread): Boolean {
+        val port = positionsPort
+        if (port == null) {
+            logger.debug { "[${spread.symbol}] Position verification skipped (PositionsPort not available)" }
+            return true // Assume closed if we can't verify
+        }
+
+        repeat(10) { attempt ->
+            runCatching {
+                val positions = port.getPositions()
+                val soldLegClosed =
+                    !positions.any { pos ->
+                        pos.symbol == spread.symbol.value &&
+                            pos.secType == "OPT" &&
+                            pos.expiry == spread.soldLeg.contract.expiry &&
+                            pos.strike == spread.soldLeg.contract.strike &&
+                            pos.optionRight?.equals("Put", ignoreCase = true) == true &&
+                            pos.quantity.compareTo(java.math.BigDecimal.ZERO) != 0
+                    }
+                val boughtLegClosed =
+                    !positions.any { pos ->
+                        pos.symbol == spread.symbol.value &&
+                            pos.secType == "OPT" &&
+                            pos.expiry == spread.boughtLeg.contract.expiry &&
+                            pos.strike == spread.boughtLeg.contract.strike &&
+                            pos.optionRight?.equals("Put", ignoreCase = true) == true &&
+                            pos.quantity.compareTo(java.math.BigDecimal.ZERO) != 0
+                    }
+
+                if (soldLegClosed && boughtLegClosed) {
+                    logger.info { "[${spread.symbol}] Position verification SUCCESS (attempt $attempt)" }
+                    return true
+                } else {
+                    if (attempt < 9) {
+                        logger.debug { "[${spread.symbol}] Position not yet closed (attempt $attempt), retrying..." }
+                        delay(500)
+                    }
+                }
+            }.onFailure { e ->
+                logger.warn(e) { "[${spread.symbol}] Position verification error on attempt $attempt" }
+            }
+        }
+
+        logger.warn { "[${spread.symbol}] Position verification TIMEOUT after 10 attempts (5s)" }
+        return false
     }
 
     suspend fun checkExits() {

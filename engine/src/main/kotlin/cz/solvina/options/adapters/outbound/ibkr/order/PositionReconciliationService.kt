@@ -179,12 +179,13 @@ class PositionReconciliationService(
             val positions = positionsPort.getPositions()
 
             // Find position matching symbol, strike, and option type
-            val position = positions.firstOrNull { pos ->
-                pos.symbol == symbol &&
-                    pos.strike == strike &&
-                    pos.optionRight == optionType.ibkrCode &&
-                    pos.secType == "OPT"
-            }
+            val position =
+                positions.firstOrNull { pos ->
+                    pos.symbol == symbol &&
+                        pos.strike == strike &&
+                        pos.optionRight == optionType.ibkrCode &&
+                        pos.secType == "OPT"
+                }
 
             if (position == null) {
                 logger.debug { "Position not found: $symbol $strike ${optionType.ibkrCode}" }

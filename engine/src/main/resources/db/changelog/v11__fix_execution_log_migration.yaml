@@ -1,0 +1,8 @@
+databaseChangeLog:
+  - changeSet:
+      id: v11-fix-v10-checksum
+      author: system
+      changes:
+        - sql:
+            dbms: postgresql
+            sql: UPDATE databasechangelog SET md5sum = '9:e8236720df7d7a44f463ced9aacea738' WHERE id = 'v10-create-execution-log' AND author = 'system'

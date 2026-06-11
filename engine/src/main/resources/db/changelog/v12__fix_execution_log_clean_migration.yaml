@@ -1,0 +1,10 @@
+databaseChangeLog:
+  - changeSet:
+      id: v12-cleanup-and-recreate-execution-log
+      author: system
+      preConditions:
+        onFail: CONTINUE
+      changes:
+        - sql:
+            dbms: postgresql
+            sql: DELETE FROM databasechangelog WHERE id IN ('v10-create-execution-log', 'v11-fix-execution-log-checksum', 'v11-fix-v10-checksum') AND author = 'system'

@@ -1,0 +1,121 @@
+databaseChangeLog:
+  - changeSet:
+      id: v10-create-execution-log
+      author: system
+      changes:
+        - createTable:
+            tableName: execution_log
+            columns:
+              - column:
+                  name: id
+                  type: uuid
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: symbol
+                  type: varchar(255)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: sold_strike
+                  type: numeric(10,2)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: bought_strike
+                  type: numeric(10,2)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: expiry_date
+                  type: date
+                  constraints:
+                    nullable: false
+              - column:
+                  name: quantity
+                  type: integer
+                  constraints:
+                    nullable: false
+              - column:
+                  name: order_id
+                  type: integer
+                  constraints:
+                    nullable: true
+              - column:
+                  name: event_type
+                  type: varchar(50)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: event_status
+                  type: varchar(50)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: target_credit
+                  type: numeric(10,4)
+                  constraints:
+                    nullable: true
+              - column:
+                  name: iv_rank
+                  type: numeric(5,2)
+                  constraints:
+                    nullable: true
+              - column:
+                  name: underlying_price
+                  type: numeric(10,2)
+                  constraints:
+                    nullable: true
+              - column:
+                  name: reason
+                  type: varchar(255)
+                  constraints:
+                    nullable: true
+              - column:
+                  name: spread_id
+                  type: uuid
+                  constraints:
+                    nullable: true
+              - column:
+                  name: created_at
+                  type: timestamp with time zone
+                  constraints:
+                    nullable: false
+                  defaultValueComputed: CURRENT_TIMESTAMP
+              - column:
+                  name: updated_at
+                  type: timestamp with time zone
+                  constraints:
+                    nullable: true
+
+        - createIndex:
+            indexName: idx_execution_log_symbol_created
+            tableName: execution_log
+            columns:
+              - column:
+                  name: symbol
+              - column:
+                  name: created_at
+
+        - createIndex:
+            indexName: idx_execution_log_spread_id
+            tableName: execution_log
+            columns:
+              - column:
+                  name: spread_id
+
+        - createIndex:
+            indexName: idx_execution_log_order_id
+            tableName: execution_log
+            columns:
+              - column:
+                  name: order_id
+
+        - addForeignKeyConstraint:
+            baseTableName: execution_log
+            baseColumnNames: spread_id
+            referencedTableName: spread_positions
+            referencedColumnNames: id
+            constraintName: fk_execution_log_spread
+            onDelete: SET NULL

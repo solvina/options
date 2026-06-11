@@ -52,6 +52,7 @@ class FlagScannerService(
     private val universePort: UniversePort,
     private val scope: CoroutineScope,
     private val clock: Clock,
+    private val symbolMutexManager: SymbolMutexManager,
 ) {
     private val subscriptions = ConcurrentHashMap<Symbol, Job>()
     private val aggregators = ConcurrentHashMap<Symbol, BarAggregator>()
@@ -382,19 +383,23 @@ class FlagScannerService(
                     stopDistancePct = stopDistancePct,
                 )
 
-            // Serialise position count check + submission to close the TOCTOU window where two
-            // concurrent breakout signals could both read below maxOpenPositions before either persists.
-            entryMutex.withLock {
-                val openCount =
-                    flagPort.findOpen().size +
-                        flagPort.findByStatus(FlagStatus.PENDING).size
-                if (openCount >= config.maxOpenPositions) {
-                    logger.info { "[${symbol.value}] Max open positions (${config.maxOpenPositions}) reached — skipping" }
-                    detectors[symbol]?.reset()
-                    return@withLock
+            // Per-symbol serialization: prevent concurrent entries for same symbol.
+            // This ensures no two breakout signals on the same symbol execute simultaneously.
+            symbolMutexManager.withSymbolLock(symbol) {
+                // Serialise position count check + submission to close the TOCTOU window where two
+                // concurrent breakout signals could both read below maxOpenPositions before either persists.
+                entryMutex.withLock {
+                    val openCount =
+                        flagPort.findOpen().size +
+                            flagPort.findByStatus(FlagStatus.PENDING).size
+                    if (openCount >= config.maxOpenPositions) {
+                        logger.info { "[${symbol.value}] Max open positions (${config.maxOpenPositions}) reached — skipping" }
+                        detectors[symbol]?.reset()
+                        return@withLock
+                    }
+                    detectors[symbol]?.reset() // prevent double-firing
+                    flagExecutionService.execute(request)
                 }
-                detectors[symbol]?.reset() // prevent double-firing
-                flagExecutionService.execute(request)
             }
         }
     }

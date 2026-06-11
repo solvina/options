@@ -53,22 +53,24 @@ class NativeComboOrderStrategy(
 
         return try {
             // Build native combo contract
-            val soldConId = contractCache.getOrFetchOptionConId(
-                OptionContractKey(
-                    symbol = soldContract.symbol,
-                    expiry = soldContract.expiry,
-                    strike = soldContract.strike,
-                    optionType = soldContract.type,
-                ),
-            )
-            val boughtConId = contractCache.getOrFetchOptionConId(
-                OptionContractKey(
-                    symbol = boughtContract.symbol,
-                    expiry = boughtContract.expiry,
-                    strike = boughtContract.strike,
-                    optionType = boughtContract.type,
-                ),
-            )
+            val soldConId =
+                contractCache.getOrFetchOptionConId(
+                    OptionContractKey(
+                        symbol = soldContract.symbol,
+                        expiry = soldContract.expiry,
+                        strike = soldContract.strike,
+                        optionType = soldContract.type,
+                    ),
+                )
+            val boughtConId =
+                contractCache.getOrFetchOptionConId(
+                    OptionContractKey(
+                        symbol = boughtContract.symbol,
+                        expiry = boughtContract.expiry,
+                        strike = boughtContract.strike,
+                        optionType = boughtContract.type,
+                    ),
+                )
 
             val bagContract =
                 buildNativeComboContract(

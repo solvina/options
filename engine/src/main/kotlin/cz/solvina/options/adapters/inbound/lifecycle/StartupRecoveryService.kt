@@ -39,19 +39,33 @@ class StartupRecoveryService(
                 .getOrDefault(emptyList<OpenOrder>())
         val openOrderIds = openOrders.map { it.orderId }.toSet()
 
-        // Cancel any orphaned BUY orders for symbols stuck in CLOSING state.
-        // These were placed by the previous engine run's close attempt; without cancellation
-        // the next retryClose would place a duplicate order for the same contract.
+        // Cancel any orphaned orders for symbols stuck in CLOSING state.
+        // BUY orders: placed by the previous engine run's close attempt; without cancellation
+        //            the next retryClose would place a duplicate order for the same contract.
+        // SELL orders: orphaned entry orders from failed trades; these can execute when the close
+        //             completes, reversing the position (e.g., AMD bug: +18 LONG closed but -18 SHORT
+        //             opened due to stale SELL orders filling simultaneously).
         if (closingSpreads.isNotEmpty()) {
             val closingSymbols = closingSpreads.map { it.symbol.value }.toSet()
-            val staleOrders = openOrders.filter { it.symbol in closingSymbols && it.action.equals("BUY", ignoreCase = true) }
-            for (order in staleOrders) {
+            val staleBuyOrders = openOrders.filter { it.symbol in closingSymbols && it.action.equals("BUY", ignoreCase = true) }
+            val staleSellOrders = openOrders.filter { it.symbol in closingSymbols && it.action.equals("SELL", ignoreCase = true) }
+            val staleOrders = staleBuyOrders + staleSellOrders
+
+            for (order in staleBuyOrders) {
                 logger.info {
-                    "Recovery: cancelling stale CLOSING order ${order.orderId} (${order.symbol} ${order.action} @ ${order.limitPrice})"
+                    "Recovery: cancelling stale BUY order ${order.orderId} (${order.symbol} close leg @ ${order.limitPrice})"
                 }
                 runCatching { client.cancelOrder(order.orderId, OrderCancel()) }
-                    .onFailure { e -> logger.warn(e) { "Recovery: failed to cancel order ${order.orderId}" } }
+                    .onFailure { e -> logger.warn(e) { "Recovery: failed to cancel BUY order ${order.orderId}" } }
             }
+            for (order in staleSellOrders) {
+                logger.warn {
+                    "Recovery: cancelling stale SELL order ${order.orderId} (${order.symbol} entry order @ ${order.limitPrice}) — prevents position reversal"
+                }
+                runCatching { client.cancelOrder(order.orderId, OrderCancel()) }
+                    .onFailure { e -> logger.warn(e) { "Recovery: failed to cancel SELL order ${order.orderId}" } }
+            }
+
             if (staleOrders.isEmpty()) {
                 logger.info { "Recovery: ${closingSpreads.size} CLOSING spread(s) found — no orphaned orders to cancel" }
             }

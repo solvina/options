@@ -171,14 +171,15 @@ class LegByLegOrderStrategy(
         legDescription: String,
     ): Int =
         try {
-            val conId = contractCache.getOrFetchOptionConId(
-                OptionContractKey(
-                    symbol = contract.symbol,
-                    expiry = contract.expiry,
-                    strike = contract.strike,
-                    optionType = contract.type,
-                ),
-            )
+            val conId =
+                contractCache.getOrFetchOptionConId(
+                    OptionContractKey(
+                        symbol = contract.symbol,
+                        expiry = contract.expiry,
+                        strike = contract.strike,
+                        optionType = contract.type,
+                    ),
+                )
 
             val legContract =
                 Contract().apply {

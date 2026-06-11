@@ -28,10 +28,20 @@ class PreTradeValidator(
         inFlightSymbols: Set<Symbol>,
     ): ExecutionOutcome? {
         // Exposure: open/closing spreads + in-flight (in-memory) + live IBKR open orders (survives restart)
-        val openSymbols =
-            (spreadPort.findOpen() + spreadPort.findByStatus(SpreadStatus.CLOSING))
-                .map { it.symbol }
-                .toSet()
+        val allSpreads = spreadPort.findOpen() + spreadPort.findByStatus(SpreadStatus.CLOSING)
+        val openSymbols = allSpreads.map { it.symbol }.toSet()
+
+        // CLOSING freeze: prevent new entries on a symbol while the close is in-flight.
+        // Rationale: during the 1-60s window while close orders are being submitted/filled,
+        // any new entry would interfere with position reconciliation. Freeze is temporary.
+        val closingSymbols = spreadPort.findByStatus(SpreadStatus.CLOSING).map { it.symbol }.toSet()
+        if (request.underlyingSymbol in closingSymbols) {
+            logger.info { "[${request.underlyingSymbol}] CLOSING_FREEZE — symbol has in-flight close order, entry blocked" }
+            tradeLogger.info {
+                "REJECT ${request.underlyingSymbol}  ${request.soldContract.strike}P/${request.boughtContract.strike}P  reason=CLOSING_FREEZE"
+            }
+            return ExecutionOutcome.EXPOSURE_REJECTED
+        }
         val ibkrOpenSymbols =
             runCatching { orderExecutionPort.getSymbolsWithOpenOrders() }
                 .onFailure { e -> logger.warn(e) { "[${request.underlyingSymbol}] Could not fetch open IBKR orders: ${e.message}" } }

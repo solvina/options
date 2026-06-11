@@ -9,13 +9,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 import java.time.DayOfWeek
 import java.time.LocalTime
 import java.time.ZoneId
 import java.time.ZonedDateTime
-import java.util.concurrent.atomic.AtomicBoolean
 
 private val logger = KotlinLogging.logger {}
 
@@ -27,7 +27,7 @@ class SpreadMonitorScheduler(
     private val instrumentsConfig: IbkrInstrumentsConfig,
 ) {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private val running = AtomicBoolean(false)
+    private val monitorMutex = Mutex()
 
     @Scheduled(fixedDelayString = "\${scanner.monitor-delay-ms:60000}")
     fun monitorSpreads() {
@@ -43,16 +43,18 @@ class SpreadMonitorScheduler(
             logger.debug { "Spread monitor skipped: no exchange currently open" }
             return
         }
-        if (!running.compareAndSet(false, true)) {
-            logger.debug { "Spread monitor skipped: previous run still in progress" }
-            return
-        }
+
         scope.launch {
+            if (!monitorMutex.tryLock()) {
+                logger.debug { "Spread monitor skipped: previous run still in progress" }
+                return@launch
+            }
+
             try {
                 runCatching { spreadManagementService.checkExits() }
                     .onFailure { e -> logger.error(e) { "Spread monitor failed: ${e.message}" } }
             } finally {
-                running.set(false)
+                monitorMutex.unlock()
             }
         }
     }
