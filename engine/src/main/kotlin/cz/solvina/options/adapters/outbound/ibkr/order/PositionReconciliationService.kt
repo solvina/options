@@ -1,6 +1,7 @@
 package cz.solvina.options.adapters.outbound.ibkr.order
 
 import cz.solvina.options.domain.features.account.PositionsPort
+import cz.solvina.options.domain.features.order.OrderCleanupService
 import cz.solvina.options.domain.models.OptionContract
 import cz.solvina.options.domain.models.OptionType
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -26,6 +27,7 @@ private val logger = KotlinLogging.logger {}
 class PositionReconciliationService(
     private val ibkrClient: com.ib.client.EClientSocket,
     private val positionsPort: PositionsPort,
+    private val orderCleanupService: OrderCleanupService,
 ) {
     // Track pending leg-by-leg orders awaiting reconciliation
     private val pendingMatches = mutableMapOf<String, PendingLegMatch>()
@@ -75,6 +77,8 @@ class PositionReconciliationService(
         boughtContract: OptionContract,
         qty: Int,
         timeoutMs: Long = 5000,
+        shortOrderId: Int? = null,
+        longOrderId: Int? = null,
     ): VerificationResult {
         val startTime = Instant.now()
         val matchKey = "${soldContract.symbol}-${soldContract.strike}-${boughtContract.strike}"
@@ -122,6 +126,18 @@ class PositionReconciliationService(
 
         // Timeout: one or both legs not found
         logger.warn { "✗ Position reconciliation FAILED (timeout): $matchKey" }
+
+        // Issue #8: Cleanup pending orders on verification timeout
+        if (shortOrderId != null || longOrderId != null) {
+            val cleanupResult = orderCleanupService.cleanupOnReconciliationTimeout(
+                shortOrderId = shortOrderId,
+                longOrderId = longOrderId,
+            )
+            logger.info {
+                "Cleanup on reconciliation timeout: cancelled=${cleanupResult.cancelledCount}, " +
+                    "failed=${cleanupResult.failedCount}"
+            }
+        }
 
         val finalShortLegFound =
             runCatching {
