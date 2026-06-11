@@ -105,6 +105,19 @@ class TradeExecutionService(
         // Persist PENDING before submitting — survives engine restarts so fill can be recovered
         var pendingSpread = spreadPort.save(buildSpread(request, orderId = 0, credit = request.targetCredit, status = SpreadStatus.PENDING))
 
+        // Check quote freshness before submission — market may have moved since scanner captured mid-prices
+        val stalePriceResult = validateQuoteFreshness(request)
+        if (stalePriceResult != null) {
+            logger.info { "[${request.underlyingSymbol}] ${stalePriceResult.message}" }
+            spreadPort.update(
+                pendingSpread.copy(
+                    status = SpreadStatus.CLOSED_TIMEOUT,
+                    closeReason = stalePriceResult.outcome.name.lowercase(),
+                )
+            )
+            return TradeExecutionResult(stalePriceResult.outcome)
+        }
+
         var currentOrderId =
             runCatching {
                 orderExecutionPort.submitComboLimitOrder(
@@ -114,8 +127,8 @@ class TradeExecutionService(
                     qty = request.quantity,
                 )
             }.getOrElse { e ->
-                logger.warn(e) { "[${request.underlyingSymbol}] Failed to submit order: ${e.message}" }
-                spreadPort.update(pendingSpread.copy(status = SpreadStatus.CLOSED_REJECTED, closeReason = "order_rejected"))
+                logger.error(e) { "[${request.underlyingSymbol}] Failed to submit order" }
+                spreadPort.update(pendingSpread.copy(status = SpreadStatus.CLOSED_REJECTED, closeReason = "order_rejected: ${e.message}"))
                 return TradeExecutionResult(ExecutionOutcome.ORDER_REJECTED)
             }
         // Stamp the real orderId now that we have it
@@ -361,6 +374,82 @@ class TradeExecutionService(
             openedAt = Instant.now(clock),
         )
     }
+
+    private suspend fun validateQuoteFreshness(request: TradeExecutionRequest): QuoteFreshnessResult? {
+        // Wait a moment to allow market data to flow through
+        delay(500)
+
+        val currentTick = runCatching {
+            val stream = marketTickPort.streamSpreadCredit(
+                request.soldContract,
+                request.boughtContract,
+            )
+            withTimeout(3_000L) {
+                stream.collect { tick ->
+                    // Got the first tick, validate against scanner prices
+                    val soldMid = (tick.soldBid + tick.soldAsk) / 2.0
+                    val boughtMid = (tick.boughtBid + tick.boughtAsk) / 2.0
+                    val currentMid = (soldMid - boughtMid).toBigDecimal()
+                        .setScale(4, RoundingMode.HALF_UP)
+
+                    val priceDrift = (currentMid - request.targetCredit).abs()
+                    val driftPercent =
+                        priceDrift / request.targetCredit.max(BigDecimal("0.01"))
+
+                    if (priceDrift > BigDecimal("0.05")) {
+                        val percent = "%.1f".format(driftPercent * BigDecimal("100"))
+                        logger.warn {
+                            "[${request.underlyingSymbol}] Quote staleness detected: " +
+                                "scanner=$${request.targetCredit} current=$${currentMid} " +
+                                "drift=$${priceDrift} ($percent%)"
+                        }
+                        throw StaleQuoteException(currentMid, request.targetCredit, priceDrift)
+                    } else {
+                        throw ValidQuoteException()
+                    }
+                }
+            }
+        }.getOrElse { e ->
+            when (e) {
+                is ValidQuoteException -> return null
+                is StaleQuoteException -> {
+                    return QuoteFreshnessResult(
+                        outcome = ExecutionOutcome.MARKET_MOVED_TOO_FAR,
+                        message = "[${request.underlyingSymbol}] Market moved " +
+                            "$${e.drift} from target; aborting to prevent bad order",
+                    )
+                }
+                is TimeoutCancellationException -> {
+                    logger.warn {
+                        "[${request.underlyingSymbol}] Market data timeout checking quote freshness; " +
+                            "proceeding with order"
+                    }
+                    return null
+                }
+                else -> {
+                    logger.warn(e) {
+                        "[${request.underlyingSymbol}] Error checking quote freshness; " +
+                            "proceeding with order"
+                    }
+                    return null
+                }
+            }
+        }
+        return null
+    }
+
+    private data class QuoteFreshnessResult(
+        val outcome: ExecutionOutcome,
+        val message: String,
+    )
+
+    private class StaleQuoteException(
+        val current: BigDecimal,
+        val target: BigDecimal,
+        val drift: BigDecimal,
+    ) : Exception()
+
+    private class ValidQuoteException : Exception()
 
     // -------------------------------------------------------------------------
     // Internal event types

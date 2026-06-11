@@ -35,4 +35,7 @@ enum class ExecutionOutcome {
 
     /** Trading is disabled via scanner.trading-enabled=false; execution skipped intentionally. */
     DIAGNOSTIC_SKIPPED,
+
+    /** Market moved >$0.05 from scanner's mid-price before submission; aborting to prevent stale-price order rejection. */
+    MARKET_MOVED_TOO_FAR,
 }

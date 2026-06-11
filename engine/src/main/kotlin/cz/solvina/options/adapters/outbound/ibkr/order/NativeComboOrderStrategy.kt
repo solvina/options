@@ -98,7 +98,18 @@ class NativeComboOrderStrategy(
                     "@ net \$${netCredit.amount} orderId=$orderId (both legs atomic)"
             }
 
-            client.placeOrder(orderId, bagContract, order)
+            // Place order with IBKR
+            try {
+                client.placeOrder(orderId, bagContract, order)
+                logger.debug {
+                    "[$exchangeId] Order $orderId placed to IBKR: lmtPrice=${order.lmtPrice()} " +
+                        "qty=${order.totalQuantity()} action=${order.action()} type=${order.orderType()}"
+                }
+            } catch (e: Exception) {
+                // IBKR placeOrder can throw if there's a connection issue or immediate validation error
+                logger.error(e) { "[$exchangeId] Error placing order to IBKR" }
+                throw e
+            }
 
             OrderSubmissionResult(
                 status = SubmissionStatus.SUCCESS,
@@ -107,11 +118,13 @@ class NativeComboOrderStrategy(
                 requiresManualMatching = false,
             )
         } catch (e: Exception) {
-            logger.error(e) { "[$exchangeId] Failed to submit native combo order" }
+            logger.error(e) {
+                "[$exchangeId] Failed to submit native combo order for ${soldContract.strike}P/${boughtContract.strike}P: ${e.message}"
+            }
             OrderSubmissionResult(
                 status = SubmissionStatus.SYSTEM_ERROR,
                 primaryOrderId = 0,
-                message = e.message ?: "Unknown error",
+                message = "${e::class.simpleName}: ${e.message}",
             )
         }
     }
