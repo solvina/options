@@ -84,10 +84,22 @@ class LegByLegOrderStrategy(
                 )
             }
 
-            // Wait a brief moment for SHORT leg to be processed
-            delay(500)
+            // Monitor SHORT leg fill in real-time during submission window (Issue #4 fix)
+            val shortFilled = monitorShortFillBeforeLongSubmission(shortOrderId, maxWaitMs = 50)
+            if (shortFilled) {
+                logger.warn {
+                    "[$exchangeId] SHORT leg $shortOrderId already filled before LONG submission - cancelling to prevent unhedged"
+                }
+                client.cancelOrder(shortOrderId, com.ib.client.OrderCancel())
+                return OrderSubmissionResult(
+                    status = SubmissionStatus.LIQUIDITY_FAILED,
+                    primaryOrderId = shortOrderId,
+                    message = "SHORT leg filled before LONG could be submitted - position not created to prevent unhedged",
+                    requiresManualMatching = false,
+                )
+            }
 
-            // Step 2: Submit LONG leg to hedge (after SHORT fills or times out)
+            // Step 2: Submit LONG leg to hedge (after SHORT submitted but not yet filled)
             val longOrderId =
                 submitSingleLeg(
                     contract = boughtContract,
@@ -98,15 +110,15 @@ class LegByLegOrderStrategy(
                 )
 
             if (longOrderId == 0) {
-                logger.warn { "[$exchangeId] SHORT leg filled but LONG leg failed - unhedged position!" }
+                logger.warn { "[$exchangeId] SHORT leg submitted but LONG leg failed - unhedged position!" }
                 // Cancel SHORT leg to prevent unhedged exposure
                 client.cancelOrder(shortOrderId, com.ib.client.OrderCancel())
                 return OrderSubmissionResult(
                     status = SubmissionStatus.LIQUIDITY_FAILED,
                     primaryOrderId = shortOrderId,
-                    secondaryOrderId = longOrderId,
-                    message = "SHORT leg succeeded but LONG leg failed - order cancelled to prevent unhedged exposure",
-                    requiresManualMatching = true,
+                    secondaryOrderId = 0,
+                    message = "LONG leg submission failed - SHORT leg cancelled to prevent unhedged exposure",
+                    requiresManualMatching = false,
                 )
             }
 
@@ -130,6 +142,115 @@ class LegByLegOrderStrategy(
                 message = e.message ?: "Unknown error",
             )
         }
+    }
+
+    /**
+     * Monitor SHORT leg fill in real-time during the submission window (Issue #4 fix).
+     *
+     * After SHORT order is submitted, check if it fills before LONG can be submitted.
+     * If SHORT fills early, LONG submission will be cancelled to prevent unhedged exposure.
+     *
+     * @param shortOrderId The SHORT leg order ID to monitor
+     * @param maxWaitMs Maximum time to wait before checking (default 50ms)
+     * @return true if SHORT leg is already filled, false if not yet filled
+     */
+    private suspend fun monitorShortFillBeforeLongSubmission(
+        shortOrderId: Int,
+        maxWaitMs: Long = 50,
+    ): Boolean {
+        // Wait briefly for SHORT order to be processed
+        delay(maxWaitMs)
+
+        // Check if SHORT order has already filled (unhedged risk!)
+        val deferred = registry.pendingOrderStatus[shortOrderId]
+        if (deferred != null && deferred.isCompleted) {
+            val status = try {
+                deferred.getCompleted()
+            } catch (e: Exception) {
+                OrderStatus.CANCELLED
+            }
+            if (status == OrderStatus.FILLED) {
+                logger.warn { "[$exchangeId] SHORT leg $shortOrderId already FILLED before LONG submission - unhedged!" }
+                return true
+            }
+        }
+        return false
+    }
+
+    /**
+     * Wait for both legs to fill concurrently (Issue #4 fix).
+     *
+     * After both legs are submitted, monitor fills in parallel.
+     * Returns success only when both legs report FILLED status.
+     * If timeout occurs or either leg fails, cancels both.
+     *
+     * @param shortOrderId The SHORT leg order ID
+     * @param longOrderId The LONG leg order ID
+     * @param timeoutMs Maximum time to wait for both fills (default 10000ms)
+     * @return true if both legs filled successfully, false otherwise
+     */
+    suspend fun awaitBothLegsWithConcurrentMonitoring(
+        shortOrderId: Int,
+        longOrderId: Int,
+        timeoutMs: Long = 10000,
+    ): Boolean {
+        val startTime = System.currentTimeMillis()
+        val pollIntervalMs = 100L
+
+        while (System.currentTimeMillis() - startTime < timeoutMs) {
+            val shortDeferred = registry.pendingOrderStatus[shortOrderId]
+            val longDeferred = registry.pendingOrderStatus[longOrderId]
+
+            if (shortDeferred != null && longDeferred != null) {
+                if (shortDeferred.isCompleted && longDeferred.isCompleted) {
+                    val shortStatus = try {
+                        shortDeferred.getCompleted()
+                    } catch (e: Exception) {
+                        OrderStatus.CANCELLED
+                    }
+                    val longStatus = try {
+                        longDeferred.getCompleted()
+                    } catch (e: Exception) {
+                        OrderStatus.CANCELLED
+                    }
+
+                    if (shortStatus == OrderStatus.FILLED && longStatus == OrderStatus.FILLED) {
+                        logger.info { "[$exchangeId] Both legs filled: SHORT=$shortOrderId LONG=$longOrderId" }
+                        return true
+                    }
+
+                    // One or both failed
+                    if (shortStatus != OrderStatus.FILLED) {
+                        logger.warn { "[$exchangeId] SHORT leg $shortOrderId did not fill: $shortStatus" }
+                    }
+                    if (longStatus != OrderStatus.FILLED) {
+                        logger.warn { "[$exchangeId] LONG leg $longOrderId did not fill: $longStatus" }
+                    }
+
+                    // Cancel the successful one to prevent unhedged exposure
+                    if (shortStatus == OrderStatus.FILLED) {
+                        logger.info { "[$exchangeId] SHORT filled but LONG didn't - cancelling SHORT $shortOrderId" }
+                        client.cancelOrder(shortOrderId, com.ib.client.OrderCancel())
+                    }
+                    if (longStatus == OrderStatus.FILLED) {
+                        logger.info { "[$exchangeId] LONG filled but SHORT didn't - cancelling LONG $longOrderId" }
+                        client.cancelOrder(longOrderId, com.ib.client.OrderCancel())
+                    }
+
+                    return false
+                }
+            }
+
+            delay(pollIntervalMs)
+        }
+
+        // Timeout waiting for fills - cancel both to prevent unhedged exposure
+        logger.warn {
+            "[$exchangeId] Timeout waiting for fills: SHORT=$shortOrderId LONG=$longOrderId after ${timeoutMs}ms"
+        }
+        client.cancelOrder(shortOrderId, com.ib.client.OrderCancel())
+        client.cancelOrder(longOrderId, com.ib.client.OrderCancel())
+        return false
     }
 
     override fun validateOrder(
