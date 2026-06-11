@@ -2,6 +2,7 @@ package cz.solvina.options.domain.features.spread
 
 import cz.solvina.options.domain.features.spread.model.BullPutSpread
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
+import cz.solvina.options.domain.models.Symbol
 import java.util.UUID
 
 interface SpreadPort {
@@ -24,6 +25,8 @@ interface SpreadPort {
     suspend fun countByStatus(status: SpreadStatus): Long
 
     suspend fun findByStatus(status: SpreadStatus): List<BullPutSpread>
+
+    suspend fun findBySymbolWithLock(symbol: Symbol): List<BullPutSpread>
 }
 
 data class SpreadPage(

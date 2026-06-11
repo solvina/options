@@ -81,6 +81,12 @@ class SpreadPersistenceAdapter(
             repository.findByStatusOrderByOpenedAtDesc(status.name).map { it.toDomain() }
         }
 
+    override suspend fun findBySymbolWithLock(symbol: Symbol): List<BullPutSpread> =
+        withContext(Dispatchers.IO) {
+            // Issue #9: Database-level lock using SELECT FOR UPDATE to ensure atomicity
+            repository.findBySymbolWithLock(symbol.value).map { it.toDomain() }
+        }
+
     private fun BullPutSpread.toEntity(): SpreadPositionEntity =
         SpreadPositionEntity(
             id = id,
