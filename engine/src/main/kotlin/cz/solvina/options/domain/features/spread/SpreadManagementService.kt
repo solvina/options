@@ -88,19 +88,54 @@ class SpreadManagementService(
         exitContext: Pair<BigDecimal?, BigDecimal?> = Pair(null, null),
     ): BullPutSpread {
         logger.info { "[${spread.symbol}] Force-closing at market (reason=$closeReason)" }
-        // Fire both legs; ignore fill-wait timeout — orders are already submitted at IBKR
+
+        // Issue #7: Track order IDs for cancellation if verification fails
+        var soldOrderId: Int? = null
+        var boughtOrderId: Int? = null
+
+        // Fire both legs; track order IDs for potential cancellation
         runCatching { orderPort.placeMarketOrder(spread.soldLeg.contract, LegAction.BUY, spread.quantity) }
+            .onSuccess { legOrder -> soldOrderId = legOrder.orderId }
             .onFailure { e -> logger.warn { "[${spread.symbol}] Sold-leg market order timed out (order still submitted): ${e.message}" } }
+
         runCatching { orderPort.placeMarketOrder(spread.boughtLeg.contract, LegAction.SELL, spread.quantity) }
+            .onSuccess { legOrder -> boughtOrderId = legOrder.orderId }
             .onFailure { e -> logger.warn { "[${spread.symbol}] Bought-leg market order timed out (order still submitted): ${e.message}" } }
 
         // Verify position: check that both legs are actually closed in IBKR before marking spread as CLOSED
         val positionVerified = verifyPositionClosed(spread)
         if (!positionVerified) {
+            // Issue #7: Verification failed — cancel the orders we just placed to prevent duplicates on retry
             logger.warn {
                 "[${spread.symbol}] Position verification FAILED — legs still open in IBKR. " +
-                    "Not transitioning to CLOSED. Keeping as CLOSING for next retry."
+                    "Cancelling orders placed in this attempt to prevent duplicates."
             }
+
+            // Cancel both orders that were placed
+            if (soldOrderId != null && soldOrderId!! > 0) {
+                runCatching { orderPort.cancelOrder(soldOrderId!!) }
+                    .onSuccess {
+                        logger.info { "[${spread.symbol}] Cancelled sold-leg order $soldOrderId due to verification timeout" }
+                    }
+                    .onFailure { e ->
+                        logger.warn {
+                            "[${spread.symbol}] Failed to cancel sold-leg order $soldOrderId: ${e.message}"
+                        }
+                    }
+            }
+
+            if (boughtOrderId != null && boughtOrderId!! > 0) {
+                runCatching { orderPort.cancelOrder(boughtOrderId!!) }
+                    .onSuccess {
+                        logger.info { "[${spread.symbol}] Cancelled bought-leg order $boughtOrderId due to verification timeout" }
+                    }
+                    .onFailure { e ->
+                        logger.warn {
+                            "[${spread.symbol}] Failed to cancel bought-leg order $boughtOrderId: ${e.message}"
+                        }
+                    }
+            }
+
             // Keep spread in CLOSING state; next retryClose will try again
             return spread
         }
