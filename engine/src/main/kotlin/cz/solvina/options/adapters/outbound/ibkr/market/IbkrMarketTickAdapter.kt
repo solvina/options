@@ -171,7 +171,7 @@ class IbkrMarketTickAdapter(
     // Resolves the contract for market data requests using a conId where possible to avoid
     // the "ambiguous" error 200 for multi-exchange symbols (e.g. ASML on EUREX/AEB).
     // Strategy: Try cached conId first (instant), then fast fetch (100ms timeout), then fallback.
-    // The fast timeout prevents blocking market data setup while still attempting to populate cache.
+    // NOTE: Adding exchange/tradingClass causes error 200 for US options, so we use minimal spec.
     private suspend fun contractForMktData(contract: OptionContract): Contract {
         val key = OptionContractKey(contract.symbol, contract.expiry, contract.strike, contract.type)
 
@@ -183,16 +183,13 @@ class IbkrMarketTickAdapter(
             val conId = withTimeout(100L) { contractCache.getOrFetchOptionConId(key) }
             return contractFactory.conIdContract(conId)
         } catch (_: TimeoutCancellationException) {
-            // Fetch timed out or failed, fall back to enriched spec
+            // Fetch timed out or failed, fall back to minimal contract spec
+        } catch (_: Exception) {
+            // Fetch failed for other reasons, fall back to minimal contract spec
         }
 
-        // Fall back to enriched contract with exchange/tradingClass from params
-        val params = optionParamsCache.getCached(contract.symbol)
-        return contractFactory.optionContract(
-            contract,
-            exchangeOverride = params?.exchange,
-            tradingClass = params?.tradingClass,
-            multiplierOverride = params?.multiplier,
-        )
+        // Fall back to minimal contract spec (symbol+secType+currency+expiry+right only).
+        // NOT adding exchange/tradingClass because it causes error 200 "not found" for US options.
+        return contractFactory.optionContract(contract)
     }
 }
