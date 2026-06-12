@@ -83,7 +83,8 @@ scanner:
   order-chase-price-step: 0.01     # Conservative: 0.03 → 0.01 (gradual adjustments, avoid floor hits)
   # Cron: Every 15 minutes, 9 AM - 10:59 PM (server timezone CEST)
   # Covers: EU 9:00-17:30 + US 9:30-16:00 (converted to CEST)
-  cron: "*/15 9-22 * * MON-FRI"
+  # Format: seconds minutes hours day-of-month month day-of-week
+  cron: "0 */15 9-22 * * MON-FRI"
   monitor-delay-ms: 60000
   iv-history-days: 365
   iv-cache-ttl-minutes: 60

@@ -8,7 +8,8 @@ spring:
 scanner:
   watchlist: [ SPY, QQQ, AAPL, MSFT, AMZN, IWM, DIA, TSLA, NVDA, META, GOOGL, XLF, XLE, XLV, AMD, UNH, ASML ]
   # Every 15 minutes, 9 AM - 10:59 PM CEST (covers EU 9:00-17:30 + US 9:30-16:00 in CEST)
-  cron: "*/15 9-22 * * MON-FRI"
+  # Format: seconds minutes hours day-of-month month day-of-week
+  cron: "0 */15 9-22 * * MON-FRI"
   option-params-cache-ttl-hours: 1
 
 ibkr:
