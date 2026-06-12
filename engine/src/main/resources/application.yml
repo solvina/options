@@ -81,11 +81,13 @@ scanner:
   order-chase-timeout-minutes: 3   # Conservative: 5 → 3 (give up sooner, retry next scan)
   order-chase-max-retries: 1       # Conservative: 3 → 1 (one attempt per order, not aggressive chasing)
   order-chase-price-step: 0.01     # Conservative: 0.03 → 0.01 (gradual adjustments, avoid floor hits)
-  cron: "0 */15 3-15 * * MON-FRI"
+  # Cron: Every 15 minutes, 9 AM - 10:59 PM (server timezone CEST)
+  # Covers: EU 9:00-17:30 + US 9:30-16:00 (converted to CEST)
+  cron: "*/15 9-22 * * MON-FRI"
   monitor-delay-ms: 60000
   iv-history-days: 365
   iv-cache-ttl-minutes: 60
-  option-params-cache-ttl-hours: 24
+  option-params-cache-ttl-hours: 1
 
 flag:
   us-watchlist: [SPY, QQQ, AAPL, MSFT, NVDA]
