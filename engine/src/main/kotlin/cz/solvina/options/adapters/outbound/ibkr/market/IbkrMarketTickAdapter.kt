@@ -14,9 +14,11 @@ import cz.solvina.options.domain.features.market.SpreadCreditTick
 import cz.solvina.options.domain.models.OptionContract
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.withTimeout
 import org.springframework.stereotype.Component
 import java.util.concurrent.atomic.AtomicReference
 
@@ -168,13 +170,23 @@ class IbkrMarketTickAdapter(
 
     // Resolves the contract for market data requests using a conId where possible to avoid
     // the "ambiguous" error 200 for multi-exchange symbols (e.g. ASML on EUREX/AEB).
-    // We ONLY use cached conIds (no fetch) to avoid blocking market data setup for 5+ seconds.
-    // If the conId is not cached, we fall back to the enriched spec with exchange/tradingClass
-    // from optionParamsCache, which is the same approach that works during the option chain phase.
-    private fun contractForMktData(contract: OptionContract): Contract {
+    // Strategy: Try cached conId first (instant), then fast fetch (100ms timeout), then fallback.
+    // The fast timeout prevents blocking market data setup while still attempting to populate cache.
+    private suspend fun contractForMktData(contract: OptionContract): Contract {
         val key = OptionContractKey(contract.symbol, contract.expiry, contract.strike, contract.type)
-        val conId = contractCache.getCachedOptionConId(key)
-        if (conId != null) return contractFactory.conIdContract(conId)
+
+        // Try cache first (instant)
+        contractCache.getCachedOptionConId(key)?.let { return contractFactory.conIdContract(it) }
+
+        // Try fast fetch (100ms timeout) to populate cache if available
+        try {
+            val conId = withTimeout(100L) { contractCache.getOrFetchOptionConId(key) }
+            return contractFactory.conIdContract(conId)
+        } catch (_: TimeoutCancellationException) {
+            // Fetch timed out or failed, fall back to enriched spec
+        }
+
+        // Fall back to enriched contract with exchange/tradingClass from params
         val params = optionParamsCache.getCached(contract.symbol)
         return contractFactory.optionContract(
             contract,
