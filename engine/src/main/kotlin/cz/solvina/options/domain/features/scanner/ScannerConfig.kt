@@ -45,7 +45,9 @@ data class ScannerConfig(
     // Stop-loss cooldown — how long to block re-entry after a CLOSED_STOP
     val stopLossCooldownHours: Long = 24,
     // Schedulers
-    val cron: String = "0 */15 10-15 * * MON-FRI",
+    // Cron uses server timezone (CEST). US market hours: 9:30 AM - 4:00 PM EDT = 3:30 PM - 10:00 PM CEST
+    // Run every 15 minutes, 3 PM - 10:59 PM CEST to cover full US trading day
+    val cron: String = "*/15 15-22 * * MON-FRI",
     val monitorDelayMs: Long = 60_000,
     // Kill switches (can be overridden at runtime via API)
     val scannerPaused: Boolean = false,
