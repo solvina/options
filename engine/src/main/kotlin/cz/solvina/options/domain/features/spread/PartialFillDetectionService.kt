@@ -86,12 +86,13 @@ class PartialFillDetectionService(
             }
 
             // Wait for both fills (or timeout)
-            val (soldFilled, boughtFilled) = waitForBothLegs(
-                soldOrderId,
-                boughtOrderId,
-                symbol,
-                maxWaitMs - (System.currentTimeMillis() - startTime),
-            )
+            val (soldFilled, boughtFilled) =
+                waitForBothLegs(
+                    soldOrderId,
+                    boughtOrderId,
+                    symbol,
+                    maxWaitMs - (System.currentTimeMillis() - startTime),
+                )
 
             // Detect partial fill scenario
             when {
@@ -116,12 +117,13 @@ class PartialFillDetectionService(
                     logger.warn {
                         "[$symbol] PARTIAL FILL: SOLD leg $soldOrderId filled but BOUGHT leg $boughtOrderId failed"
                     }
-                    val compensatingSuccess = placeCompensatingOrder(
-                        symbol,
-                        boughtLegContract,
-                        LegAction.SELL,
-                        quantity,
-                    )
+                    val compensatingSuccess =
+                        placeCompensatingOrder(
+                            symbol,
+                            boughtLegContract,
+                            LegAction.SELL,
+                            quantity,
+                        )
                     return CloseAttemptResult(
                         soldLegOrderId = soldOrderId,
                         boughtLegOrderId = boughtOrderId,
@@ -141,12 +143,13 @@ class PartialFillDetectionService(
                     logger.warn {
                         "[$symbol] PARTIAL FILL: BOUGHT leg $boughtOrderId filled but SOLD leg $soldOrderId failed"
                     }
-                    val compensatingSuccess = placeCompensatingOrder(
-                        symbol,
-                        soldLegContract,
-                        LegAction.BUY,
-                        quantity,
-                    )
+                    val compensatingSuccess =
+                        placeCompensatingOrder(
+                            symbol,
+                            soldLegContract,
+                            LegAction.BUY,
+                            quantity,
+                        )
                     return CloseAttemptResult(
                         soldLegOrderId = soldOrderId,
                         boughtLegOrderId = boughtOrderId,
@@ -200,8 +203,8 @@ class PartialFillDetectionService(
         contract: OptionContract,
         action: LegAction,
         quantity: Int,
-    ): Int? {
-        return try {
+    ): Int? =
+        try {
             val legOrder = orderPort.placeMarketOrder(contract, action, quantity)
             if (legOrder != null) {
                 logger.debug { "[$symbol] Placed close order: ${action.name} ${contract.strike}P orderId=${legOrder.orderId}" }
@@ -214,7 +217,6 @@ class PartialFillDetectionService(
             logger.error(e) { "[$symbol] Failed to place close order: ${action.name} ${contract.strike}P" }
             null
         }
-    }
 
     /**
      * Place a compensating market order to close an unhedged leg.
@@ -224,8 +226,8 @@ class PartialFillDetectionService(
         contract: OptionContract,
         action: LegAction,
         quantity: Int,
-    ): Boolean {
-        return try {
+    ): Boolean =
+        try {
             val legOrder = orderPort.placeMarketOrder(contract, action, quantity)
             if (legOrder != null && legOrder.orderId > 0) {
                 logger.info { "[$symbol] Placed compensating order: ${action.name} ${contract.strike}P orderId=${legOrder.orderId}" }
@@ -238,7 +240,6 @@ class PartialFillDetectionService(
             logger.error(e) { "[$symbol] Exception placing compensating order" }
             false
         }
-    }
 
     /**
      * Wait for both legs to complete (fill or fail).
@@ -261,16 +262,18 @@ class PartialFillDetectionService(
 
             if (soldDeferred != null && boughtDeferred != null) {
                 if (soldDeferred.isCompleted && boughtDeferred.isCompleted) {
-                    val soldStatus = try {
-                        soldDeferred.getCompleted()
-                    } catch (e: Exception) {
-                        OrderStatus.CANCELLED
-                    }
-                    val boughtStatus = try {
-                        boughtDeferred.getCompleted()
-                    } catch (e: Exception) {
-                        OrderStatus.CANCELLED
-                    }
+                    val soldStatus =
+                        try {
+                            soldDeferred.getCompleted()
+                        } catch (e: Exception) {
+                            OrderStatus.CANCELLED
+                        }
+                    val boughtStatus =
+                        try {
+                            boughtDeferred.getCompleted()
+                        } catch (e: Exception) {
+                            OrderStatus.CANCELLED
+                        }
 
                     logger.debug {
                         "[$symbol] Close orders completed: SOLD=$soldStatus BOUGHT=$boughtStatus"
@@ -293,17 +296,19 @@ class PartialFillDetectionService(
         val soldDeferred = registry.pendingOrderStatus[soldOrderId]
         val boughtDeferred = registry.pendingOrderStatus[boughtOrderId]
 
-        val soldFilled = try {
-            soldDeferred?.isCompleted == true && soldDeferred.getCompleted() == OrderStatus.FILLED
-        } catch (e: Exception) {
-            false
-        }
+        val soldFilled =
+            try {
+                soldDeferred?.isCompleted == true && soldDeferred.getCompleted() == OrderStatus.FILLED
+            } catch (e: Exception) {
+                false
+            }
 
-        val boughtFilled = try {
-            boughtDeferred?.isCompleted == true && boughtDeferred.getCompleted() == OrderStatus.FILLED
-        } catch (e: Exception) {
-            false
-        }
+        val boughtFilled =
+            try {
+                boughtDeferred?.isCompleted == true && boughtDeferred.getCompleted() == OrderStatus.FILLED
+            } catch (e: Exception) {
+                false
+            }
 
         return Pair(soldFilled, boughtFilled)
     }

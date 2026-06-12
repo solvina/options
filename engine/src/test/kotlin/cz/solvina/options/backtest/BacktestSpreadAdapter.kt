@@ -49,9 +49,7 @@ class BacktestSpreadAdapter : SpreadPort {
 
     override suspend fun countByStatus(status: SpreadStatus): Long = store.count { it.status == status }.toLong()
 
-    override suspend fun findByStatus(status: SpreadStatus): List<BullPutSpread> =
-        store.filter { it.status == status }
+    override suspend fun findByStatus(status: SpreadStatus): List<BullPutSpread> = store.filter { it.status == status }
 
-    override suspend fun findBySymbolWithLock(symbol: Symbol): List<BullPutSpread> =
-        store.filter { it.symbol == symbol }
+    override suspend fun findBySymbolWithLock(symbol: Symbol): List<BullPutSpread> = store.filter { it.symbol == symbol }
 }

@@ -1,8 +1,6 @@
 package cz.solvina.options.adapters.outbound.ibkr.order
 
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOpenOrdersAdapter
-import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
-import cz.solvina.options.domain.features.order.OrderStatus
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.delay
 import org.springframework.stereotype.Component
@@ -37,8 +35,7 @@ class OrderReplacementService(
                 runCatching { openOrdersAdapter.getOpenOrders() }
                     .onFailure { e ->
                         logger.debug(e) { "Could not fetch open orders for verification attempt $attempt" }
-                    }
-                    .getOrDefault(emptyList())
+                    }.getOrDefault(emptyList())
 
             val isRemoved = !openOrders.any { it.orderId == orderId }
 

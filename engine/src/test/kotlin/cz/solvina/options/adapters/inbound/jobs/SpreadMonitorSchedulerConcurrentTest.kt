@@ -8,10 +8,8 @@ import cz.solvina.options.domain.features.spread.SpreadManagementService
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
-import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
-import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**

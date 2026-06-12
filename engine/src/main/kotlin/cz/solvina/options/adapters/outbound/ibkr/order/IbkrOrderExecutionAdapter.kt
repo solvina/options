@@ -2,6 +2,7 @@ package cz.solvina.options.adapters.outbound.ibkr.order
 
 import com.ib.client.EClientSocket
 import com.ib.client.OrderCancel
+import cz.solvina.options.adapters.outbound.ibkr.IbkrInstrumentsConfig
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOpenOrdersAdapter
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
 import cz.solvina.options.adapters.outbound.ibkr.cache.OptionContractKey
@@ -27,6 +28,7 @@ class IbkrOrderExecutionAdapter(
     private val strategyRouter: ExchangeStrategyRouter,
     private val reconciliationService: PositionReconciliationService,
     private val orderReplacementService: OrderReplacementService,
+    private val instrumentsConfig: IbkrInstrumentsConfig,
 ) : OrderExecutionPort {
     override suspend fun submitComboLimitOrder(
         soldContract: OptionContract,
@@ -34,14 +36,17 @@ class IbkrOrderExecutionAdapter(
         netCredit: Money,
         qty: Int,
     ): Int {
-        // Route to exchange-specific strategy (default to SMART for dynamic routing)
+        // Determine actual exchange from instrument config (DTB for EU stocks, CBOE for US, etc)
+        val exchange = instrumentsConfig.instruments[soldContract.symbol.value]?.optionExchange ?: "SMART"
+
+        // Route to exchange-specific strategy
         val result =
             strategyRouter.submitSpreadOrder(
                 soldContract,
                 boughtContract,
                 netCredit,
                 qty,
-                exchange = "SMART",
+                exchange = exchange,
             )
 
         return when {
@@ -118,11 +123,11 @@ class IbkrOrderExecutionAdapter(
             // Risk: Both orders could fill simultaneously, doubling position
             logger.error {
                 "Order replacement BLOCKED: old order $existingOrderId still in IBKR after verification attempts. " +
-                "Will not submit replacement to prevent double-order scenario."
+                    "Will not submit replacement to prevent double-order scenario."
             }
             throw IllegalStateException(
                 "Order replacement failed: could not verify removal of old order $existingOrderId. " +
-                "Check IBKR manually before retrying."
+                    "Check IBKR manually before retrying.",
             )
         }
 

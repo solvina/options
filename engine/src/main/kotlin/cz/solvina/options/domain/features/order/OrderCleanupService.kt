@@ -112,9 +112,6 @@ class OrderCleanupService(
      *
      * Called when verification is cancelled (e.g., user stops waiting).
      */
-    suspend fun cleanupOnVerificationCancelled(
-        orderIds: List<Int>,
-    ): CleanupResult {
-        return cleanupPendingOrders(orderIds, "verification_cancelled")
-    }
+    suspend fun cleanupOnVerificationCancelled(orderIds: List<Int>): CleanupResult =
+        cleanupPendingOrders(orderIds, "verification_cancelled")
 }

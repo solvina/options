@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.consumeAsFlow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
@@ -198,7 +199,7 @@ class TradeExecutionServiceTest {
                     marketTickPort =
                         fixedMarketTickPort(
                             underlyingPrice = 500.0,
-                            creditFlow = creditChannel.consumeAsFlow(),
+                            creditFlow = creditChannel.receiveAsFlow(),
                         ),
                     orderExecutionPort = orderPort,
                     config = baseConfig.copy(ticksBeforePriceAdjust = 3),
@@ -206,7 +207,8 @@ class TradeExecutionServiceTest {
 
             launch {
                 repeat(5) {
-                    creditChannel.send(SpreadCreditTick(0.95, 1.05, 0.45, 0.55, 0.55))
+                    // soldMid=1.50, boughtMid=0.50 → currentMid=1.00 matches targetCredit → drift=0 → freshness passes
+                    creditChannel.send(SpreadCreditTick(1.47, 1.53, 0.47, 0.53, 1.00))
                     yield()
                 }
             }
@@ -261,7 +263,7 @@ class TradeExecutionServiceTest {
                     marketTickPort =
                         fixedMarketTickPort(
                             underlyingPrice = 500.0,
-                            creditFlow = creditChannel.consumeAsFlow(),
+                            creditFlow = creditChannel.receiveAsFlow(),
                         ),
                     orderExecutionPort = orderPort,
                     config = baseConfig.copy(ticksBeforePriceAdjust = 1),
@@ -269,7 +271,8 @@ class TradeExecutionServiceTest {
 
             launch {
                 repeat(100) {
-                    creditChannel.send(SpreadCreditTick(0.95, 1.05, 0.45, 0.55, 0.55))
+                    // soldMid=1.50, boughtMid=0.50 → currentMid=1.00 matches targetCredit → drift=0 → freshness passes
+                    creditChannel.send(SpreadCreditTick(1.47, 1.53, 0.47, 0.53, 1.00))
                     yield()
                 }
             }
@@ -666,5 +669,27 @@ class TradeExecutionServiceTest {
 
             assertEquals(ExecutionOutcome.FLOOR_REACHED, result.outcome)
             assertTrue(service.isCoolingDown(symbol), "Symbol must be blocked after the credit floor is reached")
+        }
+
+    @Test
+    fun `quote_freshness_timeout_aborts_entry`() =
+        runTest {
+            val service =
+                buildService(
+                    marketTickPort =
+                        fixedMarketTickPort(
+                            underlyingPrice = 500.0,
+                            // Flow that never emits — triggers the 3s freshness timeout
+                            creditFlow = flow { delay(Long.MAX_VALUE) },
+                        ),
+                    orderExecutionPort = neverFillOrderPort(),
+                )
+
+            val resultDeferred = backgroundScope.async { service.execute(buildRequest()) }
+            // Advance past freshness delay (500ms) + freshness timeout (3000ms)
+            advanceTimeBy(4_000)
+            val result = resultDeferred.await()
+
+            assertEquals(ExecutionOutcome.MARKET_MOVED_TOO_FAR, result.outcome)
         }
 }

@@ -1,7 +1,6 @@
 package cz.solvina.options.adapters.inbound.lifecycle
 
 import com.ib.client.EClientSocket
-import com.ib.client.OrderCancel
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOpenOrdersAdapter
 import cz.solvina.options.adapters.outbound.ibkr.account.OpenOrder
 import cz.solvina.options.adapters.outbound.ibkr.order.OrderCancellationService

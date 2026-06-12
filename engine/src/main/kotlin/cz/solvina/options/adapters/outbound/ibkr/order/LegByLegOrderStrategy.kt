@@ -12,6 +12,7 @@ import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
 import io.github.oshai.kotlinlogging.KotlinLogging
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import java.math.BigDecimal
@@ -151,6 +152,8 @@ class LegByLegOrderStrategy(
                 message = "Both legs submitted separately - manual matching required",
                 requiresManualMatching = true, // CRITICAL: backend must reconcile these
             )
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             logger.error(e) { "[$exchangeId] Failed to submit leg-by-leg order" }
             OrderSubmissionResult(
@@ -176,7 +179,7 @@ class LegByLegOrderStrategy(
      */
     private suspend fun monitorShortFillBeforeLongSubmission(
         shortOrderId: Int,
-        maxWaitMs: Long = 20, // Tightened from 50ms to reduce submission gap
+        maxWaitMs: Long = 150, // 150ms covers typical EUREX SmartRouter latency (100–500ms window)
     ): Boolean {
         // Wait briefly for SHORT order to be processed by IBKR
         delay(maxWaitMs)
@@ -184,11 +187,15 @@ class LegByLegOrderStrategy(
         // Check if SHORT order has already filled (unhedged risk!)
         val deferred = registry.pendingOrderStatus[shortOrderId]
         if (deferred != null && deferred.isCompleted) {
-            val status = try {
-                deferred.getCompleted()
-            } catch (e: Exception) {
-                OrderStatus.CANCELLED
-            }
+            val status =
+                try {
+                    deferred.getCompleted()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    logger.warn(e) { "[$exchangeId] Fill status deferred failed for shortOrderId=$shortOrderId — treating as CANCELLED" }
+                    OrderStatus.CANCELLED
+                }
             if (status == OrderStatus.FILLED) {
                 logger.error {
                     "[$exchangeId] SHORT leg $shortOrderId FILLED before LONG submission - unhedged position would occur!"
@@ -233,16 +240,24 @@ class LegByLegOrderStrategy(
 
             if (shortDeferred != null && longDeferred != null) {
                 if (shortDeferred.isCompleted && longDeferred.isCompleted) {
-                    val shortStatus = try {
-                        shortDeferred.getCompleted()
-                    } catch (e: Exception) {
-                        OrderStatus.CANCELLED
-                    }
-                    val longStatus = try {
-                        longDeferred.getCompleted()
-                    } catch (e: Exception) {
-                        OrderStatus.CANCELLED
-                    }
+                    val shortStatus =
+                        try {
+                            shortDeferred.getCompleted()
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            logger.warn(e) { "[$exchangeId] SHORT deferred failed for orderId=$shortOrderId — treating as CANCELLED" }
+                            OrderStatus.CANCELLED
+                        }
+                    val longStatus =
+                        try {
+                            longDeferred.getCompleted()
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            logger.warn(e) { "[$exchangeId] LONG deferred failed for orderId=$longOrderId — treating as CANCELLED" }
+                            OrderStatus.CANCELLED
+                        }
 
                     if (shortStatus == OrderStatus.FILLED && longStatus == OrderStatus.FILLED) {
                         logger.info { "[$exchangeId] SUCCESS: Both legs filled atomically - hedge complete" }
@@ -367,6 +382,8 @@ class LegByLegOrderStrategy(
             client.placeOrder(orderId, legContract, order)
 
             orderId
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             logger.error(e) { "Failed to submit $legDescription leg" }
             0 // Return 0 to signal failure

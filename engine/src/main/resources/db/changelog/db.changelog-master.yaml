@@ -17,3 +17,5 @@ databaseChangeLog:
       file: db/changelog/v8__flag_extended_journal.yaml
   - include:
       file: db/changelog/v9__flag_context_journal.yaml
+  - include:
+      file: db/changelog/v15__close_reason_text.yaml

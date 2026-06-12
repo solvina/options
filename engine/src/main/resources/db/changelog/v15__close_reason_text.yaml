@@ -1,0 +1,14 @@
+databaseChangeLog:
+  - changeSet:
+      id: v15-close-reason-text
+      author: solvina
+      comment: "Widen close_reason from VARCHAR(50) to TEXT — error messages from IBKR and contract timeouts exceed 50 chars"
+      changes:
+        - modifyDataType:
+            tableName: spread_positions
+            columnName: close_reason
+            newDataType: TEXT
+        - modifyDataType:
+            tableName: flag_positions
+            columnName: close_reason
+            newDataType: TEXT

@@ -129,10 +129,11 @@ class PositionReconciliationService(
 
         // Issue #8: Cleanup pending orders on verification timeout
         if (shortOrderId != null || longOrderId != null) {
-            val cleanupResult = orderCleanupService.cleanupOnReconciliationTimeout(
-                shortOrderId = shortOrderId,
-                longOrderId = longOrderId,
-            )
+            val cleanupResult =
+                orderCleanupService.cleanupOnReconciliationTimeout(
+                    shortOrderId = shortOrderId,
+                    longOrderId = longOrderId,
+                )
             logger.info {
                 "Cleanup on reconciliation timeout: cancelled=${cleanupResult.cancelledCount}, " +
                     "failed=${cleanupResult.failedCount}"

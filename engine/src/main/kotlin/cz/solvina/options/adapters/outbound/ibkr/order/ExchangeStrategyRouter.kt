@@ -36,6 +36,7 @@ class ExchangeStrategyRouter(
         registerStrategy(NativeComboOrderStrategy("SMART", registry, client, contractCache, connectionConfig)) // SMART routes to best
 
         // Register leg-by-leg strategies (non-native exchanges)
+        registerStrategy(LegByLegOrderStrategy("DTB", registry, client, contractCache, connectionConfig)) // Deutsche Börse / EUREX
         registerStrategy(LegByLegOrderStrategy("EUREX", registry, client, contractCache, connectionConfig))
         registerStrategy(LegByLegOrderStrategy("FTA", registry, client, contractCache, connectionConfig)) // Frankfurt
         registerStrategy(LegByLegOrderStrategy("EBS", registry, client, contractCache, connectionConfig)) // European derivatives

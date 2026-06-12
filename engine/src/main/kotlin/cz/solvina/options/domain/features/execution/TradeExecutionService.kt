@@ -113,7 +113,7 @@ class TradeExecutionService(
                 pendingSpread.copy(
                     status = SpreadStatus.CLOSED_TIMEOUT,
                     closeReason = stalePriceResult.outcome.name.lowercase(),
-                )
+                ),
             )
             return TradeExecutionResult(stalePriceResult.outcome)
         }
@@ -379,62 +379,70 @@ class TradeExecutionService(
         // Wait a moment to allow market data to flow through
         delay(500)
 
-        val currentTick = runCatching {
-            val stream = marketTickPort.streamSpreadCredit(
-                request.soldContract,
-                request.boughtContract,
-            )
-            withTimeout(3_000L) {
-                stream.collect { tick ->
-                    // Got the first tick, validate against scanner prices
-                    val soldMid = (tick.soldBid + tick.soldAsk) / 2.0
-                    val boughtMid = (tick.boughtBid + tick.boughtAsk) / 2.0
-                    val currentMid = (soldMid - boughtMid).toBigDecimal()
-                        .setScale(4, RoundingMode.HALF_UP)
-
-                    val priceDrift = (currentMid - request.targetCredit).abs()
-                    val driftPercent =
-                        priceDrift / request.targetCredit.max(BigDecimal("0.01"))
-
-                    if (priceDrift > BigDecimal("0.05")) {
-                        val percent = "%.1f".format(driftPercent * BigDecimal("100"))
-                        logger.warn {
-                            "[${request.underlyingSymbol}] Quote staleness detected: " +
-                                "scanner=$${request.targetCredit} current=$${currentMid} " +
-                                "drift=$${priceDrift} ($percent%)"
-                        }
-                        throw StaleQuoteException(currentMid, request.targetCredit, priceDrift)
-                    } else {
-                        throw ValidQuoteException()
-                    }
-                }
-            }
-        }.getOrElse { e ->
-            when (e) {
-                is ValidQuoteException -> return null
-                is StaleQuoteException -> {
-                    return QuoteFreshnessResult(
-                        outcome = ExecutionOutcome.MARKET_MOVED_TOO_FAR,
-                        message = "[${request.underlyingSymbol}] Market moved " +
-                            "$${e.drift} from target; aborting to prevent bad order",
+        val currentTick =
+            runCatching {
+                val stream =
+                    marketTickPort.streamSpreadCredit(
+                        request.soldContract,
+                        request.boughtContract,
                     )
-                }
-                is TimeoutCancellationException -> {
-                    logger.warn {
-                        "[${request.underlyingSymbol}] Market data timeout checking quote freshness; " +
-                            "proceeding with order"
+                withTimeout(3_000L) {
+                    stream.collect { tick ->
+                        val soldMid = (tick.soldBid + tick.soldAsk) / 2.0
+                        val boughtMid = (tick.boughtBid + tick.boughtAsk) / 2.0
+                        val currentMid =
+                            (soldMid - boughtMid)
+                                .toBigDecimal()
+                                .setScale(4, RoundingMode.HALF_UP)
+
+                        val priceDrift = (currentMid - request.targetCredit).abs()
+                        val driftPercent =
+                            priceDrift / request.targetCredit.max(BigDecimal("0.01"))
+
+                        if (priceDrift > BigDecimal("0.05")) {
+                            val percent = "%.1f".format(driftPercent * BigDecimal("100"))
+                            logger.warn {
+                                "[${request.underlyingSymbol}] Quote staleness detected: " +
+                                    "scanner=$${request.targetCredit} current=$$currentMid " +
+                                    "drift=$$priceDrift ($percent%)"
+                            }
+                            throw StaleQuoteException(currentMid, request.targetCredit, priceDrift)
+                        } else {
+                            throw ValidQuoteException()
+                        }
                     }
-                    return null
                 }
-                else -> {
-                    logger.warn(e) {
-                        "[${request.underlyingSymbol}] Error checking quote freshness; " +
-                            "proceeding with order"
+            }.getOrElse { e ->
+                when (e) {
+                    is ValidQuoteException -> return null
+                    is StaleQuoteException -> {
+                        return QuoteFreshnessResult(
+                            outcome = ExecutionOutcome.MARKET_MOVED_TOO_FAR,
+                            message =
+                                "[${request.underlyingSymbol}] Market moved " +
+                                    "$${e.drift} from target; aborting to prevent bad order",
+                        )
                     }
-                    return null
+                    is TimeoutCancellationException -> {
+                        logger.warn {
+                            "[${request.underlyingSymbol}] Market data timeout — no tick in 3s, aborting entry"
+                        }
+                        return QuoteFreshnessResult(
+                            outcome = ExecutionOutcome.MARKET_MOVED_TOO_FAR,
+                            message = "[${request.underlyingSymbol}] Quote validation timeout: no market data tick received in 3s",
+                        )
+                    }
+                    else -> {
+                        logger.warn(e) {
+                            "[${request.underlyingSymbol}] Error checking quote freshness; aborting entry"
+                        }
+                        return QuoteFreshnessResult(
+                            outcome = ExecutionOutcome.MARKET_MOVED_TOO_FAR,
+                            message = "[${request.underlyingSymbol}] Quote validation error: ${e.message}",
+                        )
+                    }
                 }
             }
-        }
         return null
     }
 

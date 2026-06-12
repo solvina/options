@@ -45,7 +45,7 @@ class SpreadPositionEntity(
     var openedAt: Instant = Instant.now(),
     @Column(name = "closed_at")
     var closedAt: Instant? = null,
-    @Column(name = "close_reason", length = 50)
+    @Column(name = "close_reason", columnDefinition = "TEXT")
     var closeReason: String? = null,
     @Column(name = "close_price_per_share", precision = 10, scale = 4)
     var closePricePerShare: BigDecimal? = null,

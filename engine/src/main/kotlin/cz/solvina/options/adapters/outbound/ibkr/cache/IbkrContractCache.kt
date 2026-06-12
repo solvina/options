@@ -51,18 +51,21 @@ class IbkrContractCache(
 
         client.reqContractDetails(reqId, contractFactory.stockContract(symbol))
 
-        val details: List<com.ib.client.ContractDetails> = try {
-            withTimeout(2000L) {
-                deferred.await()
+        val details: List<com.ib.client.ContractDetails> =
+            try {
+                withTimeout(5000L) {
+                    deferred.await()
+                }
+            } catch (e: TimeoutCancellationException) {
+                registry.pendingContractDetails.remove(reqId)
+                registry.timedOutReqIds.add(reqId)
+                logger.error { "[$symbol] Contract lookup timeout (5s) — IBKR not responding" }
+                error("Contract lookup timeout for $symbol after 5s")
             }
-        } catch (e: TimeoutCancellationException) {
-            registry.pendingContractDetails.remove(reqId)
-            logger.error { "[$symbol] Contract lookup timeout (2s) — IBKR not responding" }
-            error("Contract lookup timeout for $symbol after 2s")
-        }
 
-        val conId = details.firstOrNull()?.contract()?.conid()
-            ?: error("No stock contract found for $symbol")
+        val conId =
+            details.firstOrNull()?.contract()?.conid()
+                ?: error("No stock contract found for $symbol")
 
         underlyingConIds[symbol] = conId
         logger.debug { "[$symbol] Underlying conId = $conId" }
@@ -105,15 +108,17 @@ class IbkrContractCache(
         }
         client.reqContractDetails(reqId, searchContract)
 
-        val details: List<com.ib.client.ContractDetails> = try {
-            withTimeout(2000L) {
-                deferred.await()
+        val details: List<com.ib.client.ContractDetails> =
+            try {
+                withTimeout(5000L) {
+                    deferred.await()
+                }
+            } catch (e: TimeoutCancellationException) {
+                registry.pendingContractDetails.remove(reqId)
+                registry.timedOutReqIds.add(reqId)
+                logger.error { "[$key] Option contract lookup timeout (5s) — IBKR not responding" }
+                error("Option contract lookup timeout for $key after 5s")
             }
-        } catch (e: TimeoutCancellationException) {
-            registry.pendingContractDetails.remove(reqId)
-            logger.error { "[$key] Option contract lookup timeout (2s) — IBKR not responding" }
-            error("Option contract lookup timeout for $key after 2s")
-        }
         logger.debug { "[$key] reqContractDetails returned ${details.size} contracts" }
 
         // Cache the authoritative strike list for this expiry+right from the real IBKR response.

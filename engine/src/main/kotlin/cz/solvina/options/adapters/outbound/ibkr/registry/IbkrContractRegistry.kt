@@ -34,16 +34,25 @@ class IbkrContractRegistry(
     internal val pendingContractDetails = ConcurrentHashMap<Int, PendingContractRequest>()
     internal val pendingOptionParams = ConcurrentHashMap<Int, PendingOptionParamsRequest>()
 
+    // Tracks reqIds that timed out on our side — late IBKR responses for these are discarded
+    // to prevent stale callbacks from completing a recycled reqId's deferred with wrong data.
+    internal val timedOutReqIds = ConcurrentHashMap.newKeySet<Int>()
+
     fun nextReqId(): Int = idCounter.next()
 
     fun onContractDetails(
         reqId: Int,
         contractDetails: ContractDetails,
     ) {
+        if (reqId in timedOutReqIds) return
         pendingContractDetails[reqId]?.details?.add(contractDetails)
     }
 
     fun onContractDetailsEnd(reqId: Int) {
+        if (timedOutReqIds.remove(reqId)) {
+            logger.debug { "Discarding late contractDetailsEnd for timed-out reqId=$reqId" }
+            return
+        }
         val request = pendingContractDetails.remove(reqId) ?: return
         request.deferred.complete(request.details.toList())
     }

@@ -126,8 +126,7 @@ class AtomicEntryValidator(
                     logger.warn(e) {
                         "[${request.underlyingSymbol}] Could not fetch open IBKR orders: ${e.message}"
                     }
-                }
-                .getOrDefault(emptySet())
+                }.getOrDefault(emptySet())
 
         if (request.underlyingSymbol in ibkrOpenSymbols) {
             logger.info {

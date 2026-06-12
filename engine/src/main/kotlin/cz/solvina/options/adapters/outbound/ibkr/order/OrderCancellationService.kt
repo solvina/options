@@ -53,17 +53,16 @@ class OrderCancellationService(
 
         val openOrders =
             runCatching { openOrdersAdapter.getOpenOrders() }
-                .onFailure { e -> logger.warn(e) { "Could not fetch open orders for cancellation verification" } }
-                .getOrDefault(emptyList())
-        val openOrderIdSet = openOrders.map { it.orderId }.toSet()
+                .onFailure { e -> logger.warn(e) { "Could not fetch open orders for cancellation verification — will cancel all" } }
+                .getOrNull()
 
         for (orderId in orderIds) {
-            val openOrder = openOrders.find { it.orderId == orderId }
+            val openOrder = openOrders?.find { it.orderId == orderId }
 
             when {
-                openOrder == null || openOrder.status == "Filled" -> {
-                    // Already filled or not found — skip cancellation
-                    logger.info { "Cancel skipped: orderId=$orderId status=${openOrder?.status ?: "not found"}" }
+                openOrder?.status == "Filled" -> {
+                    // Confirmed filled — skip cancellation
+                    logger.info { "Cancel skipped: orderId=$orderId status=Filled" }
                     results.add(
                         CancellationResult(
                             orderId = orderId,
@@ -75,8 +74,10 @@ class OrderCancellationService(
                 }
 
                 else -> {
-                    // Order exists and not filled — issue cancel and verify
-                    logger.info { "Cancel request: orderId=$orderId symbol=${openOrder.symbol} action=${openOrder.action}" }
+                    // Order exists, not confirmed filled, or open-orders fetch failed — cancel and verify
+                    logger.info {
+                        "Cancel request: orderId=$orderId symbol=${openOrder?.symbol ?: "unknown"} action=${openOrder?.action ?: "unknown"}"
+                    }
                     client.cancelOrder(orderId, OrderCancel())
 
                     val verificationResult = verifyOrderRemoved(orderId, maxRetries = 5)
@@ -108,7 +109,11 @@ class OrderCancellationService(
 
             val openOrders =
                 runCatching { openOrdersAdapter.getOpenOrders() }
-                    .getOrDefault(emptyList())
+                    .onFailure { e -> logger.warn(e) { "getOpenOrders failed on attempt $attempt/$maxRetries — will retry" } }
+                    .getOrNull()
+
+            if (openOrders == null) continue
+
             val isRemoved = !openOrders.any { it.orderId == orderId }
 
             if (isRemoved) {

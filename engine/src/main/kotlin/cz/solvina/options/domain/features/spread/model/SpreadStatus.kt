@@ -16,4 +16,7 @@ enum class SpreadStatus {
 
     /** Entry order never filled (timed out / drift aborted / floor reached) — no position was opened. */
     CLOSED_TIMEOUT,
+
+    /** Partial-fill rollback failed — unhedged exposure may exist. Requires manual intervention. */
+    ROLLBACK_FAILED,
 }

@@ -3,6 +3,7 @@ package cz.solvina.options.integration
 import cz.solvina.options.adapters.inbound.lifecycle.StartupRecoveryService
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOpenOrdersAdapter
 import cz.solvina.options.adapters.outbound.ibkr.account.OpenOrder
+import cz.solvina.options.adapters.outbound.ibkr.order.OrderCancellationService
 import cz.solvina.options.domain.features.account.AccountPort
 import cz.solvina.options.domain.features.execution.PreTradeValidator
 import cz.solvina.options.domain.features.execution.model.ExecutionOutcome
@@ -27,6 +28,7 @@ import cz.solvina.options.domain.models.OptionContract
 import cz.solvina.options.domain.models.OptionType
 import cz.solvina.options.domain.models.Symbol
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
@@ -129,10 +131,19 @@ class PositionReversalIntegrationTest {
             coEvery { spreadPort.findByStatus(SpreadStatus.PENDING) } returns emptyList()
             coEvery { openOrdersAdapter.getOpenOrders() } returns staleEntryOrders
 
-            val cancelledOrderIds = mutableListOf<Int>()
-            every { mockClient.cancelOrder(any<Int>(), any()) } answers {
-                cancelledOrderIds.add(firstArg())
-            }
+            val mockCancellationService =
+                mockk<OrderCancellationService> {
+                    coEvery { cancelOrdersAtomic(any(), any()) } answers {
+                        firstArg<List<Int>>().map {
+                            OrderCancellationService.CancellationResult(
+                                orderId = it,
+                                success = true,
+                                reason = "cancelled",
+                                attemptCount = 1,
+                            )
+                        }
+                    }
+                }
 
             // Execute recovery
             val recoveryService =
@@ -141,17 +152,18 @@ class PositionReversalIntegrationTest {
                     orderRegistry = mockOrderRegistry,
                     openOrdersAdapter = openOrdersAdapter,
                     client = mockClient,
-                    orderCancellationService = mockk(relaxed = true),
+                    orderCancellationService = mockCancellationService,
                 )
 
             recoveryService.recover()
 
-            // Verify: Both SELL orders should be cancelled
-            assertEquals(
-                setOf(4665, 4666),
-                cancelledOrderIds.toSet(),
-                "Both stale SELL entry orders should be cancelled before recovery completes",
-            )
+            // Verify: cancelOrdersAtomic was called with both stale SELL orders
+            coVerify(exactly = 1) {
+                mockCancellationService.cancelOrdersAtomic(
+                    match { it.toSet() == setOf(4665, 4666) },
+                    "recovery_stale_sell",
+                )
+            }
         }
 
     @Test

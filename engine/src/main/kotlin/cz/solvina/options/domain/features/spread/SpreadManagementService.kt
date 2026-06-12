@@ -116,8 +116,7 @@ class SpreadManagementService(
                 runCatching { orderPort.cancelOrder(soldOrderId!!) }
                     .onSuccess {
                         logger.info { "[${spread.symbol}] Cancelled sold-leg order $soldOrderId due to verification timeout" }
-                    }
-                    .onFailure { e ->
+                    }.onFailure { e ->
                         logger.warn {
                             "[${spread.symbol}] Failed to cancel sold-leg order $soldOrderId: ${e.message}"
                         }
@@ -128,8 +127,7 @@ class SpreadManagementService(
                 runCatching { orderPort.cancelOrder(boughtOrderId!!) }
                     .onSuccess {
                         logger.info { "[${spread.symbol}] Cancelled bought-leg order $boughtOrderId due to verification timeout" }
-                    }
-                    .onFailure { e ->
+                    }.onFailure { e ->
                         logger.warn {
                             "[${spread.symbol}] Failed to cancel bought-leg order $boughtOrderId: ${e.message}"
                         }
@@ -448,6 +446,9 @@ class SpreadManagementService(
                     "CLOSING ${spread.symbol}  ${spread.soldLeg.contract.strike}P/${spread.boughtLeg.contract.strike}P  " +
                         "reason=sell_back_unfilled_rollback_failed  WARNING_UNHEDGED"
                 }
+                // Mark ROLLBACK_FAILED to prevent retry from placing a second close order on the same leg.
+                // This spread requires manual intervention — the monitor loop skips ROLLBACK_FAILED status.
+                spreadPort.update(closing.copy(status = SpreadStatus.ROLLBACK_FAILED))
             }
             return
         }
