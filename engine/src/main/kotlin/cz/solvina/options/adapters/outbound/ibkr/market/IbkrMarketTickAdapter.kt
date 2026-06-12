@@ -168,13 +168,12 @@ class IbkrMarketTickAdapter(
 
     // Resolves the contract for market data requests using a conId where possible to avoid
     // the "ambiguous" error 200 for multi-exchange symbols (e.g. ASML on EUREX/AEB).
-    // On first use the conId is not yet cached, so we fetch it lazily via reqContractDetails.
-    // If the fetch fails (timeout, missing contract) we fall back to the generic spec enriched
-    // with exchange/tradingClass from optionParamsCache, which is the same approach that works
-    // successfully during the option chain scan phase.
-    private suspend fun contractForMktData(contract: OptionContract): Contract {
+    // We ONLY use cached conIds (no fetch) to avoid blocking market data setup for 5+ seconds.
+    // If the conId is not cached, we fall back to the enriched spec with exchange/tradingClass
+    // from optionParamsCache, which is the same approach that works during the option chain phase.
+    private fun contractForMktData(contract: OptionContract): Contract {
         val key = OptionContractKey(contract.symbol, contract.expiry, contract.strike, contract.type)
-        val conId = runCatching { contractCache.getOrFetchOptionConId(key) }.getOrNull()
+        val conId = contractCache.getCachedOptionConId(key)
         if (conId != null) return contractFactory.conIdContract(conId)
         val params = optionParamsCache.getCached(contract.symbol)
         return contractFactory.optionContract(
