@@ -105,8 +105,8 @@ class TradeExecutionService(
         // Persist PENDING before submitting — survives engine restarts so fill can be recovered
         var pendingSpread = spreadPort.save(buildSpread(request, orderId = 0, credit = request.targetCredit, status = SpreadStatus.PENDING))
 
-        // Check quote freshness before submission — market may have moved since scanner captured mid-prices
-        val stalePriceResult = validateQuoteFreshness(request)
+        // Fetch fresh quotes immediately before submission and recalculate net credit
+        val (freshCredit, stalePriceResult) = calculateFreshCredit(request)
         if (stalePriceResult != null) {
             logger.info { "[${request.underlyingSymbol}] ${stalePriceResult.message}" }
             spreadPort.update(
@@ -123,7 +123,7 @@ class TradeExecutionService(
                 orderExecutionPort.submitComboLimitOrder(
                     soldContract = request.soldContract,
                     boughtContract = request.boughtContract,
-                    netCredit = Money(request.targetCredit),
+                    netCredit = Money(freshCredit),
                     qty = request.quantity,
                 )
             }.getOrElse { e ->
@@ -137,9 +137,10 @@ class TradeExecutionService(
                 pendingSpread.copy(
                     soldLeg = pendingSpread.soldLeg.copy(orderId = currentOrderId),
                     boughtLeg = pendingSpread.boughtLeg.copy(orderId = currentOrderId),
+                    creditPerShare = freshCredit, // Update to actual submitted price
                 ),
             )
-        var currentCredit = request.targetCredit
+        var currentCredit = freshCredit
         var ticksSinceAdjust = 0
         var outcome = ExecutionOutcome.TIMED_OUT
 
@@ -375,75 +376,99 @@ class TradeExecutionService(
         )
     }
 
-    private suspend fun validateQuoteFreshness(request: TradeExecutionRequest): QuoteFreshnessResult? {
-        // Wait a moment to allow market data to flow through
-        delay(500)
+    private suspend fun calculateFreshCredit(request: TradeExecutionRequest): Pair<BigDecimal, QuoteFreshnessResult?> {
+        delay(500) // Wait for market data to settle
 
-        val currentTick =
-            runCatching {
-                val stream =
-                    marketTickPort.streamSpreadCredit(
-                        request.soldContract,
-                        request.boughtContract,
-                    )
-                withTimeout(3_000L) {
-                    stream.collect { tick ->
-                        val soldMid = (tick.soldBid + tick.soldAsk) / 2.0
-                        val boughtMid = (tick.boughtBid + tick.boughtAsk) / 2.0
-                        val currentMid =
-                            (soldMid - boughtMid)
-                                .toBigDecimal()
-                                .setScale(4, RoundingMode.HALF_UP)
+        return try {
+            val stream =
+                marketTickPort.streamSpreadCredit(
+                    request.soldContract,
+                    request.boughtContract,
+                )
+            var freshCredit: BigDecimal? = null
+            var error: QuoteFreshnessResult? = null
 
-                        val priceDrift = (currentMid - request.targetCredit).abs()
-                        val driftPercent =
-                            priceDrift / request.targetCredit.max(BigDecimal("0.01"))
+            withTimeout(3_000L) {
+                stream.collect { tick ->
+                    if (freshCredit != null || error != null) return@collect // Already processed first tick
 
-                        if (priceDrift > BigDecimal("0.05")) {
-                            val percent = "%.1f".format(driftPercent * BigDecimal("100"))
-                            logger.warn {
-                                "[${request.underlyingSymbol}] Quote staleness detected: " +
-                                    "scanner=$${request.targetCredit} current=$$currentMid " +
-                                    "drift=$$priceDrift ($percent%)"
-                            }
-                            throw StaleQuoteException(currentMid, request.targetCredit, priceDrift)
-                        } else {
-                            throw ValidQuoteException()
-                        }
-                    }
-                }
-            }.getOrElse { e ->
-                when (e) {
-                    is ValidQuoteException -> return null
-                    is StaleQuoteException -> {
-                        return QuoteFreshnessResult(
-                            outcome = ExecutionOutcome.MARKET_MOVED_TOO_FAR,
-                            message =
-                                "[${request.underlyingSymbol}] Market moved " +
-                                    "$${e.drift} from target; aborting to prevent bad order",
-                        )
-                    }
-                    is TimeoutCancellationException -> {
+                    // Use bid side for entry: short leg's bid minus long leg's ask (widest spread, safest)
+                    val bidCredit =
+                        (tick.soldBid - tick.boughtAsk)
+                            .toBigDecimal()
+                            .setScale(4, RoundingMode.HALF_UP)
+
+                    // Also check mid to measure how much the market has moved
+                    val soldMid = (tick.soldBid + tick.soldAsk) / 2.0
+                    val boughtMid = (tick.boughtBid + tick.boughtAsk) / 2.0
+                    val currentMid =
+                        (soldMid - boughtMid)
+                            .toBigDecimal()
+                            .setScale(4, RoundingMode.HALF_UP)
+
+                    val priceDrift = (currentMid - request.targetCredit).abs()
+
+                    if (priceDrift > BigDecimal("0.10")) {
+                        // Market moved more than $0.10 — safety abort
+                        val percent = "%.1f".format(priceDrift / request.targetCredit.max(BigDecimal("0.01")) * BigDecimal("100"))
                         logger.warn {
-                            "[${request.underlyingSymbol}] Market data timeout — no tick in 3s, aborting entry"
+                            "[${request.underlyingSymbol}] Market moved too far: " +
+                                "scanner=\$${request.targetCredit} current-mid=\$$currentMid " +
+                                "drift=\$$priceDrift ($percent%)"
                         }
-                        return QuoteFreshnessResult(
-                            outcome = ExecutionOutcome.MARKET_MOVED_TOO_FAR,
-                            message = "[${request.underlyingSymbol}] Quote validation timeout: no market data tick received in 3s",
-                        )
+                        error =
+                            QuoteFreshnessResult(
+                                outcome = ExecutionOutcome.MARKET_MOVED_TOO_FAR,
+                                message =
+                                    "[${request.underlyingSymbol}] Market moved " +
+                                        "\$$priceDrift from target; aborting to prevent bad order",
+                            )
+                        return@collect
                     }
-                    else -> {
-                        logger.warn(e) {
-                            "[${request.underlyingSymbol}] Error checking quote freshness; aborting entry"
-                        }
-                        return QuoteFreshnessResult(
-                            outcome = ExecutionOutcome.MARKET_MOVED_TOO_FAR,
-                            message = "[${request.underlyingSymbol}] Quote validation error: ${e.message}",
-                        )
+
+                    // Use bid side if available, but don't go below floor
+                    freshCredit = bidCredit.coerceAtLeast(request.floorCredit)
+
+                    logger.info {
+                        "[${request.underlyingSymbol}] Fresh quotes: mid=\$$currentMid bid=\$$bidCredit floor=\$${request.floorCredit} " +
+                            "using=\$$freshCredit"
                     }
                 }
             }
-        return null
+
+            if (error != null) {
+                Pair(BigDecimal.ZERO, error)
+            } else if (freshCredit != null) {
+                Pair(freshCredit!!, null)
+            } else {
+                Pair(
+                    BigDecimal.ZERO,
+                    QuoteFreshnessResult(
+                        outcome = ExecutionOutcome.MARKET_MOVED_TOO_FAR,
+                        message = "[${request.underlyingSymbol}] No market data tick received in 3s",
+                    ),
+                )
+            }
+        } catch (e: TimeoutCancellationException) {
+            Pair(
+                BigDecimal.ZERO,
+                QuoteFreshnessResult(
+                    outcome = ExecutionOutcome.MARKET_MOVED_TOO_FAR,
+                    message = "[${request.underlyingSymbol}] Quote fetch timeout",
+                ),
+            )
+        } catch (e: Exception) {
+            logger.warn(e) {
+                "[${request.underlyingSymbol}] Error fetching fresh quotes; aborting entry"
+            }
+            Pair(
+                BigDecimal.ZERO,
+                QuoteFreshnessResult(
+                    outcome = ExecutionOutcome.MARKET_MOVED_TOO_FAR,
+                    message = "[${request.underlyingSymbol}] Quote fetch error: ${e.message}",
+                ),
+            )
+        }
     }
 
     private data class QuoteFreshnessResult(

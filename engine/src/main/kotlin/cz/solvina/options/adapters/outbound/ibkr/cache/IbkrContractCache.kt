@@ -8,6 +8,7 @@ import cz.solvina.options.domain.models.OptionType
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
 import org.springframework.beans.factory.annotation.Autowired
@@ -31,6 +32,7 @@ class IbkrContractCache(
     private lateinit var optionParamsCache: IbkrOptionParamsCache
     private val underlyingConIds = ConcurrentHashMap<Symbol, Int>()
     private val optionConIds = ConcurrentHashMap<OptionContractKey, Int>()
+    private val inFlightOptionConIds = ConcurrentHashMap<OptionContractKey, Deferred<Int>>()
     private val missingContracts = ConcurrentHashMap.newKeySet<OptionContractKey>()
 
     private data class VerifiedKey(
@@ -76,9 +78,16 @@ class IbkrContractCache(
         optionConIds[key]?.let { return it }
         if (key in missingContracts) error("No option contract found for $key (cached miss)")
 
+        // If another coroutine is already fetching this contract, piggyback on its result.
+        inFlightOptionConIds[key]?.let { return it.await() }
+
         evictExpired()
 
         logger.debug { "[$key] Fetching option conId" }
+        val resultDeferred = CompletableDeferred<Int>()
+        // Register before issuing the network call so concurrent callers see it immediately.
+        inFlightOptionConIds[key] = resultDeferred
+
         val reqId = registry.nextReqId()
         val deferred = CompletableDeferred<List<com.ib.client.ContractDetails>>()
         registry.pendingContractDetails[reqId] = PendingContractRequest(deferred, CopyOnWriteArrayList())
@@ -116,8 +125,11 @@ class IbkrContractCache(
             } catch (e: TimeoutCancellationException) {
                 registry.pendingContractDetails.remove(reqId)
                 registry.timedOutReqIds.add(reqId)
+                val msg = "Option contract lookup timeout for $key after 5s"
                 logger.error { "[$key] Option contract lookup timeout (5s) — IBKR not responding" }
-                error("Option contract lookup timeout for $key after 5s")
+                inFlightOptionConIds.remove(key)
+                resultDeferred.completeExceptionally(IllegalStateException(msg))
+                error(msg)
             }
         logger.debug { "[$key] reqContractDetails returned ${details.size} contracts" }
 
@@ -153,10 +165,15 @@ class IbkrContractCache(
                     val available = details.map { it.contract().strike() }.toSortedSet()
                     logger.warn { "[$key] Strike not found. Available strikes for this expiry: $available" }
                     missingContracts.add(key)
-                    error("No option contract found for $key (got ${details.size} results)")
+                    val msg = "No option contract found for $key (got ${details.size} results)"
+                    inFlightOptionConIds.remove(key)
+                    resultDeferred.completeExceptionally(IllegalStateException(msg))
+                    error(msg)
                 }
 
         optionConIds[key] = conId
+        inFlightOptionConIds.remove(key)
+        resultDeferred.complete(conId)
         logger.debug { "[$key] conId = $conId" }
         return conId
     }

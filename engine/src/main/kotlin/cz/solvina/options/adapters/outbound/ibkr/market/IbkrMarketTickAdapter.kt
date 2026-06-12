@@ -4,6 +4,7 @@ import com.ib.client.Contract
 import com.ib.client.EClientSocket
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
+import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrOptionParamsCache
 import cz.solvina.options.adapters.outbound.ibkr.cache.OptionContractKey
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.PendingContinuousMarketDataRequest
@@ -32,6 +33,7 @@ class IbkrMarketTickAdapter(
     private val client: EClientSocket,
     private val contractFactory: IbkrContractFactory,
     private val contractCache: IbkrContractCache,
+    private val optionParamsCache: IbkrOptionParamsCache,
 ) : MarketTickPort {
     override fun streamUnderlyingPrice(symbol: Symbol): Flow<Double> =
         callbackFlow {
@@ -164,15 +166,22 @@ class IbkrMarketTickAdapter(
             }
         }
 
-    // Use the cached conId when available — avoids "ambiguous" error 200 for multi-exchange symbols (e.g. SAP on EUREX).
-    // Falls back to the generic contract spec if the conId wasn't resolved yet (unusual but safe).
-    private fun contractForMktData(contract: OptionContract): Contract {
+    // Resolves the contract for market data requests using a conId where possible to avoid
+    // the "ambiguous" error 200 for multi-exchange symbols (e.g. ASML on EUREX/AEB).
+    // On first use the conId is not yet cached, so we fetch it lazily via reqContractDetails.
+    // If the fetch fails (timeout, missing contract) we fall back to the generic spec enriched
+    // with exchange/tradingClass from optionParamsCache, which is the same approach that works
+    // successfully during the option chain scan phase.
+    private suspend fun contractForMktData(contract: OptionContract): Contract {
         val key = OptionContractKey(contract.symbol, contract.expiry, contract.strike, contract.type)
-        val conId = contractCache.getCachedOptionConId(key)
-        return if (conId != null) {
-            contractFactory.conIdContract(conId)
-        } else {
-            contractFactory.optionContract(contract)
-        }
+        val conId = runCatching { contractCache.getOrFetchOptionConId(key) }.getOrNull()
+        if (conId != null) return contractFactory.conIdContract(conId)
+        val params = optionParamsCache.getCached(contract.symbol)
+        return contractFactory.optionContract(
+            contract,
+            exchangeOverride = params?.exchange,
+            tradingClass = params?.tradingClass,
+            multiplierOverride = params?.multiplier,
+        )
     }
 }
