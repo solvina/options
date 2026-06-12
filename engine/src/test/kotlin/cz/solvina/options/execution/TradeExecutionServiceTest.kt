@@ -20,6 +20,7 @@ import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
 import cz.solvina.options.domain.models.OptionType
 import cz.solvina.options.domain.models.Symbol
+import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
@@ -46,6 +47,8 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+
+private val logger = KotlinLogging.logger {}
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class TradeExecutionServiceTest {
@@ -130,6 +133,7 @@ class TradeExecutionServiceTest {
     @Test
     fun `fills_immediately_at_target_credit`() =
         runTest {
+            logger.info { "TEST: fills_immediately_at_target_credit - starting" }
             val fillChannel = Channel<OrderStatus>(1)
 
             val service =
@@ -137,15 +141,21 @@ class TradeExecutionServiceTest {
                     marketTickPort = fixedMarketTickPort(500.0, flow {}),
                     orderExecutionPort =
                         immediateComboOrderPort(fillChannel) { _, _, _ ->
+                            logger.info { "TEST: immediateComboOrderPort mock - sending FILLED" }
                             fillChannel.send(OrderStatus.FILLED)
                         },
                 )
 
+            logger.info { "TEST: calling service.execute()" }
             val result = service.execute(buildRequest(targetCredit = BigDecimal("1.00")))
+            logger.info { "TEST: service.execute() returned outcome=${result.outcome}, creditAchieved=${result.creditAchieved}" }
 
             assertEquals(ExecutionOutcome.FILLED, result.outcome)
+            logger.info { "TEST: assertion 1 passed - outcome is FILLED" }
             assertEquals(0, BigDecimal("1.00").compareTo(result.creditAchieved))
+            logger.info { "TEST: assertion 2 passed - credit matches" }
             assertNotNull(result.comboOrderId)
+            logger.info { "TEST: assertion 3 passed - comboOrderId is not null" }
         }
 
     @Test
