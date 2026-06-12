@@ -54,5 +54,6 @@ data class ScannerConfig(
     // Cache TTLs
     val ivHistoryDays: Int = 365,
     val ivCacheTtlMinutes: Long = 60,
-    val optionParamsCacheTtlHours: Long = 24,
+    // Refresh every hour to catch underlying movement + strikes being descheduled
+    val optionParamsCacheTtlHours: Long = 1,
 )

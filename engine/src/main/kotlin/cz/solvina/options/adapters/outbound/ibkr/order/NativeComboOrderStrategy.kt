@@ -185,11 +185,18 @@ class NativeComboOrderStrategy(
                 exchange(exchangeId)
             }
 
+        // Determine currency based on exchange
+        val currency =
+            when (exchangeId) {
+                "EUREX", "DTB" -> "EUR"
+                else -> "USD"
+            }
+
         return Contract().apply {
             symbol("") // Empty for BAG orders
             secType("BAG")
             exchange(exchangeId)
-            currency("USD")
+            currency(currency)
             comboLegs(listOf(soldLeg, boughtLeg))
         }
     }

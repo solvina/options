@@ -405,13 +405,18 @@ class LegByLegOrderStrategy(
         netCredit: Money,
         action: String,
     ): BigDecimal {
-        // For EUREX leg-by-leg: estimate leg price from net credit
-        // These are heuristics - actual market will determine fills
-        // Configured via constructor parameters for tuning
-
+        // For EUREX leg-by-leg: estimate leg price from net credit allocation
+        // SHORT leg: collect majority of credit
+        // BUY leg: pay minority of credit, but NEVER below minimum tick ($0.01)
+        // Exchanges reject LIMIT 0.00 orders; enforce minimum to prevent rejection
         return when (action) {
-            "SELL" -> (netCredit.amount * shortLegCreditPct).floorToTick() // SHORT leg gets most of the credit
-            "BUY" -> (netCredit.amount * longLegCreditPct).floorToTick() // LONG leg costs less
+            "SELL" -> (netCredit.amount * shortLegCreditPct).floorToTick() // SHORT leg gets 75% of credit
+            "BUY" -> {
+                val buyPrice = (netCredit.amount * longLegCreditPct).floorToTick() // BUY leg gets 25%
+                // CRITICAL: Never allow LIMIT 0.00 (exchanges reject it)
+                // If calculated price rounds to 0, use minimum tick instead
+                if (buyPrice <= BigDecimal.ZERO) BigDecimal("0.01") else buyPrice
+            }
             else -> netCredit.amount.floorToTick()
         }
     }
