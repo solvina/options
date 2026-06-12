@@ -35,11 +35,10 @@ class IbkrOrderAdapter(
         limitPrice: Money,
         qty: Int,
     ): LegOrder {
+        val key = OptionContractKey(contract.symbol, contract.expiry, contract.strike, contract.type)
         val conId =
             runCatching {
-                contractCache.getOrFetchOptionConId(
-                    OptionContractKey(contract.symbol, contract.expiry, contract.strike, contract.type),
-                )
+                withTimeout(100L) { contractCache.getOrFetchOptionConId(key) }
             }.getOrNull()
 
         val ibkrContract = buildIbkrContract(contract, conId)
@@ -77,11 +76,10 @@ class IbkrOrderAdapter(
         action: LegAction,
         qty: Int,
     ): LegOrder {
+        val key = OptionContractKey(contract.symbol, contract.expiry, contract.strike, contract.type)
         val conId =
             runCatching {
-                contractCache.getOrFetchOptionConId(
-                    OptionContractKey(contract.symbol, contract.expiry, contract.strike, contract.type),
-                )
+                withTimeout(100L) { contractCache.getOrFetchOptionConId(key) }
             }.getOrNull()
 
         val ibkrContract = buildIbkrContract(contract, conId)

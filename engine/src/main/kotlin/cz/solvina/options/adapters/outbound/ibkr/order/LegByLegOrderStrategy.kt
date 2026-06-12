@@ -15,6 +15,7 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeout
 import java.math.BigDecimal
 import java.math.RoundingMode
 
@@ -344,15 +345,22 @@ class LegByLegOrderStrategy(
         legDescription: String,
     ): Int =
         try {
-            val conId =
-                contractCache.getOrFetchOptionConId(
-                    OptionContractKey(
-                        symbol = contract.symbol,
-                        expiry = contract.expiry,
-                        strike = contract.strike,
-                        optionType = contract.type,
-                    ),
+            val key =
+                OptionContractKey(
+                    symbol = contract.symbol,
+                    expiry = contract.expiry,
+                    strike = contract.strike,
+                    optionType = contract.type,
                 )
+            // Try fast fetch (100ms timeout) to avoid blocking order submission
+            val conId =
+                try {
+                    withTimeout(100L) { contractCache.getOrFetchOptionConId(key) }
+                } catch (e: Exception) {
+                    // If fetch fails or times out, use cached or error with reasonable message
+                    contractCache.getCachedOptionConId(key)
+                        ?: error("Contract not in cache and lookup timed out for $key; using conid=0 (may fail)")
+                }
 
             val legContract =
                 Contract().apply {

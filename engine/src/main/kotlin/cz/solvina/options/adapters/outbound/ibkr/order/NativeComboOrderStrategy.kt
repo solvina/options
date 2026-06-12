@@ -13,6 +13,7 @@ import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.withTimeout
 import java.math.BigDecimal
 import java.math.RoundingMode
 
@@ -52,25 +53,35 @@ class NativeComboOrderStrategy(
         }
 
         return try {
-            // Build native combo contract
+            // Build native combo contract with fast fetch (100ms timeout)
+            val soldKey =
+                OptionContractKey(
+                    symbol = soldContract.symbol,
+                    expiry = soldContract.expiry,
+                    strike = soldContract.strike,
+                    optionType = soldContract.type,
+                )
+            val boughtKey =
+                OptionContractKey(
+                    symbol = boughtContract.symbol,
+                    expiry = boughtContract.expiry,
+                    strike = boughtContract.strike,
+                    optionType = boughtContract.type,
+                )
             val soldConId =
-                contractCache.getOrFetchOptionConId(
-                    OptionContractKey(
-                        symbol = soldContract.symbol,
-                        expiry = soldContract.expiry,
-                        strike = soldContract.strike,
-                        optionType = soldContract.type,
-                    ),
-                )
+                try {
+                    withTimeout(100L) { contractCache.getOrFetchOptionConId(soldKey) }
+                } catch (e: Exception) {
+                    contractCache.getCachedOptionConId(soldKey)
+                        ?: error("Sold contract not in cache and lookup timed out for $soldKey")
+                }
             val boughtConId =
-                contractCache.getOrFetchOptionConId(
-                    OptionContractKey(
-                        symbol = boughtContract.symbol,
-                        expiry = boughtContract.expiry,
-                        strike = boughtContract.strike,
-                        optionType = boughtContract.type,
-                    ),
-                )
+                try {
+                    withTimeout(100L) { contractCache.getOrFetchOptionConId(boughtKey) }
+                } catch (e: Exception) {
+                    contractCache.getCachedOptionConId(boughtKey)
+                        ?: error("Bought contract not in cache and lookup timed out for $boughtKey")
+                }
 
             val bagContract =
                 buildNativeComboContract(
