@@ -46,10 +46,10 @@ data class ScannerConfig(
     val stopLossCooldownHours: Long = 24,
     // Schedulers
     // Cron uses server timezone (CEST, UTC+2)
-    // EU markets: 10 AM - 6:30 PM CEST (Frankfurt DAX, Euronext)
-    // US markets: 3:30 PM - 10 PM CEST (NYSE/NASDAQ = 9:30 AM - 4 PM EDT)
-    // Run every 15 minutes, 10 AM - 10:59 PM CEST to cover both sessions
-    val cron: String = "*/15 10-22 * * MON-FRI",
+    // EU markets: 9:00 AM - 6:30 PM CEST (Frankfurt DAX, Euronext)
+    // US markets: 3:30 PM - 10:00 PM CEST (NYSE/NASDAQ = 9:30 AM - 4:00 PM EDT)
+    // Run every 15 minutes, 9 AM - 10:59 PM CEST to cover both EU and US sessions
+    val cron: String = "*/15 9-22 * * MON-FRI",
     val monitorDelayMs: Long = 60_000,
     // Kill switches (can be overridden at runtime via API)
     val scannerPaused: Boolean = false,
