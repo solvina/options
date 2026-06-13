@@ -7,8 +7,10 @@ import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOpenOrdersAdapter
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
 import cz.solvina.options.adapters.outbound.ibkr.cache.OptionContractKey
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
+import cz.solvina.options.domain.features.order.LegQuotes
 import cz.solvina.options.domain.features.order.OrderExecutionPort
 import cz.solvina.options.domain.features.order.OrderStatus
+import cz.solvina.options.domain.features.order.StrandedLongLegException
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
 import cz.solvina.options.domain.models.Symbol
@@ -35,6 +37,7 @@ class IbkrOrderExecutionAdapter(
         boughtContract: OptionContract,
         netCredit: Money,
         qty: Int,
+        legQuotes: LegQuotes?,
     ): Int {
         // Determine actual exchange from instrument config (DTB for EU stocks, CBOE for US, etc)
         val exchange = instrumentsConfig.instruments[soldContract.symbol.value]?.optionExchange ?: "SMART"
@@ -47,31 +50,40 @@ class IbkrOrderExecutionAdapter(
                 netCredit,
                 qty,
                 exchange = exchange,
+                legQuotes = legQuotes,
             )
 
-        return when {
-            result.status == SubmissionStatus.SUCCESS && !result.requiresManualMatching -> {
-                // US exchanges: atomic combo, ready to track
-                logger.info {
-                    "Order ${result.primaryOrderId} submitted via ${strategyRouter.getStrategyInfo(
-                        "SMART",
-                    )}"
+        return when (result.status) {
+            SubmissionStatus.SUCCESS -> {
+                // Leg-by-leg success reports both order ids; before declaring the spread real, confirm
+                // BOTH legs at the ACCOUNT level (independent of order-fill callbacks). Native combo
+                // returns secondaryOrderId == null and needs no extra reconciliation.
+                if (result.secondaryOrderId != null) {
+                    val verification =
+                        reconciliationService.verifyBothLegsFilled(
+                            soldContract = soldContract,
+                            boughtContract = boughtContract,
+                            qty = qty,
+                            shortOrderId = result.primaryOrderId,
+                            longOrderId = result.secondaryOrderId,
+                        )
+                    if (!verification.success) {
+                        logger.error {
+                            "Leg-by-leg reconciliation failed (SHORT=${result.primaryOrderId} LONG=${result.secondaryOrderId}): " +
+                                "${verification.message} — abandoning"
+                        }
+                        reconciliationService.abandonMatch(result.primaryOrderId, result.secondaryOrderId)
+                        throw IllegalStateException("Leg-by-leg reconciliation failed: ${verification.message}")
+                    }
                 }
+                logger.info { "Order ${result.primaryOrderId} submitted via ${strategyRouter.getStrategyInfo(exchange)}" }
                 result.primaryOrderId
             }
-            result.status == SubmissionStatus.SUCCESS && result.requiresManualMatching -> {
-                // EUREX: register for position reconciliation
-                logger.info {
-                    "Registered leg-by-leg order for reconciliation: SHORT=${result.primaryOrderId}, LONG=${result.secondaryOrderId}"
-                }
-                reconciliationService.registerPendingMatch(
-                    result.primaryOrderId,
-                    result.secondaryOrderId!!,
-                    soldContract,
-                    boughtContract,
-                    qty,
-                )
-                result.primaryOrderId
+            SubmissionStatus.STRANDED_LONG -> {
+                // Protective LONG filled, SHORT did not, auto-unwind off: a bounded long-debit position
+                // is open (never a naked short). Surface it so the entry is recorded as BROKEN_LONG_ONLY.
+                logger.error { "Stranded LONG leg ${result.primaryOrderId}: ${result.message}" }
+                throw StrandedLongLegException(result.primaryOrderId, result.message)
             }
             else -> {
                 logger.error { "Order submission failed: ${result.message}" }
@@ -132,7 +144,7 @@ class IbkrOrderExecutionAdapter(
         }
 
         logger.info { "Order replacement verified: old order $existingOrderId removed, submitting replacement" }
-        return submitComboLimitOrder(soldContract, boughtContract, newCredit, qty)
+        return submitComboLimitOrder(soldContract, boughtContract, newCredit, qty, legQuotes = null)
     }
 
     override suspend fun getSymbolsWithOpenOrders(): Set<Symbol> =

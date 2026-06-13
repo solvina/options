@@ -1,5 +1,6 @@
 package cz.solvina.options.adapters.outbound.ibkr.order
 
+import cz.solvina.options.domain.features.order.LegQuotes
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
 
@@ -17,17 +18,21 @@ interface OrderExecutionStrategy {
     fun getExchangeId(): String
 
     /**
-     * Submit a credit spread order using this exchange's native mechanics
+     * Submit a credit spread order using this exchange's native mechanics.
      *
-     * @return Pair<primaryOrderId, secondaryOrderId?>
-     *   - US exchanges: (comboOrderId, null)
-     *   - EUREX: (shortLegOrderId, longLegOrderId)
+     * - US exchanges: places one atomic combo, returns (comboOrderId, null) immediately.
+     * - EUREX leg-by-leg: legs in protective-LONG-first and only returns SUCCESS once BOTH legs are
+     *   confirmed filled — (shortLegOrderId, longLegOrderId). Never leaves a naked short.
+     *
+     * [legQuotes] supplies fresh per-leg NBBO so each leg can be priced from its own book; native
+     * combo strategies ignore it and price off [netCredit].
      */
     suspend fun submitSpreadOrder(
         soldContract: OptionContract,
         boughtContract: OptionContract,
         netCredit: Money,
         qty: Int,
+        legQuotes: LegQuotes? = null,
     ): OrderSubmissionResult
 
     /**
@@ -60,6 +65,7 @@ enum class SubmissionStatus {
     SUCCESS, // Order(s) submitted successfully
     REJECTED, // Exchange rejected before submission
     LIQUIDITY_FAILED, // Insufficient liquidity for matching (EUREX leg-in)
+    STRANDED_LONG, // Leg-by-leg: protective LONG filled, SHORT did not, auto-unwind off — long left open
     SYSTEM_ERROR, // Connectivity or system error
 }
 

@@ -41,7 +41,9 @@ class NativeComboOrderStrategy(
         boughtContract: OptionContract,
         netCredit: Money,
         qty: Int,
+        legQuotes: cz.solvina.options.domain.features.order.LegQuotes?,
     ): OrderSubmissionResult {
+        // Native combo prices off the net credit; per-leg quotes are not needed here.
         // Validate first
         val validation = validateOrder(soldContract, boughtContract, netCredit)
         if (!validation.isValid) {

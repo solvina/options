@@ -9,6 +9,7 @@ import cz.solvina.options.domain.features.execution.model.TradeExecutionRequest
 import cz.solvina.options.domain.features.market.MarketTickPort
 import cz.solvina.options.domain.features.market.SpreadCreditTick
 import cz.solvina.options.domain.features.order.LegAction
+import cz.solvina.options.domain.features.order.LegQuotes
 import cz.solvina.options.domain.features.order.OrderExecutionPort
 import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.features.scanner.ScannerConfig
@@ -184,6 +185,7 @@ class TradeExecutionServiceTest {
                         boughtContract: OptionContract,
                         netCredit: Money,
                         qty: Int,
+                        legQuotes: LegQuotes?,
                     ): Int {
                         val id = nextId.getAndIncrement()
                         val deferred = CompletableDeferred<OrderStatus>()
@@ -244,6 +246,7 @@ class TradeExecutionServiceTest {
                         boughtContract: OptionContract,
                         netCredit: Money,
                         qty: Int,
+                        legQuotes: LegQuotes?,
                     ): Int {
                         submittedCredits.add(netCredit.amount)
                         return nextId.getAndIncrement()
@@ -325,6 +328,7 @@ class TradeExecutionServiceTest {
                         boughtContract: OptionContract,
                         netCredit: Money,
                         qty: Int,
+                        legQuotes: LegQuotes?,
                     ): Int = 1
 
                     override suspend fun awaitFill(orderId: Int): OrderStatus {
@@ -444,6 +448,7 @@ class TradeExecutionServiceTest {
                 boughtContract: OptionContract,
                 netCredit: Money,
                 qty: Int,
+                legQuotes: LegQuotes?,
             ): Int {
                 onSubmit(soldContract, boughtContract, netCredit)
                 return nextId.getAndIncrement()
@@ -472,6 +477,7 @@ class TradeExecutionServiceTest {
                 boughtContract: OptionContract,
                 netCredit: Money,
                 qty: Int,
+                legQuotes: LegQuotes?,
             ): Int = error("submitComboLimitOrder must not be reached when the cap rejects the entry")
 
             override suspend fun awaitFill(orderId: Int): OrderStatus = OrderStatus.CANCELLED
@@ -497,6 +503,7 @@ class TradeExecutionServiceTest {
                 boughtContract: OptionContract,
                 netCredit: Money,
                 qty: Int,
+                legQuotes: LegQuotes?,
             ): Int = nextId.getAndIncrement()
 
             override suspend fun awaitFill(orderId: Int): OrderStatus {

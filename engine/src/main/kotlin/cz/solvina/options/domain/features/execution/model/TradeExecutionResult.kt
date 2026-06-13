@@ -41,4 +41,11 @@ enum class ExecutionOutcome {
 
     /** Market moved >$0.05 from scanner's mid-price before submission; aborting to prevent stale-price order rejection. */
     MARKET_MOVED_TOO_FAR,
+
+    /**
+     * Leg-by-leg entry: protective LONG leg filled but SHORT leg did not (auto-unwind off).
+     * A bounded long-debit position remains open and is recorded as BROKEN_LONG_ONLY for manual
+     * handling — never a naked short.
+     */
+    BROKEN_LONG_ONLY,
 }

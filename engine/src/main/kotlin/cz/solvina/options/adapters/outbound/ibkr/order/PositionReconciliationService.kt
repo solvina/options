@@ -29,40 +29,6 @@ class PositionReconciliationService(
     private val positionsPort: PositionsPort,
     private val orderCleanupService: OrderCleanupService,
 ) {
-    // Track pending leg-by-leg orders awaiting reconciliation
-    private val pendingMatches = mutableMapOf<String, PendingLegMatch>()
-
-    /**
-     * Register a leg-by-leg order submission for reconciliation
-     *
-     * @param shortOrderId ID of the SHORT leg order
-     * @param longOrderId ID of the LONG leg order
-     * @param soldContract SHORT leg contract details
-     * @param boughtContract LONG leg contract details
-     * @param qty Number of contracts
-     */
-    fun registerPendingMatch(
-        shortOrderId: Int,
-        longOrderId: Int,
-        soldContract: OptionContract,
-        boughtContract: OptionContract,
-        qty: Int,
-    ) {
-        val matchKey = "${soldContract.symbol}-${soldContract.strike}-${boughtContract.strike}"
-
-        pendingMatches[matchKey] =
-            PendingLegMatch(
-                shortOrderId = shortOrderId,
-                longOrderId = longOrderId,
-                soldContract = soldContract,
-                boughtContract = boughtContract,
-                qty = qty,
-                submittedAt = Instant.now(),
-            )
-
-        logger.info { "Registered pending match: $matchKey (orders: SHORT=$shortOrderId, LONG=$longOrderId)" }
-    }
-
     /**
      * Verify that both legs of a spread actually filled in the account
      *
@@ -106,7 +72,6 @@ class PositionReconciliationService(
 
                 if (shortLegFound && longLegFound) {
                     logger.info { "✓ Position reconciliation successful: $matchKey" }
-                    pendingMatches.remove(matchKey)
                     return VerificationResult(
                         success = true,
                         shortLegFound = true,
@@ -159,27 +124,17 @@ class PositionReconciliationService(
     }
 
     /**
-     * Get information about pending matches (for monitoring/debugging)
+     * Abandon a half-filled/unverified leg-by-leg entry and cancel both orders to prevent orphans.
      */
-    fun getPendingMatches(): Map<String, PendingLegMatch> = pendingMatches.toMap()
-
-    /**
-     * Abandon a pending match and trigger cleanup
-     */
-    suspend fun abandonMatch(
+    fun abandonMatch(
         shortOrderId: Int,
         longOrderId: Int,
     ) {
-        logger.warn { "Abandoning pending match: SHORT=$shortOrderId, LONG=$longOrderId" }
+        logger.warn { "Abandoning leg-by-leg entry: SHORT=$shortOrderId, LONG=$longOrderId" }
 
         // Cancel both orders to prevent orphaned positions
         ibkrClient.cancelOrder(shortOrderId, com.ib.client.OrderCancel())
         ibkrClient.cancelOrder(longOrderId, com.ib.client.OrderCancel())
-
-        // Remove from pending
-        pendingMatches.values.removeIf { match ->
-            match.shortOrderId == shortOrderId && match.longOrderId == longOrderId
-        }
     }
 
     /**
@@ -229,18 +184,6 @@ class PositionReconciliationService(
         }
     }
 }
-
-/**
- * Details of a leg-by-leg order awaiting verification
- */
-data class PendingLegMatch(
-    val shortOrderId: Int,
-    val longOrderId: Int,
-    val soldContract: OptionContract,
-    val boughtContract: OptionContract,
-    val qty: Int,
-    val submittedAt: Instant,
-)
 
 /**
  * Result of verifying both legs filled

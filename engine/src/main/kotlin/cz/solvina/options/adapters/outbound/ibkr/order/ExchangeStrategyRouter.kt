@@ -4,6 +4,7 @@ import com.ib.client.EClientSocket
 import cz.solvina.options.adapters.outbound.ibkr.IbkrConnectionConfig
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
+import cz.solvina.options.domain.features.order.LegQuotes
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -36,10 +37,19 @@ class ExchangeStrategyRouter(
         registerStrategy(NativeComboOrderStrategy("SMART", registry, client, contractCache, connectionConfig)) // SMART routes to best
 
         // Register leg-by-leg strategies (EU exchanges without native combo support)
-        registerStrategy(LegByLegOrderStrategy("DTB", registry, client, contractCache, connectionConfig)) // Deutsche Börse
-        registerStrategy(LegByLegOrderStrategy("EUREX", registry, client, contractCache, connectionConfig)) // EUREX
-        registerStrategy(LegByLegOrderStrategy("FTA", registry, client, contractCache, connectionConfig)) // Frankfurt
-        registerStrategy(LegByLegOrderStrategy("EBS", registry, client, contractCache, connectionConfig)) // EU derivatives
+        for (eu in listOf("DTB", "EUREX", "FTA", "EBS")) {
+            registerStrategy(
+                LegByLegOrderStrategy(
+                    exchangeId = eu,
+                    registry = registry,
+                    client = client,
+                    contractCache = contractCache,
+                    connectionConfig = connectionConfig,
+                    unwindStrandedLongLeg = connectionConfig.unwindStrandedLongLeg,
+                    legFillTimeoutMs = connectionConfig.legFillTimeoutSeconds * 1_000L,
+                ),
+            )
+        }
     }
 
     private fun registerStrategy(strategy: OrderExecutionStrategy) {
@@ -58,6 +68,7 @@ class ExchangeStrategyRouter(
         netCredit: Money,
         qty: Int,
         exchange: String = "SMART",
+        legQuotes: LegQuotes? = null,
     ): OrderSubmissionResult {
         val strategy =
             strategies[exchange]
@@ -68,7 +79,7 @@ class ExchangeStrategyRouter(
 
         logger.info { "[$exchange] Using strategy: ${strategy.notes()}" }
 
-        return strategy.submitSpreadOrder(soldContract, boughtContract, netCredit, qty)
+        return strategy.submitSpreadOrder(soldContract, boughtContract, netCredit, qty, legQuotes)
     }
 
     /**

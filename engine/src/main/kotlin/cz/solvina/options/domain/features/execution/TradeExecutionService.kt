@@ -6,6 +6,7 @@ import cz.solvina.options.domain.features.execution.model.TradeExecutionResult
 import cz.solvina.options.domain.features.market.MarketTickPort
 import cz.solvina.options.domain.features.market.SpreadCreditTick
 import cz.solvina.options.domain.features.order.LegAction
+import cz.solvina.options.domain.features.order.LegQuotes
 import cz.solvina.options.domain.features.order.OrderExecutionPort
 import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.features.scanner.ScannerConfig
@@ -150,7 +151,7 @@ class TradeExecutionService(
         var pendingSpread = spreadPort.save(buildSpread(request, orderId = 0, credit = request.targetCredit, status = SpreadStatus.PENDING))
 
         // Fetch fresh quotes immediately before submission and recalculate net credit
-        val (freshCredit, stalePriceResult) = calculateFreshCredit(request)
+        val (freshCredit, stalePriceResult, freshTick) = calculateFreshCredit(request)
         if (stalePriceResult != null) {
             logger.info { "[${request.underlyingSymbol}] ${stalePriceResult.message}" }
             spreadPort.update(
@@ -162,6 +163,18 @@ class TradeExecutionService(
             return TradeExecutionResult(stalePriceResult.outcome)
         }
 
+        // Forward fresh per-leg NBBO so leg-by-leg exchanges (EUREX) price each leg off its own book.
+        // Atomic-combo (US) exchanges ignore this and price off netCredit.
+        val legQuotes =
+            freshTick?.let {
+                LegQuotes(
+                    soldBid = it.soldBid.toBigDecimal(),
+                    soldAsk = it.soldAsk.toBigDecimal(),
+                    boughtBid = it.boughtBid.toBigDecimal(),
+                    boughtAsk = it.boughtAsk.toBigDecimal(),
+                )
+            }
+
         var currentOrderId =
             runCatching {
                 orderExecutionPort.submitComboLimitOrder(
@@ -169,6 +182,7 @@ class TradeExecutionService(
                     boughtContract = request.boughtContract,
                     netCredit = Money(freshCredit),
                     qty = request.quantity,
+                    legQuotes = legQuotes,
                 )
             }.getOrElse { e ->
                 logger.error(e) { "[${request.underlyingSymbol}] Failed to submit order" }
@@ -420,7 +434,7 @@ class TradeExecutionService(
         )
     }
 
-    private suspend fun calculateFreshCredit(request: TradeExecutionRequest): Pair<BigDecimal, QuoteFreshnessResult?> {
+    private suspend fun calculateFreshCredit(request: TradeExecutionRequest): Triple<BigDecimal, QuoteFreshnessResult?, SpreadCreditTick?> {
         logger.info { "[${request.underlyingSymbol}] calculateFreshCredit: waiting 500ms for market data to settle" }
         delay(500) // Wait for market data to settle
 
@@ -431,6 +445,7 @@ class TradeExecutionService(
                     request.boughtContract,
                 )
             var freshCredit: BigDecimal? = null
+            var freshTick: SpreadCreditTick? = null
             var error: QuoteFreshnessResult? = null
 
             logger.info { "[${request.underlyingSymbol}] calculateFreshCredit: waiting up to 3s for first tick" }
@@ -485,6 +500,7 @@ class TradeExecutionService(
 
                     // Use bid side if available, but don't go below floor
                     freshCredit = bidCredit.coerceAtLeast(request.floorCredit)
+                    freshTick = tick // Retain fresh per-leg NBBO for leg-by-leg pricing (LegQuotes)
 
                     logger.info {
                         "[${request.underlyingSymbol}] Fresh quotes: mid=\$$currentMid bid=\$$bidCredit floor=\$${request.floorCredit} " +
@@ -494,36 +510,39 @@ class TradeExecutionService(
             }
 
             if (error != null) {
-                Pair(BigDecimal.ZERO, error)
+                Triple(BigDecimal.ZERO, error, null)
             } else if (freshCredit != null) {
-                Pair(freshCredit!!, null)
+                Triple(freshCredit!!, null, freshTick)
             } else {
-                Pair(
+                Triple(
                     BigDecimal.ZERO,
                     QuoteFreshnessResult(
                         outcome = ExecutionOutcome.MARKET_MOVED_TOO_FAR,
                         message = "[${request.underlyingSymbol}] No market data tick received in 3s",
                     ),
+                    null,
                 )
             }
         } catch (e: TimeoutCancellationException) {
-            Pair(
+            Triple(
                 BigDecimal.ZERO,
                 QuoteFreshnessResult(
                     outcome = ExecutionOutcome.MARKET_MOVED_TOO_FAR,
                     message = "[${request.underlyingSymbol}] Quote fetch timeout",
                 ),
+                null,
             )
         } catch (e: Exception) {
             logger.warn(e) {
                 "[${request.underlyingSymbol}] Error fetching fresh quotes; aborting entry"
             }
-            Pair(
+            Triple(
                 BigDecimal.ZERO,
                 QuoteFreshnessResult(
                     outcome = ExecutionOutcome.MARKET_MOVED_TOO_FAR,
                     message = "[${request.underlyingSymbol}] Quote fetch error: ${e.message}",
                 ),
+                null,
             )
         }
     }

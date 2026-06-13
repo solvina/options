@@ -1,5 +1,6 @@
 package cz.solvina.options.backtest
 
+import cz.solvina.options.domain.features.order.LegQuotes
 import cz.solvina.options.domain.features.order.OrderExecutionPort
 import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.models.Money
@@ -28,6 +29,7 @@ class BacktestOrderExecutionAdapter : OrderExecutionPort {
         boughtContract: OptionContract,
         netCredit: Money,
         qty: Int,
+        legQuotes: LegQuotes?,
     ): Int {
         val orderId = nextOrderId.getAndIncrement()
         comboFills.add(
