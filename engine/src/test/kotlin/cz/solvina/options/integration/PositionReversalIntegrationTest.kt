@@ -189,7 +189,9 @@ class PositionReversalIntegrationTest {
             coEvery { spreadPort.findByStatus(SpreadStatus.CLOSING) } returns listOf(closingSpread)
             coEvery { spreadPort.update(any()) } answers { firstArg() }
             coEvery { marketDataPort.getOptionMid(soldContract) } returns Money(BigDecimal("1.70"))
+            coEvery { marketDataPort.getOptionMidLive(soldContract) } returns Money(BigDecimal("1.70"))
             coEvery { marketDataPort.getOptionMid(boughtContract) } returns Money(BigDecimal("0.10"))
+            coEvery { marketDataPort.getOptionMidLive(boughtContract) } returns Money(BigDecimal("0.10"))
             coEvery { marketDataPort.getUnderlyingPrice(any()) } returns Money(BigDecimal("420"))
             coEvery { orderPort.placeMarketOrder(any(), any(), any()) } returns LegOrder(99, OrderStatus.FILLED)
 

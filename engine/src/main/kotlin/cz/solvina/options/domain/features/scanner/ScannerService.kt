@@ -38,9 +38,16 @@ class ScannerService(
         lastRunAt = Instant.now(clock)
         logger.info { "Scanner run started" }
 
-        val openCount = spreadPort.countByStatus(SpreadStatus.OPEN)
-        if (openCount >= config.maxOpenSpreads) {
-            logger.info { "Max open spreads reached ($openCount/${config.maxOpenSpreads}), skipping scan" }
+        // Count every non-terminal spread toward the cap. PENDING (in-flight orders) and CLOSING
+        // both still consume risk budget; counting OPEN alone let concurrent in-flight entries
+        // blow past maxOpenSpreads before any of them flipped to OPEN. This is a coarse early-out;
+        // the authoritative per-slot reservation happens atomically in TradeExecutionService.execute.
+        val activeCount =
+            spreadPort.countByStatus(SpreadStatus.PENDING) +
+                spreadPort.countByStatus(SpreadStatus.OPEN) +
+                spreadPort.countByStatus(SpreadStatus.CLOSING)
+        if (activeCount >= config.maxOpenSpreads) {
+            logger.info { "Max active spreads reached ($activeCount/${config.maxOpenSpreads}), skipping scan" }
             return
         }
 

@@ -25,6 +25,8 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
@@ -51,6 +53,10 @@ class TradeExecutionService(
     private val inFlightSymbols = ConcurrentHashMap<Symbol, Unit>()
     private val cooldownUntil = ConcurrentHashMap<Symbol, Instant>()
 
+    // Serialises the cap check + slot reservation so concurrent scans can't collectively
+    // exceed maxOpenSpreads (C1). Held only for the count+reserve, never across order I/O.
+    private val capMutex = Mutex()
+
     // -------------------------------------------------------------------------
     // Public API
     // -------------------------------------------------------------------------
@@ -76,7 +82,39 @@ class TradeExecutionService(
         val preCheck = validator.validate(request, inFlightSymbols.keys)
         if (preCheck != null) return TradeExecutionResult(preCheck)
 
-        inFlightSymbols[request.underlyingSymbol] = Unit
+        // Atomic cap check + slot reservation (C1). Count established positions (OPEN+CLOSING)
+        // from the DB plus the live in-flight set — each in-flight entry will become a PENDING
+        // row — and reserve the slot under a single mutex so two concurrent scans can't both
+        // pass the gate and overshoot maxOpenSpreads. The mutex is released before any order I/O.
+        val reservation =
+            capMutex.withLock {
+                if (inFlightSymbols.containsKey(request.underlyingSymbol)) {
+                    ExecutionOutcome.EXPOSURE_REJECTED
+                } else {
+                    val active =
+                        spreadPort.countByStatus(SpreadStatus.OPEN) +
+                            spreadPort.countByStatus(SpreadStatus.CLOSING) +
+                            inFlightSymbols.size
+                    if (active >= config.maxOpenSpreads) {
+                        ExecutionOutcome.CAP_REACHED
+                    } else {
+                        inFlightSymbols[request.underlyingSymbol] = Unit
+                        null
+                    }
+                }
+            }
+        if (reservation != null) {
+            if (reservation == ExecutionOutcome.CAP_REACHED) {
+                logger.info {
+                    "[${request.underlyingSymbol}] CAP_REACHED — active spreads at maxOpenSpreads=${config.maxOpenSpreads}, skipping entry"
+                }
+                tradeLogger.info {
+                    "REJECT ${request.underlyingSymbol}  ${request.soldContract.strike}P/${request.boughtContract.strike}P  reason=CAP_REACHED"
+                }
+            }
+            return TradeExecutionResult(reservation)
+        }
+
         return try {
             executeInternal(request)
         } finally {
@@ -102,6 +140,12 @@ class TradeExecutionService(
     // -------------------------------------------------------------------------
 
     private suspend fun executeInternal(request: TradeExecutionRequest): TradeExecutionResult {
+        logger.info {
+            "[${request.underlyingSymbol}] Execute: target=\$${request.targetCredit} " +
+                "floor=\$${request.floorCredit} " +
+                "soldBid/ask=\$${request.soldBid}/\$${request.soldAsk} " +
+                "boughtBid/ask=\$${request.boughtBid}/\$${request.boughtAsk}"
+        }
         // Persist PENDING before submitting — survives engine restarts so fill can be recovered
         var pendingSpread = spreadPort.save(buildSpread(request, orderId = 0, credit = request.targetCredit, status = SpreadStatus.PENDING))
 
@@ -377,6 +421,7 @@ class TradeExecutionService(
     }
 
     private suspend fun calculateFreshCredit(request: TradeExecutionRequest): Pair<BigDecimal, QuoteFreshnessResult?> {
+        logger.info { "[${request.underlyingSymbol}] calculateFreshCredit: waiting 500ms for market data to settle" }
         delay(500) // Wait for market data to settle
 
         return try {
@@ -388,9 +433,15 @@ class TradeExecutionService(
             var freshCredit: BigDecimal? = null
             var error: QuoteFreshnessResult? = null
 
+            logger.info { "[${request.underlyingSymbol}] calculateFreshCredit: waiting up to 3s for first tick" }
             withTimeout(3_000L) {
                 stream.collect { tick ->
                     if (freshCredit != null || error != null) return@collect // Already processed first tick
+
+                    logger.info {
+                        "[${request.underlyingSymbol}] calculateFreshCredit: received tick " +
+                            "sold=${tick.soldBid}/${tick.soldAsk} bought=${tick.boughtBid}/${tick.boughtAsk} net=${tick.netCredit}"
+                    }
 
                     // Use bid side for entry: short leg's bid minus long leg's ask (widest spread, safest)
                     val bidCredit =
@@ -407,6 +458,12 @@ class TradeExecutionService(
                             .setScale(4, RoundingMode.HALF_UP)
 
                     val priceDrift = (currentMid - request.targetCredit).abs()
+
+                    logger.info {
+                        "[${request.underlyingSymbol}] calculateFreshCredit: analysis " +
+                            "bidCredit=\$$bidCredit currentMid=\$$currentMid target=\$${request.targetCredit} " +
+                            "drift=\$$priceDrift"
+                    }
 
                     if (priceDrift > BigDecimal("0.10")) {
                         // Market moved more than $0.10 — safety abort

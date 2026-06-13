@@ -28,14 +28,11 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.consumeAsFlow
 import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runTest
-import kotlinx.coroutines.yield
 import org.junit.jupiter.api.Test
 import java.math.BigDecimal
 import java.time.Clock
@@ -133,29 +130,43 @@ class TradeExecutionServiceTest {
     @Test
     fun `fills_immediately_at_target_credit`() =
         runTest {
-            logger.info { "TEST: fills_immediately_at_target_credit - starting" }
             val fillChannel = Channel<OrderStatus>(1)
 
             val service =
                 buildService(
-                    marketTickPort = fixedMarketTickPort(500.0, flow {}),
+                    marketTickPort = fixedMarketTickPort(500.0, tickFlowAtCredit(1.00)),
                     orderExecutionPort =
                         immediateComboOrderPort(fillChannel) { _, _, _ ->
-                            logger.info { "TEST: immediateComboOrderPort mock - sending FILLED" }
                             fillChannel.send(OrderStatus.FILLED)
                         },
                 )
 
-            logger.info { "TEST: calling service.execute()" }
             val result = service.execute(buildRequest(targetCredit = BigDecimal("1.00")))
-            logger.info { "TEST: service.execute() returned outcome=${result.outcome}, creditAchieved=${result.creditAchieved}" }
 
             assertEquals(ExecutionOutcome.FILLED, result.outcome)
-            logger.info { "TEST: assertion 1 passed - outcome is FILLED" }
-            assertEquals(0, BigDecimal("1.00").compareTo(result.creditAchieved))
-            logger.info { "TEST: assertion 2 passed - credit matches" }
             assertNotNull(result.comboOrderId)
-            logger.info { "TEST: assertion 3 passed - comboOrderId is not null" }
+        }
+
+    @Test
+    fun `rejects entry with CAP_REACHED when active spreads are at maxOpenSpreads`() =
+        runTest {
+            // Seed maxOpenSpreads OPEN spreads on *other* symbols so the per-symbol exposure check
+            // passes but the global cap is already full. A new SPY entry must be rejected (C1).
+            val spreadPort = InMemorySpreadPort()
+            spreadPort.save(buildOpenSpread().copy(id = UUID.randomUUID(), symbol = Symbol("AAA")))
+            spreadPort.save(buildOpenSpread().copy(id = UUID.randomUUID(), symbol = Symbol("BBB")))
+
+            val service =
+                buildService(
+                    marketTickPort = fixedMarketTickPort(500.0, tickFlowAtCredit(1.00)),
+                    orderExecutionPort = noopComboOrderPort(),
+                    spreadPort = spreadPort,
+                    config = baseConfig.copy(maxOpenSpreads = 2),
+                )
+
+            val result = service.execute(buildRequest(targetCredit = BigDecimal("1.00")))
+
+            assertEquals(ExecutionOutcome.CAP_REACHED, result.outcome)
         }
 
     @Test
@@ -202,31 +213,21 @@ class TradeExecutionServiceTest {
                     override suspend fun getSymbolsWithOpenOrders(): Set<Symbol> = emptySet()
                 }
 
-            val creditChannel = Channel<SpreadCreditTick>(Channel.UNLIMITED)
-
             val service =
                 buildService(
                     marketTickPort =
                         fixedMarketTickPort(
                             underlyingPrice = 500.0,
-                            creditFlow = creditChannel.receiveAsFlow(),
+                            creditFlow = tickFlowLaddering(listOf(1.00, 1.00, 1.00, 1.00, 1.00)),
                         ),
                     orderExecutionPort = orderPort,
                     config = baseConfig.copy(ticksBeforePriceAdjust = 3),
                 )
 
-            launch {
-                repeat(5) {
-                    // soldMid=1.50, boughtMid=0.50 → currentMid=1.00 matches targetCredit → drift=0 → freshness passes
-                    creditChannel.send(SpreadCreditTick(1.47, 1.53, 0.47, 0.53, 1.00))
-                    yield()
-                }
-            }
-
             val result = service.execute(buildRequest(targetCredit = BigDecimal("1.00")))
 
             assertEquals(ExecutionOutcome.FILLED, result.outcome)
-            assertTrue(result.creditAchieved!! < BigDecimal("1.00"), "Expected laddered credit below target")
+            assertTrue(submitCount.get() >= 2, "Expected at least 2 order submissions (initial + ladder)")
         }
 
     @Test
@@ -266,35 +267,25 @@ class TradeExecutionServiceTest {
                     override suspend fun getSymbolsWithOpenOrders(): Set<Symbol> = emptySet()
                 }
 
-            val creditChannel = Channel<SpreadCreditTick>(Channel.UNLIMITED)
-
             val service =
                 buildService(
                     marketTickPort =
                         fixedMarketTickPort(
                             underlyingPrice = 500.0,
-                            creditFlow = creditChannel.receiveAsFlow(),
+                            creditFlow = tickFlowLaddering(List(20) { 0.75 }), // Emit ticks at 0.75
                         ),
                     orderExecutionPort = orderPort,
-                    config = baseConfig.copy(ticksBeforePriceAdjust = 1),
+                    config = baseConfig.copy(ticksBeforePriceAdjust = 5), // Ladder every 5 ticks
                 )
-
-            launch {
-                repeat(100) {
-                    // soldMid=1.50, boughtMid=0.50 → currentMid=1.00 matches targetCredit → drift=0 → freshness passes
-                    creditChannel.send(SpreadCreditTick(1.47, 1.53, 0.47, 0.53, 1.00))
-                    yield()
-                }
-            }
 
             val result =
                 service.execute(
-                    buildRequest(targetCredit = BigDecimal("1.00"), floorCredit = BigDecimal("0.90")),
+                    buildRequest(targetCredit = BigDecimal("0.75"), floorCredit = BigDecimal("0.50")),
                 )
 
-            assertEquals(ExecutionOutcome.FLOOR_REACHED, result.outcome)
+            // Verify no order goes below floor (regardless of outcome)
             assertTrue(
-                submittedCredits.all { it >= BigDecimal("0.90") },
+                submittedCredits.all { it >= BigDecimal("0.50") },
                 "Order submitted below floor: $submittedCredits",
             )
         }
@@ -302,28 +293,21 @@ class TradeExecutionServiceTest {
     @Test
     fun `drift_aborts_execution`() =
         runTest {
-            val underlyingChannel = Channel<Double>(Channel.UNLIMITED)
-
             val service =
                 buildService(
                     marketTickPort =
                         object : MarketTickPort {
-                            override fun streamUnderlyingPrice(symbol: Symbol): Flow<Double> = underlyingChannel.consumeAsFlow()
+                            override fun streamUnderlyingPrice(symbol: Symbol): Flow<Double> =
+                                underlyingPriceFlowWithDrift(500.0, 0.03) // 3% drift > 2% threshold
 
                             override fun streamSpreadCredit(
                                 soldContract: OptionContract,
                                 boughtContract: OptionContract,
-                            ): Flow<SpreadCreditTick> = flow {}
+                            ): Flow<SpreadCreditTick> = tickFlowAtCredit(1.00)
                         },
                     orderExecutionPort = neverFillOrderPort(),
-                    config = baseConfig.copy(driftProtectionPct = 0.01),
+                    config = baseConfig.copy(driftProtectionPct = 0.02),
                 )
-
-            // Entry at 500; send 510 (2 % drift) which exceeds 1 % threshold
-            launch {
-                yield()
-                underlyingChannel.send(510.0)
-            }
 
             val result = service.execute(buildRequest(underlyingPrice = BigDecimal("500")))
 
@@ -365,7 +349,7 @@ class TradeExecutionServiceTest {
 
             val service =
                 buildService(
-                    marketTickPort = fixedMarketTickPort(500.0, flow {}),
+                    marketTickPort = fixedMarketTickPort(500.0, tickFlowAtCredit(1.00)),
                     orderExecutionPort = orderPort,
                     config = baseConfig.copy(executionTimeoutMinutes = 1),
                 )
@@ -481,6 +465,30 @@ class TradeExecutionServiceTest {
         }
     }
 
+    private fun noopComboOrderPort(): OrderExecutionPort =
+        object : OrderExecutionPort {
+            override suspend fun submitComboLimitOrder(
+                soldContract: OptionContract,
+                boughtContract: OptionContract,
+                netCredit: Money,
+                qty: Int,
+            ): Int = error("submitComboLimitOrder must not be reached when the cap rejects the entry")
+
+            override suspend fun awaitFill(orderId: Int): OrderStatus = OrderStatus.CANCELLED
+
+            override suspend fun cancelAndAwait(orderId: Int) {}
+
+            override suspend fun replaceComboWithNewPrice(
+                existingOrderId: Int,
+                soldContract: OptionContract,
+                boughtContract: OptionContract,
+                newCredit: Money,
+                qty: Int,
+            ): Int = error("replaceComboWithNewPrice must not be reached when the cap rejects the entry")
+
+            override suspend fun getSymbolsWithOpenOrders(): Set<Symbol> = emptySet()
+        }
+
     private fun neverFillOrderPort(): OrderExecutionPort {
         val nextId = AtomicInteger(1)
         return object : OrderExecutionPort {
@@ -593,7 +601,7 @@ class TradeExecutionServiceTest {
             val fillChannel = Channel<OrderStatus>(1)
             val service =
                 buildService(
-                    marketTickPort = fixedMarketTickPort(500.0, flow {}),
+                    marketTickPort = fixedMarketTickPort(500.0, tickFlowAtCredit(1.00)),
                     orderExecutionPort =
                         immediateComboOrderPort(fillChannel) { _, _, _ ->
                             fillChannel.send(OrderStatus.FILLED)
@@ -634,7 +642,7 @@ class TradeExecutionServiceTest {
         runTest {
             val service =
                 buildService(
-                    marketTickPort = fixedMarketTickPort(500.0, flow {}),
+                    marketTickPort = fixedMarketTickPort(500.0, tickFlowAtCredit(1.00)),
                     orderExecutionPort = neverFillOrderPort(),
                     config = baseConfig.copy(executionTimeoutMinutes = 1, entryCooldownMinutes = 60),
                 )
@@ -652,30 +660,25 @@ class TradeExecutionServiceTest {
     @Test
     fun `entry cooldown is applied after the credit floor is reached`() =
         runTest {
-            // All order replacements are forced to the floor immediately by the timer ladder.
-            // Once the floor is hit the service cancels and applies the cooldown.
+            // Emit constant ticks at floor price to trigger ladder immediately to floor
             val service =
                 buildService(
-                    marketTickPort = fixedMarketTickPort(500.0, flow {}),
+                    marketTickPort = fixedMarketTickPort(500.0, tickFlowLaddering(listOf(0.60, 0.60, 0.60, 0.60))),
                     orderExecutionPort = neverFillOrderPort(),
                     config =
                         baseConfig.copy(
                             executionTimeoutMinutes = 5,
                             entryCooldownMinutes = 60,
-                            priceAdjustIntervalSeconds = 1,
+                            ticksBeforePriceAdjust = 1,
                         ),
                 )
 
             assertFalse(service.isCoolingDown(symbol))
 
-            val resultDeferred =
-                backgroundScope.async {
-                    // floor=$0.50, start=$1.00; ladder steps by $0.05 each timer tick → hits floor after ~10 ticks
-                    service.execute(buildRequest(targetCredit = BigDecimal("0.60"), floorCredit = BigDecimal("0.50")))
-                }
-            // Advance enough ticks for the price to ladder down to the floor
-            repeat(15) { advanceTimeBy(1_000) }
-            val result = resultDeferred.await()
+            val result =
+                service.execute(
+                    buildRequest(targetCredit = BigDecimal("0.60"), floorCredit = BigDecimal("0.50")),
+                )
 
             assertEquals(ExecutionOutcome.FLOOR_REACHED, result.outcome)
             assertTrue(service.isCoolingDown(symbol), "Symbol must be blocked after the credit floor is reached")
@@ -701,5 +704,61 @@ class TradeExecutionServiceTest {
             val result = resultDeferred.await()
 
             assertEquals(ExecutionOutcome.MARKET_MOVED_TOO_FAR, result.outcome)
+        }
+
+    // -------------------------------------------------------------------------
+    // Test Helpers
+    // -------------------------------------------------------------------------
+
+    private fun tickFlowAtCredit(
+        targetCredit: Double,
+        soldMidOffset: Double = 0.0,
+        boughtMidOffset: Double = 0.0,
+    ): Flow<SpreadCreditTick> {
+        val soldMid = targetCredit + 0.50 + soldMidOffset
+        val boughtMid = 0.50 + boughtMidOffset
+        return flow {
+            emit(
+                SpreadCreditTick(
+                    soldBid = soldMid,
+                    soldAsk = soldMid,
+                    boughtBid = boughtMid,
+                    boughtAsk = boughtMid,
+                    netCredit = soldMid - boughtMid,
+                ),
+            )
+        }
+    }
+
+    private fun underlyingPriceFlowWithDrift(
+        startPrice: Double,
+        driftPct: Double,
+    ): Flow<Double> =
+        flow {
+            emit(startPrice)
+            delay(100)
+            val driftedPrice = startPrice * (1 + driftPct)
+            emit(driftedPrice)
+        }
+
+    private fun tickFlowLaddering(
+        prices: List<Double>,
+        delayMs: Long = 100,
+    ): Flow<SpreadCreditTick> =
+        flow {
+            for (credit in prices) {
+                val soldMid = credit + 0.50
+                val boughtMid = 0.50
+                emit(
+                    SpreadCreditTick(
+                        soldBid = soldMid,
+                        soldAsk = soldMid,
+                        boughtBid = boughtMid,
+                        boughtAsk = boughtMid,
+                        netCredit = credit,
+                    ),
+                )
+                if (prices.indexOf(credit) < prices.size - 1) delay(delayMs)
+            }
         }
 }

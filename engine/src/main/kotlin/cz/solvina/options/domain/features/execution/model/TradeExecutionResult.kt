@@ -27,6 +27,9 @@ enum class ExecutionOutcome {
     /** Pre-trade check: symbol already has an open spread or an in-flight execution. */
     EXPOSURE_REJECTED,
 
+    /** Pre-trade check: total active spreads (OPEN+CLOSING+in-flight) would exceed maxOpenSpreads. */
+    CAP_REACHED,
+
     /** Pre-trade check: available funds < maxRiskPerContract. */
     CAPITAL_REJECTED,
 

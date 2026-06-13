@@ -105,6 +105,7 @@ class SpreadManagementServiceTest {
         orderPort: OrderPort = mockk(relaxed = true),
         executionPort: TradeExecutionPort = mockk(relaxed = true),
         clock: Clock = clockAtEntry,
+        positionsPort: cz.solvina.options.domain.features.account.PositionsPort? = null,
     ) = SpreadManagementService(
         spreadPort = spreadPort,
         marketDataPort = marketDataPort,
@@ -117,6 +118,7 @@ class SpreadManagementServiceTest {
         executionPort = executionPort,
         config = config,
         clock = clock,
+        positionsPort = positionsPort,
     )
 
     // -------------------------------------------------------------------------
@@ -136,7 +138,9 @@ class SpreadManagementServiceTest {
             coEvery { spreadPort.findByStatus(SpreadStatus.CLOSING) } returns emptyList()
             coEvery { spreadPort.update(any()) } answers { firstArg() }
             coEvery { marketDataPort.getOptionMid(soldContract) } returns Money(BigDecimal("0.30"))
+            coEvery { marketDataPort.getOptionMidLive(soldContract) } returns Money(BigDecimal("0.30"))
             coEvery { marketDataPort.getOptionMid(boughtContract) } returns Money(BigDecimal("0.05"))
+            coEvery { marketDataPort.getOptionMidLive(boughtContract) } returns Money(BigDecimal("0.05"))
             coEvery { marketDataPort.getUnderlyingPrice(any()) } returns Money(BigDecimal("500"))
             coEvery { orderPort.placeMarketOrder(any(), any(), any()) } returns filledOrder
 
@@ -164,7 +168,9 @@ class SpreadManagementServiceTest {
             coEvery { spreadPort.findById(spread.id!!) } returns spread
             coEvery { spreadPort.update(any()) } answers { firstArg() }
             coEvery { marketDataPort.getOptionMid(soldContract) } returns Money(BigDecimal("0.30"))
+            coEvery { marketDataPort.getOptionMidLive(soldContract) } returns Money(BigDecimal("0.30"))
             coEvery { marketDataPort.getOptionMid(boughtContract) } returns Money(boughtMid)
+            coEvery { marketDataPort.getOptionMidLive(boughtContract) } returns Money(boughtMid)
             coEvery { marketDataPort.getUnderlyingPrice(any()) } returns Money(BigDecimal("500"))
             coEvery { orderPort.placeAndAwaitFill(any(), any(), any(), any()) } returns filledOrder
 
@@ -208,7 +214,9 @@ class SpreadManagementServiceTest {
             coEvery { spreadPort.findByStatus(SpreadStatus.CLOSING) } returns emptyList()
             coEvery { spreadPort.update(any()) } answers { firstArg() }
             coEvery { marketDataPort.getOptionMid(soldContract) } returns Money(BigDecimal("1.70"))
+            coEvery { marketDataPort.getOptionMidLive(soldContract) } returns Money(BigDecimal("1.70"))
             coEvery { marketDataPort.getOptionMid(boughtContract) } returns Money(BigDecimal("0.10"))
+            coEvery { marketDataPort.getOptionMidLive(boughtContract) } returns Money(BigDecimal("0.10"))
             coEvery { marketDataPort.getUnderlyingPrice(any()) } returns Money(BigDecimal("500"))
             coEvery { orderPort.placeMarketOrder(any(), any(), any()) } returns filledOrder
 
@@ -245,7 +253,9 @@ class SpreadManagementServiceTest {
             coEvery { spreadPort.findByStatus(SpreadStatus.CLOSING) } returns emptyList()
             coEvery { spreadPort.update(any()) } answers { firstArg() }
             coEvery { marketDataPort.getOptionMid(soldContract) } returns Money(BigDecimal("1.70"))
+            coEvery { marketDataPort.getOptionMidLive(soldContract) } returns Money(BigDecimal("1.70"))
             coEvery { marketDataPort.getOptionMid(boughtContract) } returns Money(BigDecimal("0.10"))
+            coEvery { marketDataPort.getOptionMidLive(boughtContract) } returns Money(BigDecimal("0.10"))
             coEvery { marketDataPort.getUnderlyingPrice(any()) } returns Money(BigDecimal("500"))
             coEvery { orderPort.placeMarketOrder(any(), any(), any()) } returns filledOrder
 
@@ -270,7 +280,9 @@ class SpreadManagementServiceTest {
             coEvery { spreadPort.findByStatus(SpreadStatus.CLOSING) } returns emptyList()
             coEvery { spreadPort.update(any()) } answers { firstArg() }
             coEvery { marketDataPort.getOptionMid(soldContract) } returns Money(BigDecimal("0.30"))
+            coEvery { marketDataPort.getOptionMidLive(soldContract) } returns Money(BigDecimal("0.30"))
             coEvery { marketDataPort.getOptionMid(boughtContract) } returns Money(BigDecimal("0.05"))
+            coEvery { marketDataPort.getOptionMidLive(boughtContract) } returns Money(BigDecimal("0.05"))
             coEvery { marketDataPort.getUnderlyingPrice(any()) } returns Money(BigDecimal("500"))
             coEvery { orderPort.placeMarketOrder(any(), any(), any()) } returns filledOrder
 
@@ -301,7 +313,9 @@ class SpreadManagementServiceTest {
             coEvery { spreadPort.findByStatus(SpreadStatus.CLOSING) } returns emptyList()
             coEvery { spreadPort.update(any()) } answers { firstArg() }
             coEvery { marketDataPort.getOptionMid(soldContract) } returns Money(BigDecimal("0.70"))
+            coEvery { marketDataPort.getOptionMidLive(soldContract) } returns Money(BigDecimal("0.70"))
             coEvery { marketDataPort.getOptionMid(boughtContract) } returns Money(BigDecimal("0.10"))
+            coEvery { marketDataPort.getOptionMidLive(boughtContract) } returns Money(BigDecimal("0.10"))
             coEvery { marketDataPort.getUnderlyingPrice(any()) } returns Money(BigDecimal("500"))
             coEvery { orderPort.placeMarketOrder(any(), any(), any()) } returns filledOrder
 
@@ -329,7 +343,9 @@ class SpreadManagementServiceTest {
             coEvery { spreadPort.findByStatus(SpreadStatus.CLOSING) } returns emptyList()
             coEvery { spreadPort.update(any()) } answers { firstArg() }
             coEvery { marketDataPort.getOptionMid(soldContract) } returns Money(BigDecimal("0.70"))
+            coEvery { marketDataPort.getOptionMidLive(soldContract) } returns Money(BigDecimal("0.70"))
             coEvery { marketDataPort.getOptionMid(boughtContract) } returns Money(BigDecimal("0.10"))
+            coEvery { marketDataPort.getOptionMidLive(boughtContract) } returns Money(BigDecimal("0.10"))
 
             SpreadManagementService(
                 spreadPort = spreadPort,
@@ -373,7 +389,9 @@ class SpreadManagementServiceTest {
             coEvery { spreadPort.findByStatus(SpreadStatus.CLOSING) } returns listOf(closingSpread)
             coEvery { spreadPort.update(any()) } answers { firstArg() }
             coEvery { marketDataPort.getOptionMid(soldContract) } returns Money(BigDecimal("0.25"))
+            coEvery { marketDataPort.getOptionMidLive(soldContract) } returns Money(BigDecimal("0.25"))
             coEvery { marketDataPort.getOptionMid(boughtContract) } returns Money(BigDecimal("0.05"))
+            coEvery { marketDataPort.getOptionMidLive(boughtContract) } returns Money(BigDecimal("0.05"))
             coEvery { marketDataPort.getUnderlyingPrice(any()) } returns Money(BigDecimal("510"))
             coEvery { orderPort.placeMarketOrder(any(), any(), any()) } returns filledOrder
 
@@ -411,7 +429,9 @@ class SpreadManagementServiceTest {
             coEvery { spreadPort.findByStatus(SpreadStatus.CLOSING) } returns listOf(closingSpread)
             coEvery { spreadPort.update(any()) } answers { firstArg() }
             coEvery { marketDataPort.getOptionMid(soldContract) } returns Money(BigDecimal("1.70"))
+            coEvery { marketDataPort.getOptionMidLive(soldContract) } returns Money(BigDecimal("1.70"))
             coEvery { marketDataPort.getOptionMid(boughtContract) } returns Money(BigDecimal("0.10"))
+            coEvery { marketDataPort.getOptionMidLive(boughtContract) } returns Money(BigDecimal("0.10"))
             coEvery { marketDataPort.getUnderlyingPrice(any()) } returns Money(BigDecimal("495"))
             coEvery { orderPort.placeMarketOrder(any(), any(), any()) } returns filledOrder
 
@@ -446,7 +466,9 @@ class SpreadManagementServiceTest {
             coEvery { spreadPort.findByStatus(SpreadStatus.CLOSING) } returns listOf(closingSpread)
             coEvery { spreadPort.update(any()) } answers { firstArg() }
             coEvery { marketDataPort.getOptionMid(soldContract) } returns Money(BigDecimal("0.90"))
+            coEvery { marketDataPort.getOptionMidLive(soldContract) } returns Money(BigDecimal("0.90"))
             coEvery { marketDataPort.getOptionMid(boughtContract) } returns Money(BigDecimal("0.10"))
+            coEvery { marketDataPort.getOptionMidLive(boughtContract) } returns Money(BigDecimal("0.10"))
             coEvery { marketDataPort.getUnderlyingPrice(any()) } returns Money(BigDecimal("500"))
             coEvery { orderPort.placeMarketOrder(any(), any(), any()) } returns filledOrder
 
@@ -501,7 +523,9 @@ class SpreadManagementServiceTest {
             coEvery { spreadPort.update(any()) } answers { firstArg() }
             // sold leg is worthless; bought leg has some remaining value
             coEvery { marketDataPort.getOptionMid(soldContract) } returns Money(BigDecimal("0.00"))
+            coEvery { marketDataPort.getOptionMidLive(soldContract) } returns Money(BigDecimal("0.00"))
             coEvery { marketDataPort.getOptionMid(boughtContract) } returns Money(BigDecimal("0.05"))
+            coEvery { marketDataPort.getOptionMidLive(boughtContract) } returns Money(BigDecimal("0.05"))
             coEvery { marketDataPort.getUnderlyingPrice(any()) } returns Money(BigDecimal("490"))
 
             buildService(spreadPort, marketDataPort, orderPort).softClose(spread.id!!)
@@ -524,7 +548,9 @@ class SpreadManagementServiceTest {
             coEvery { spreadPort.findById(spread.id!!) } returns spread
             coEvery { spreadPort.update(capture(updates)) } answers { firstArg() }
             coEvery { marketDataPort.getOptionMid(soldContract) } returns Money(BigDecimal("0.80"))
+            coEvery { marketDataPort.getOptionMidLive(soldContract) } returns Money(BigDecimal("0.80"))
             coEvery { marketDataPort.getOptionMid(boughtContract) } returns Money(BigDecimal("0.10"))
+            coEvery { marketDataPort.getOptionMidLive(boughtContract) } returns Money(BigDecimal("0.10"))
             coEvery { marketDataPort.getUnderlyingPrice(any()) } returns Money(BigDecimal("495"))
             // Order submitted but not filled
             coEvery { orderPort.placeAndAwaitFill(any(), any(), any(), any()) } returns pendingOrder
@@ -535,6 +561,58 @@ class SpreadManagementServiceTest {
             val closingState = updates.last { it.status == SpreadStatus.CLOSING }
             assertEquals(SpreadStatus.CLOSING, closingState.status)
             coVerify(exactly = 0) { orderPort.placeAndAwaitFill(boughtContract, LegAction.SELL, any(), any()) }
+        }
+
+    // -------------------------------------------------------------------------
+    // Idempotent close (C5)
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `force-close skips a leg already flat in IBKR and only closes the still-held leg`() =
+        runTest {
+            // Simulate a retry after a partial close: the bought (long) leg already filled, so only
+            // the sold (short) leg remains. The close must NOT re-fire the bought leg (which would
+            // open an unintended opposite position) — it should only buy back the still-open short.
+            val spread = buildOpenSpread()
+            val spreadPort = mockk<SpreadPort>()
+            val marketDataPort = mockk<MarketDataPort>()
+            val orderPort = mockk<OrderPort>()
+
+            coEvery { spreadPort.findById(spread.id!!) } returns spread
+            coEvery { spreadPort.update(any()) } answers { firstArg() }
+            coEvery { marketDataPort.getOptionMid(soldContract) } returns Money(BigDecimal("0.20"))
+            coEvery { marketDataPort.getOptionMid(boughtContract) } returns Money(BigDecimal("0.05"))
+            coEvery { marketDataPort.getUnderlyingPrice(any()) } returns Money(BigDecimal("495"))
+
+            // Only the sold strike is still held; placing its buy-back clears it so verification passes.
+            val heldStrikes = mutableSetOf(soldContract.strike)
+            val positionsPort =
+                object : cz.solvina.options.domain.features.account.PositionsPort {
+                    override suspend fun getPositions() =
+                        heldStrikes.map { strike ->
+                            cz.solvina.options.domain.features.account.AccountPosition(
+                                account = "DU1",
+                                symbol = symbol.value,
+                                secType = "OPT",
+                                currency = "USD",
+                                expiry = expiry,
+                                strike = strike,
+                                optionRight = "Put",
+                                quantity = BigDecimal("-1"),
+                                avgCost = BigDecimal.ZERO,
+                            )
+                        }
+                }
+            coEvery { orderPort.placeMarketOrder(soldContract, LegAction.BUY, any()) } coAnswers {
+                heldStrikes.remove(soldContract.strike)
+                filledOrder
+            }
+
+            buildService(spreadPort, marketDataPort, orderPort, positionsPort = positionsPort)
+                .forceClose(spread.id!!)
+
+            coVerify(exactly = 1) { orderPort.placeMarketOrder(soldContract, LegAction.BUY, any()) }
+            coVerify(exactly = 0) { orderPort.placeMarketOrder(boughtContract, LegAction.SELL, any()) }
         }
 
     // -------------------------------------------------------------------------

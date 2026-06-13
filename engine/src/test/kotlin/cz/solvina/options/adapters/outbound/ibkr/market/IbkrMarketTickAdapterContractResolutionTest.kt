@@ -62,8 +62,9 @@ class IbkrMarketTickAdapterContractResolutionTest {
             val boughtConId = 222
 
             // Cache already populated (e.g. from a prior order submission)
-            coEvery { contractCache.getOrFetchOptionConId(soldKey) } returns soldConId
-            coEvery { contractCache.getOrFetchOptionConId(boughtKey) } returns boughtConId
+            // getCachedOptionConId returns the cached value directly without fetching
+            every { contractCache.getCachedOptionConId(soldKey) } returns soldConId
+            every { contractCache.getCachedOptionConId(boughtKey) } returns boughtConId
 
             val contracts = captureContracts()
 
@@ -78,7 +79,9 @@ class IbkrMarketTickAdapterContractResolutionTest {
             val soldConId = 333
             val boughtConId = 444
 
-            // First call: cache miss → triggers fetch
+            // Cache miss: getCachedOptionConId returns null, so adapter calls getOrFetchOptionConId
+            every { contractCache.getCachedOptionConId(soldKey) } returns null
+            every { contractCache.getCachedOptionConId(boughtKey) } returns null
             coEvery { contractCache.getOrFetchOptionConId(soldKey) } returns soldConId
             coEvery { contractCache.getOrFetchOptionConId(boughtKey) } returns boughtConId
 
@@ -102,23 +105,24 @@ class IbkrMarketTickAdapterContractResolutionTest {
                     multiplier = "100",
                 )
 
-            // Fetch fails (timeout, ambiguous, etc.)
+            // Cache miss, fetch fails (timeout, ambiguous, etc.)
+            every { contractCache.getCachedOptionConId(any()) } returns null
             coEvery { contractCache.getOrFetchOptionConId(any()) } throws IllegalStateException("lookup timeout")
             every { optionParamsCache.getCached(symbol) } returns params
 
             val contracts = captureContracts()
 
-            // Should fall back to generic spec using exchange from optionParamsCache
+            // Should fall back to minimal contract spec (symbol+secType only, no exchange/tradingClass
+            // as they can cause error 200 "not found" for US options)
             assertEquals(0, contracts.first.conid())
             assertEquals("ASML", contracts.first.symbol())
             assertEquals("OPT", contracts.first.secType().toString())
-            assertEquals("EUREX", contracts.first.exchange())
-            assertEquals("OES", contracts.first.tradingClass())
         }
 
     @Test
     fun `cache miss fetch fails with no cached params - falls back to instrument def exchange`() =
         runTest {
+            every { contractCache.getCachedOptionConId(any()) } returns null
             coEvery { contractCache.getOrFetchOptionConId(any()) } throws IllegalStateException("timeout")
             every { optionParamsCache.getCached(symbol) } returns null
 

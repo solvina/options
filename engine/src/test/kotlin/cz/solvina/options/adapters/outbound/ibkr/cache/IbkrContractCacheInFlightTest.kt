@@ -7,7 +7,7 @@ import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.IbkrInstrumentsConfig
 import cz.solvina.options.adapters.outbound.ibkr.InstrumentDef
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrContractRegistry
-import cz.solvina.options.adapters.outbound.ibkr.registry.PendingContractRequest
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrIdCounter
 import cz.solvina.options.domain.models.OptionType
 import cz.solvina.options.domain.models.Symbol
 import io.mockk.every
@@ -15,14 +15,16 @@ import io.mockk.mockk
 import io.mockk.verify
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.springframework.test.util.ReflectionTestUtils
 import java.math.BigDecimal
 import java.time.LocalDate
-import java.util.concurrent.ConcurrentHashMap
 import kotlin.test.assertEquals
 
 class IbkrContractCacheInFlightTest {
-    private val registry: IbkrContractRegistry = mockk()
+    private val idCounter: IbkrIdCounter = mockk(relaxed = true)
+    private val registry: IbkrContractRegistry = IbkrContractRegistry(idCounter)
     private val client: EClientSocket = mockk(relaxed = true)
     private val instrumentsConfig =
         IbkrInstrumentsConfig(
@@ -32,15 +34,17 @@ class IbkrContractCacheInFlightTest {
     private val contractFactory = IbkrContractFactory(instrumentsConfig)
     private val optionParamsCache: IbkrOptionParamsCache = mockk()
 
-    private val pendingContractDetails = ConcurrentHashMap<Int, PendingContractRequest>()
-    private val timedOutReqIds = ConcurrentHashMap.newKeySet<Int>()
-
     private val cache =
         IbkrContractCache(
             registry = registry,
             client = client,
             contractFactory = contractFactory,
         )
+
+    @BeforeEach
+    fun setUp() {
+        ReflectionTestUtils.setField(cache, "optionParamsCache", optionParamsCache)
+    }
 
     private val symbol = Symbol("ASML")
     private val expiry = LocalDate.of(2026, 7, 17)
@@ -50,15 +54,12 @@ class IbkrContractCacheInFlightTest {
     fun `concurrent fetch same key - only one reqContractDetails issued`() =
         runTest {
             var reqIdCounter = 10
-            every { registry.nextReqId() } answers { reqIdCounter++ }
-            every { registry.pendingContractDetails } returns pendingContractDetails
-            every { registry.timedOutReqIds } returns timedOutReqIds
             every { optionParamsCache.getCached(symbol) } returns null
 
             // Simulate IBKR responding to the first reqContractDetails
             every { client.reqContractDetails(any(), any()) } answers {
                 val reqId = firstArg<Int>()
-                val pending = pendingContractDetails[reqId] ?: return@answers
+                val pending = registry.pendingContractDetails[reqId] ?: return@answers
                 val contractDetails = mockk<ContractDetails>()
                 val contract = mockk<Contract>()
                 every { contract.strike() } returns 1360.0
@@ -86,15 +87,11 @@ class IbkrContractCacheInFlightTest {
     @Test
     fun `second call after first completes uses cached result - no network call`() =
         runTest {
-            var reqIdCounter = 20
-            every { registry.nextReqId() } answers { reqIdCounter++ }
-            every { registry.pendingContractDetails } returns pendingContractDetails
-            every { registry.timedOutReqIds } returns timedOutReqIds
             every { optionParamsCache.getCached(symbol) } returns null
 
             every { client.reqContractDetails(any(), any()) } answers {
                 val reqId = firstArg<Int>()
-                val pending = pendingContractDetails[reqId] ?: return@answers
+                val pending = registry.pendingContractDetails[reqId] ?: return@answers
                 val contractDetails = mockk<ContractDetails>()
                 val contract = mockk<Contract>()
                 every { contract.strike() } returns 1360.0
