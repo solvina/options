@@ -24,8 +24,10 @@ data class ScannerConfig(
     val minCreditPerShare: BigDecimal = BigDecimal("0.30"),
     val maxRiskPercent: Double = 0.025,
     val maxOpenSpreads: Int = 5,
-    // Fees: IBKR charges per contract; 2 legs × feePerContract / 100 = fee per share
+    // Fees: IBKR charges per contract; 2 legs × feePerContract / contractMultiplier = fee per share
     val feePerContract: BigDecimal = BigDecimal("0.65"),
+    // Shares per option contract (US equity options = 100); used to convert per-contract → per-share
+    val contractMultiplier: BigDecimal = BigDecimal("100"),
     // Exit rules
     val takeProfitPercent: Double = 0.50,
     val stopLossPercent: Double = 0.50,

@@ -9,6 +9,7 @@ import cz.solvina.options.domain.features.order.LegAction
 import cz.solvina.options.domain.features.order.LegQuotes
 import cz.solvina.options.domain.features.order.OrderExecutionPort
 import cz.solvina.options.domain.features.order.OrderStatus
+import cz.solvina.options.domain.features.order.StrandedLongLegException
 import cz.solvina.options.domain.features.scanner.ScannerConfig
 import cz.solvina.options.domain.features.spread.SpreadPort
 import cz.solvina.options.domain.features.spread.model.BullPutSpread
@@ -25,6 +26,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -185,6 +187,28 @@ class TradeExecutionService(
                     legQuotes = legQuotes,
                 )
             }.getOrElse { e ->
+                if (e is StrandedLongLegException) {
+                    // Leg-by-leg: protective LONG filled but SHORT did not (auto-unwind off). A bounded
+                    // long-debit position is open — never a naked short. Record it as BROKEN_LONG_ONLY
+                    // (retaining the long order id) so it is tracked and surfaced for manual handling,
+                    // instead of being silently swallowed as a generic rejection.
+                    logger.error(e) {
+                        "[${request.underlyingSymbol}] STRANDED LONG (longOrderId=${e.longOrderId}) — protective " +
+                            "long filled, short did not; recording BROKEN_LONG_ONLY for manual handling"
+                    }
+                    spreadPort.update(
+                        pendingSpread.copy(
+                            boughtLeg = pendingSpread.boughtLeg.copy(orderId = e.longOrderId),
+                            status = SpreadStatus.BROKEN_LONG_ONLY,
+                            closeReason = "broken_long_only: ${e.message}",
+                        ),
+                    )
+                    tradeLogger.warn {
+                        "BROKEN_LONG_ONLY ${request.underlyingSymbol}  ${request.boughtContract.strike}P" +
+                            "  long_order=${e.longOrderId}  reason=${e.message}"
+                    }
+                    return TradeExecutionResult(ExecutionOutcome.BROKEN_LONG_ONLY, comboOrderId = e.longOrderId)
+                }
                 logger.error(e) { "[${request.underlyingSymbol}] Failed to submit order" }
                 spreadPort.update(pendingSpread.copy(status = SpreadStatus.CLOSED_REJECTED, closeReason = "order_rejected: ${e.message}"))
                 return TradeExecutionResult(ExecutionOutcome.ORDER_REJECTED)
@@ -255,9 +279,22 @@ class TradeExecutionService(
                     when (event) {
                         is ExecutionEvent.Fill -> {
                             if (event.orderId != currentOrderId) {
-                                // Stale fill from a previously cancelled-and-replaced order
+                                if (event.status == OrderStatus.FILLED) {
+                                    // A previously laddered/replaced order actually filled before we
+                                    // moved on. Honor it instead of discarding — otherwise a real
+                                    // position goes untracked (E4). Credit is recorded at the current
+                                    // ladder step (conservative: the older order's credit was >= this).
+                                    logger.warn {
+                                        "[${request.underlyingSymbol}] Stale order ${event.orderId} reports FILLED " +
+                                            "(current=$currentOrderId) — honoring it as the fill"
+                                    }
+                                    currentOrderId = event.orderId
+                                    outcome = ExecutionOutcome.FILLED
+                                    break
+                                }
+                                // Non-fill terminal state on a replaced order — safe to ignore.
                                 logger.debug {
-                                    "[${request.underlyingSymbol}] Ignoring stale fill " +
+                                    "[${request.underlyingSymbol}] Ignoring stale ${event.status} " +
                                         "for orderId=${event.orderId} (current=$currentOrderId)"
                                 }
                                 continue
@@ -340,8 +377,11 @@ class TradeExecutionService(
         }
 
         if (outcome == ExecutionOutcome.FILLED) {
-            // Deduct entry fees (2 legs × feePerContract / 100 = fee per share)
-            val feePerShare = config.feePerContract.multiply(BigDecimal("2")).divide(BigDecimal("100"))
+            // Deduct entry fees (2 legs × feePerContract / contractMultiplier = fee per share)
+            val feePerShare =
+                config.feePerContract
+                    .multiply(BigDecimal("2"))
+                    .divide(config.contractMultiplier, 6, RoundingMode.HALF_UP)
             val netCredit = currentCredit.subtract(feePerShare).setScale(4, RoundingMode.HALF_UP)
             spreadPort.update(
                 pendingSpread.copy(
@@ -444,94 +484,79 @@ class TradeExecutionService(
                     request.soldContract,
                     request.boughtContract,
                 )
-            var freshCredit: BigDecimal? = null
-            var freshTick: SpreadCreditTick? = null
-            var error: QuoteFreshnessResult? = null
 
             logger.info { "[${request.underlyingSymbol}] calculateFreshCredit: waiting up to 3s for first tick" }
-            withTimeout(3_000L) {
-                stream.collect { tick ->
-                    if (freshCredit != null || error != null) return@collect // Already processed first tick
+            // streamSpreadCredit is a hot callbackFlow that never completes. Take the FIRST usable
+            // tick and break — do NOT collect-with-timeout (that always hits the 3s timeout and
+            // discards the computed credit). The timeout bounds the wait for that first tick only.
+            val tick = withTimeout(3_000L) { stream.first() }
 
-                    logger.info {
-                        "[${request.underlyingSymbol}] calculateFreshCredit: received tick " +
-                            "sold=${tick.soldBid}/${tick.soldAsk} bought=${tick.boughtBid}/${tick.boughtAsk} net=${tick.netCredit}"
-                    }
-
-                    // Use bid side for entry: short leg's bid minus long leg's ask (widest spread, safest)
-                    val bidCredit =
-                        (tick.soldBid - tick.boughtAsk)
-                            .toBigDecimal()
-                            .setScale(4, RoundingMode.HALF_UP)
-
-                    // Also check mid to measure how much the market has moved
-                    val soldMid = (tick.soldBid + tick.soldAsk) / 2.0
-                    val boughtMid = (tick.boughtBid + tick.boughtAsk) / 2.0
-                    val currentMid =
-                        (soldMid - boughtMid)
-                            .toBigDecimal()
-                            .setScale(4, RoundingMode.HALF_UP)
-
-                    val priceDrift = (currentMid - request.targetCredit).abs()
-
-                    logger.info {
-                        "[${request.underlyingSymbol}] calculateFreshCredit: analysis " +
-                            "bidCredit=\$$bidCredit currentMid=\$$currentMid target=\$${request.targetCredit} " +
-                            "drift=\$$priceDrift"
-                    }
-
-                    if (priceDrift > BigDecimal("0.10")) {
-                        // Market moved more than $0.10 — safety abort
-                        val percent = "%.1f".format(priceDrift / request.targetCredit.max(BigDecimal("0.01")) * BigDecimal("100"))
-                        logger.warn {
-                            "[${request.underlyingSymbol}] Market moved too far: " +
-                                "scanner=\$${request.targetCredit} current-mid=\$$currentMid " +
-                                "drift=\$$priceDrift ($percent%)"
-                        }
-                        error =
-                            QuoteFreshnessResult(
-                                outcome = ExecutionOutcome.MARKET_MOVED_TOO_FAR,
-                                message =
-                                    "[${request.underlyingSymbol}] Market moved " +
-                                        "\$$priceDrift from target; aborting to prevent bad order",
-                            )
-                        return@collect
-                    }
-
-                    // Use bid side if available, but don't go below floor
-                    freshCredit = bidCredit.coerceAtLeast(request.floorCredit)
-                    freshTick = tick // Retain fresh per-leg NBBO for leg-by-leg pricing (LegQuotes)
-
-                    logger.info {
-                        "[${request.underlyingSymbol}] Fresh quotes: mid=\$$currentMid bid=\$$bidCredit floor=\$${request.floorCredit} " +
-                            "using=\$$freshCredit"
-                    }
-                }
+            logger.info {
+                "[${request.underlyingSymbol}] calculateFreshCredit: received tick " +
+                    "sold=${tick.soldBid}/${tick.soldAsk} bought=${tick.boughtBid}/${tick.boughtAsk} net=${tick.netCredit}"
             }
 
-            if (error != null) {
-                Triple(BigDecimal.ZERO, error, null)
-            } else if (freshCredit != null) {
-                Triple(freshCredit!!, null, freshTick)
-            } else {
-                Triple(
+            // Use bid side for entry: short leg's bid minus long leg's ask (widest spread, safest)
+            val bidCredit =
+                (tick.soldBid - tick.boughtAsk)
+                    .toBigDecimal()
+                    .setScale(4, RoundingMode.HALF_UP)
+
+            // Also check mid to measure how much the market has moved
+            val soldMid = (tick.soldBid + tick.soldAsk) / 2.0
+            val boughtMid = (tick.boughtBid + tick.boughtAsk) / 2.0
+            val currentMid =
+                (soldMid - boughtMid)
+                    .toBigDecimal()
+                    .setScale(4, RoundingMode.HALF_UP)
+
+            val priceDrift = (currentMid - request.targetCredit).abs()
+
+            logger.info {
+                "[${request.underlyingSymbol}] calculateFreshCredit: analysis " +
+                    "bidCredit=\$$bidCredit currentMid=\$$currentMid target=\$${request.targetCredit} " +
+                    "drift=\$$priceDrift"
+            }
+
+            if (priceDrift > BigDecimal("0.10")) {
+                // Market moved more than $0.10 — safety abort
+                val percent = "%.1f".format(priceDrift / request.targetCredit.max(BigDecimal("0.01")) * BigDecimal("100"))
+                logger.warn {
+                    "[${request.underlyingSymbol}] Market moved too far: " +
+                        "scanner=\$${request.targetCredit} current-mid=\$$currentMid " +
+                        "drift=\$$priceDrift ($percent%)"
+                }
+                return Triple(
                     BigDecimal.ZERO,
                     QuoteFreshnessResult(
                         outcome = ExecutionOutcome.MARKET_MOVED_TOO_FAR,
-                        message = "[${request.underlyingSymbol}] No market data tick received in 3s",
+                        message =
+                            "[${request.underlyingSymbol}] Market moved " +
+                                "\$$priceDrift from target; aborting to prevent bad order",
                     ),
                     null,
                 )
             }
+
+            // Use bid side if available, but don't go below floor.
+            // Retain the fresh per-leg NBBO for leg-by-leg pricing (LegQuotes).
+            val freshCredit = bidCredit.coerceAtLeast(request.floorCredit)
+            logger.info {
+                "[${request.underlyingSymbol}] Fresh quotes: mid=\$$currentMid bid=\$$bidCredit floor=\$${request.floorCredit} " +
+                    "using=\$$freshCredit"
+            }
+            Triple(freshCredit, null, tick)
         } catch (e: TimeoutCancellationException) {
             Triple(
                 BigDecimal.ZERO,
                 QuoteFreshnessResult(
                     outcome = ExecutionOutcome.MARKET_MOVED_TOO_FAR,
-                    message = "[${request.underlyingSymbol}] Quote fetch timeout",
+                    message = "[${request.underlyingSymbol}] No market data tick received in 3s",
                 ),
                 null,
             )
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             logger.warn(e) {
                 "[${request.underlyingSymbol}] Error fetching fresh quotes; aborting entry"
@@ -551,14 +576,6 @@ class TradeExecutionService(
         val outcome: ExecutionOutcome,
         val message: String,
     )
-
-    private class StaleQuoteException(
-        val current: BigDecimal,
-        val target: BigDecimal,
-        val drift: BigDecimal,
-    ) : Exception()
-
-    private class ValidQuoteException : Exception()
 
     // -------------------------------------------------------------------------
     // Internal event types

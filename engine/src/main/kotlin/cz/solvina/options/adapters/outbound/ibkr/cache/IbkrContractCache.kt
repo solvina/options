@@ -10,15 +10,20 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.job
 import kotlinx.coroutines.withTimeout
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.context.annotation.Lazy
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
+import java.time.Duration
+import java.time.Instant
 import java.time.LocalDate
 import java.util.TreeSet
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
+import kotlin.math.abs
 
 private val logger = KotlinLogging.logger {}
 
@@ -33,7 +38,15 @@ class IbkrContractCache(
     private val underlyingConIds = ConcurrentHashMap<Symbol, Int>()
     private val optionConIds = ConcurrentHashMap<OptionContractKey, Int>()
     private val inFlightOptionConIds = ConcurrentHashMap<OptionContractKey, Deferred<Int>>()
-    private val missingContracts = ConcurrentHashMap.newKeySet<OptionContractKey>()
+
+    // Negative cache: a key maps to WHEN it was last marked missing. Time-boxed so a single
+    // transient/incomplete IBKR response doesn't block the contract for the rest of the day (E5).
+    private val missingContracts = ConcurrentHashMap<OptionContractKey, Instant>()
+    private val missingContractTtl: Duration = Duration.ofMinutes(10)
+
+    // Strikes round-trip through Double via the IBKR API; compare with a tolerance rather than `==`
+    // so e.g. 412.5 never mismatches itself (E7).
+    private val strikeEpsilon = 1e-4
 
     private data class VerifiedKey(
         val symbol: Symbol,
@@ -76,17 +89,28 @@ class IbkrContractCache(
 
     suspend fun getOrFetchOptionConId(key: OptionContractKey): Int {
         optionConIds[key]?.let { return it }
-        if (key in missingContracts) error("No option contract found for $key (cached miss)")
-
-        // If another coroutine is already fetching this contract, piggyback on its result.
-        inFlightOptionConIds[key]?.let { return it.await() }
+        if (isMissing(key)) error("No option contract found for $key (cached miss)")
 
         evictExpired()
 
         logger.debug { "[$key] Fetching option conId" }
         val resultDeferred = CompletableDeferred<Int>()
-        // Register before issuing the network call so concurrent callers see it immediately.
-        inFlightOptionConIds[key] = resultDeferred
+        // Atomically claim the in-flight slot. If another coroutine is already fetching this key,
+        // piggyback on its result instead of issuing a duplicate IBKR request (E6).
+        inFlightOptionConIds.putIfAbsent(key, resultDeferred)?.let { return it.await() }
+        // Defence against external cancellation (e.g. an aggressive caller-side withTimeout): if this
+        // lookup is cancelled before it completes the deferred on its own, clear the in-flight entry and
+        // fail the deferred so piggybacking callers don't await a value that will never arrive.
+        currentCoroutineContext().job.invokeOnCompletion { cause ->
+            if (cause != null) {
+                inFlightOptionConIds.remove(key, resultDeferred)
+                if (!resultDeferred.isCompleted) {
+                    resultDeferred.completeExceptionally(
+                        IllegalStateException("Option conId fetch for $key was cancelled before completion"),
+                    )
+                }
+            }
+        }
 
         val reqId = registry.nextReqId()
         val deferred = CompletableDeferred<List<com.ib.client.ContractDetails>>()
@@ -145,14 +169,14 @@ class IbkrContractCache(
 
         val cachedStrikesForExpiry = optionParamsCache.getCached(key.symbol)?.strikesByExpiry?.get(key.expiry)
         cachedStrikesForExpiry?.forEach { cachedStrike ->
-            if (cachedStrike.toDouble() !in actualStrikesForExpiry) {
-                missingContracts.add(OptionContractKey(key.symbol, key.expiry, cachedStrike, key.optionType))
+            if (actualStrikesForExpiry.none { strikesEqual(it, cachedStrike.toDouble()) }) {
+                missingContracts[OptionContractKey(key.symbol, key.expiry, cachedStrike, key.optionType)] = Instant.now()
             }
         }
 
         val conId =
             details
-                .filter { it.contract().strike() == key.strike.toDouble() }
+                .filter { strikesEqual(it.contract().strike(), key.strike.toDouble()) }
                 .let { matching ->
                     // Prefer the primary series (matching exchange and tradingClass from secDefOptParams)
                     matching.firstOrNull { d ->
@@ -164,7 +188,7 @@ class IbkrContractCache(
                 ?: run {
                     val available = details.map { it.contract().strike() }.toSortedSet()
                     logger.warn { "[$key] Strike not found. Available strikes for this expiry: $available" }
-                    missingContracts.add(key)
+                    missingContracts[key] = Instant.now()
                     val msg = "No option contract found for $key (got ${details.size} results)"
                     inFlightOptionConIds.remove(key)
                     resultDeferred.completeExceptionally(IllegalStateException(msg))
@@ -178,7 +202,13 @@ class IbkrContractCache(
         return conId
     }
 
-    fun isMissing(key: OptionContractKey): Boolean = key in missingContracts
+    fun isMissing(key: OptionContractKey): Boolean =
+        missingContracts[key]?.let { Duration.between(it, Instant.now()) < missingContractTtl } ?: false
+
+    private fun strikesEqual(
+        a: Double,
+        b: Double,
+    ): Boolean = abs(a - b) < strikeEpsilon
 
     fun getCachedOptionConId(key: OptionContractKey): Int? = optionConIds[key]
 
@@ -193,7 +223,7 @@ class IbkrContractCache(
     private fun evictExpired() {
         val today = LocalDate.now()
         optionConIds.keys.removeIf { it.expiry.isBefore(today) }
-        missingContracts.removeIf { it.expiry.isBefore(today) }
+        missingContracts.keys.removeIf { it.expiry.isBefore(today) }
         verifiedStrikes.keys.removeIf { it.expiry.isBefore(today) }
     }
 }

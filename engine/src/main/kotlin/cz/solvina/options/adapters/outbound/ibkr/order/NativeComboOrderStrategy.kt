@@ -15,7 +15,6 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.withTimeout
 import java.math.BigDecimal
-import java.math.RoundingMode
 
 private val logger = KotlinLogging.logger {}
 
@@ -55,7 +54,9 @@ class NativeComboOrderStrategy(
         }
 
         return try {
-            // Build native combo contract with fast fetch (100ms timeout)
+            // Build native combo contract. 6s > the cache's own 5s network timeout so the cache
+            // governs the lookup and cleans up its own in-flight state (a sub-second timeout here
+            // cancels the cache mid-lookup and used to orphan its in-flight deferred — see E3).
             val soldKey =
                 OptionContractKey(
                     symbol = soldContract.symbol,
@@ -72,14 +73,14 @@ class NativeComboOrderStrategy(
                 )
             val soldConId =
                 try {
-                    withTimeout(100L) { contractCache.getOrFetchOptionConId(soldKey) }
+                    withTimeout(6_000L) { contractCache.getOrFetchOptionConId(soldKey) }
                 } catch (e: Exception) {
                     contractCache.getCachedOptionConId(soldKey)
                         ?: error("Sold contract not in cache and lookup timed out for $soldKey")
                 }
             val boughtConId =
                 try {
-                    withTimeout(100L) { contractCache.getOrFetchOptionConId(boughtKey) }
+                    withTimeout(6_000L) { contractCache.getOrFetchOptionConId(boughtKey) }
                 } catch (e: Exception) {
                     contractCache.getCachedOptionConId(boughtKey)
                         ?: error("Bought contract not in cache and lookup timed out for $boughtKey")
@@ -103,6 +104,15 @@ class NativeComboOrderStrategy(
                 }
 
             val orderId = registry.nextOrderId()
+            if (orderId == 0) {
+                // Order-id sequence not yet seeded by IBKR — submitting with id 0 would be invalid (E10).
+                logger.error { "[$exchangeId] nextOrderId returned 0 — order id sequence not ready, cannot submit" }
+                return OrderSubmissionResult(
+                    status = SubmissionStatus.SYSTEM_ERROR,
+                    primaryOrderId = 0,
+                    message = "Order id sequence not ready (nextOrderId=0)",
+                )
+            }
             val deferred = CompletableDeferred<OrderStatus>()
             registry.pendingOrderStatus[orderId] = deferred
 
@@ -187,12 +197,9 @@ class NativeComboOrderStrategy(
                 exchange(exchangeId)
             }
 
-        // Determine currency based on exchange
-        val currency =
-            when (exchangeId) {
-                "EUREX", "DTB" -> "EUR"
-                else -> "USD"
-            }
+        // Native combo is only routed to US exchanges (CBOE/ISE/AMEX/SMART), so currency is always
+        // USD (the EUREX/DTB path uses LegByLegOrderStrategy) — X2.
+        val currency = "USD"
 
         return Contract().apply {
             symbol("") // Empty for BAG orders
@@ -202,10 +209,4 @@ class NativeComboOrderStrategy(
             comboLegs(listOf(soldLeg, boughtLeg))
         }
     }
-}
-
-/** Floor-rounds a credit amount to the IBKR minimum price variation grid ($0.01 below $3, $0.05 at or above $3). */
-private fun BigDecimal.floorToTick(): BigDecimal {
-    val tick = if (this < BigDecimal("3.00")) BigDecimal("0.01") else BigDecimal("0.05")
-    return divide(tick, 0, RoundingMode.FLOOR).multiply(tick)
 }

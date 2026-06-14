@@ -62,7 +62,10 @@ data class OrderSubmissionResult(
 )
 
 enum class SubmissionStatus {
-    SUCCESS, // Order(s) submitted successfully
+    // Order(s) accepted. NOTE the semantics differ by strategy (E11): native combo returns SUCCESS
+    // on SUBMISSION (the fill is awaited later via the returned order id); leg-by-leg returns SUCCESS
+    // only once BOTH legs are confirmed FILLED. See submitSpreadOrder KDoc.
+    SUCCESS,
     REJECTED, // Exchange rejected before submission
     LIQUIDITY_FAILED, // Insufficient liquidity for matching (EUREX leg-in)
     STRANDED_LONG, // Leg-by-leg: protective LONG filled, SHORT did not, auto-unwind off — long left open

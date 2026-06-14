@@ -4,8 +4,6 @@ import com.ib.client.EClientSocket
 import com.ib.client.OrderCancel
 import cz.solvina.options.adapters.outbound.ibkr.IbkrInstrumentsConfig
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOpenOrdersAdapter
-import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
-import cz.solvina.options.adapters.outbound.ibkr.cache.OptionContractKey
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import cz.solvina.options.domain.features.order.LegQuotes
 import cz.solvina.options.domain.features.order.OrderExecutionPort
@@ -25,7 +23,6 @@ private val logger = KotlinLogging.logger {}
 class IbkrOrderExecutionAdapter(
     private val registry: IbkrOrderRegistry,
     private val client: EClientSocket,
-    private val contractCache: IbkrContractCache,
     private val openOrdersAdapter: IbkrOpenOrdersAdapter,
     private val strategyRouter: ExchangeStrategyRouter,
     private val reconciliationService: PositionReconciliationService,
@@ -152,14 +149,4 @@ class IbkrOrderExecutionAdapter(
             .getOrDefault(emptyList())
             .map { Symbol(it.symbol) }
             .toSet()
-
-    private suspend fun resolveConId(contract: OptionContract): Int =
-        contractCache.getOrFetchOptionConId(
-            OptionContractKey(
-                symbol = contract.symbol,
-                expiry = contract.expiry,
-                strike = contract.strike,
-                optionType = contract.type,
-            ),
-        )
 }

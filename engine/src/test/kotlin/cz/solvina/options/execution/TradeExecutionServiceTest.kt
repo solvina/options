@@ -25,6 +25,7 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -145,6 +146,42 @@ class TradeExecutionServiceTest {
             val result = service.execute(buildRequest(targetCredit = BigDecimal("1.00")))
 
             assertEquals(ExecutionOutcome.FILLED, result.outcome)
+            assertNotNull(result.comboOrderId)
+        }
+
+    @Test
+    fun `fills when the credit stream is hot and never completes (E1 regression)`() =
+        runTest {
+            // The production credit stream is a callbackFlow — it emits continuously and NEVER
+            // completes. The other tests use a finite `flow { emit() }`, so the collect inside
+            // calculateFreshCredit returns on its own and the bug is hidden. This stub mirrors
+            // production: one usable tick at the target credit, then it stays open forever.
+            //
+            // E1: calculateFreshCredit collects this hot flow inside withTimeout(3s) without
+            // breaking after the first tick, so the timeout always fires and the freshly computed
+            // credit is discarded → the entry aborts with MARKET_MOVED_TOO_FAR and no order is
+            // ever submitted. With the fix (first()/break) the first tick yields the credit and
+            // the entry proceeds to FILLED.
+            val fillChannel = Channel<OrderStatus>(1)
+
+            val service =
+                buildService(
+                    marketTickPort = fixedMarketTickPort(500.0, hotTickFlowAtCredit(1.00)),
+                    orderExecutionPort =
+                        immediateComboOrderPort(fillChannel) { _, _, _ ->
+                            fillChannel.send(OrderStatus.FILLED)
+                        },
+                )
+
+            val result = service.execute(buildRequest(targetCredit = BigDecimal("1.00")))
+
+            assertEquals(
+                ExecutionOutcome.FILLED,
+                result.outcome,
+                "A hot (never-completing) credit stream emitting a usable tick must still submit and " +
+                    "fill. MARKET_MOVED_TOO_FAR here means E1 is present: the computed credit was " +
+                    "discarded when the 3s freshness timeout fired on the never-completing collect.",
+            )
             assertNotNull(result.comboOrderId)
         }
 
@@ -734,6 +771,28 @@ class TradeExecutionServiceTest {
                     netCredit = soldMid - boughtMid,
                 ),
             )
+        }
+    }
+
+    /**
+     * Like [tickFlowAtCredit] but mirrors the production credit stream (a callbackFlow): it emits
+     * one usable tick and then never completes. Used to exercise E1, where calculateFreshCredit
+     * must break after the first tick instead of letting the freshness timeout fire.
+     */
+    private fun hotTickFlowAtCredit(targetCredit: Double): Flow<SpreadCreditTick> {
+        val soldMid = targetCredit + 0.50
+        val boughtMid = 0.50
+        return flow {
+            emit(
+                SpreadCreditTick(
+                    soldBid = soldMid,
+                    soldAsk = soldMid,
+                    boughtBid = boughtMid,
+                    boughtAsk = boughtMid,
+                    netCredit = soldMid - boughtMid,
+                ),
+            )
+            awaitCancellation()
         }
     }
 

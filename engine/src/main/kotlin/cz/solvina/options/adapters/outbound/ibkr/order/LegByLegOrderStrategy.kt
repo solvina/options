@@ -18,7 +18,6 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
 import java.math.BigDecimal
-import java.math.RoundingMode
 
 private val logger = KotlinLogging.logger {}
 
@@ -121,6 +120,9 @@ class LegByLegOrderStrategy(
             logger.info {
                 "[$exchangeId] SUCCESS: both legs filled — LONG=$longOrderId SHORT=$shortOrderId (verified spread)"
             }
+            // The LONG leg's fill deferred is no longer needed — the caller consumes only the
+            // SHORT (primary) order id. Drop it so pendingOrderStatus doesn't leak an entry (E8).
+            registry.pendingOrderStatus.remove(longOrderId)
             OrderSubmissionResult(
                 status = SubmissionStatus.SUCCESS,
                 primaryOrderId = shortOrderId,
@@ -147,6 +149,9 @@ class LegByLegOrderStrategy(
         legQuotes: LegQuotes?,
         reason: String,
     ): OrderSubmissionResult {
+        // The LONG leg's fill deferred won't be awaited further on this path (no success handoff);
+        // drop it so pendingOrderStatus doesn't leak (E8).
+        registry.pendingOrderStatus.remove(longOrderId)
         if (unwindStrandedLongLeg) {
             val sellBack = legQuotes?.boughtBid?.floorToTick()?.coerceAtLeast(BigDecimal("0.01")) ?: BigDecimal("0.01")
             logger.error {
@@ -191,6 +196,8 @@ class LegByLegOrderStrategy(
     private fun cancelQuietly(orderId: Int) {
         runCatching { client.cancelOrder(orderId, com.ib.client.OrderCancel()) }
             .onFailure { e -> logger.warn(e) { "[$exchangeId] Failed to cancel order $orderId" } }
+        // Abandoned leg — drop its fill deferred so pendingOrderStatus doesn't leak (E8).
+        registry.pendingOrderStatus.remove(orderId)
     }
 
     override fun validateOrder(
@@ -233,7 +240,10 @@ class LegByLegOrderStrategy(
                 )
             val conId =
                 try {
-                    withTimeout(100L) { contractCache.getOrFetchOptionConId(key) }
+                    // 6s > the cache's own 5s network timeout, so the cache governs and cleans up its
+                    // own in-flight state. (A sub-second timeout here cancels the cache mid-lookup and
+                    // used to orphan its in-flight deferred — see E3.)
+                    withTimeout(6_000L) { contractCache.getOrFetchOptionConId(key) }
                 } catch (e: Exception) {
                     contractCache.getCachedOptionConId(key)
                         ?: error("Contract not in cache and lookup timed out for $key")
@@ -293,18 +303,4 @@ class LegByLegOrderStrategy(
             ?.soldBid
             ?.floorToTick()
             ?: (netCredit.amount * shortLegCreditPct).floorToTick()
-}
-
-private fun tickFor(price: BigDecimal): BigDecimal = if (price < BigDecimal("3.00")) BigDecimal("0.01") else BigDecimal("0.05")
-
-/** Floor-rounds a price to the IBKR minimum price variation grid ($0.01 below $3, $0.05 at or above $3). */
-private fun BigDecimal.floorToTick(): BigDecimal {
-    val tick = tickFor(this)
-    return divide(tick, 0, RoundingMode.FLOOR).multiply(tick)
-}
-
-/** Ceil-rounds a price to the IBKR minimum price variation grid — used to keep BUY limits marketable. */
-private fun BigDecimal.ceilToTick(): BigDecimal {
-    val tick = tickFor(this)
-    return divide(tick, 0, RoundingMode.CEILING).multiply(tick)
 }
