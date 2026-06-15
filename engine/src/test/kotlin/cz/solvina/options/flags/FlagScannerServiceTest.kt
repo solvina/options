@@ -1,12 +1,18 @@
 package cz.solvina.options.flags
 
+import ch.qos.logback.classic.Level
+import ch.qos.logback.classic.Logger
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
 import cz.solvina.options.domain.features.bars.BarStorePort
 import cz.solvina.options.domain.features.bars.EquityHistoricalBarsPort
+import cz.solvina.options.domain.features.bars.FiveMinuteBar
 import cz.solvina.options.domain.features.bars.RealTimeBarsPort
 import cz.solvina.options.domain.features.flag.FlagExecutionService
 import cz.solvina.options.domain.features.flag.FlagManagementService
 import cz.solvina.options.domain.features.flag.FlagPort
 import cz.solvina.options.domain.features.flag.FlagScannerService
+import cz.solvina.options.domain.features.flag.PatternDetector
 import cz.solvina.options.domain.features.flag.config.FlagStrategyConfig
 import cz.solvina.options.domain.features.flag.config.FlagTradingConfig
 import cz.solvina.options.domain.features.flag.config.FlagTradingConfigPort
@@ -22,10 +28,12 @@ import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
+import org.slf4j.LoggerFactory
 import java.time.Clock
 import java.time.Instant
 import java.time.LocalTime
 import java.time.ZoneId
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -99,6 +107,7 @@ class FlagScannerServiceTest {
     private fun buildService(
         universePort: UniversePort = defaultUniversePort,
         clock: Clock = Clock.systemUTC(),
+        config: FlagStrategyConfig = strategyConfig,
     ) = FlagScannerService(
         realTimeBarsPort = realTimeBarsPort,
         equityHistoricalBarsPort = equityHistoricalBarsPort,
@@ -107,7 +116,7 @@ class FlagScannerServiceTest {
         flagManagementService = flagManagementService,
         flagTradingConfigPort = flagTradingConfigPort,
         barStorePort = barStorePort,
-        strategyConfig = strategyConfig,
+        strategyConfig = config,
         connectionStatusPort = mockk(relaxed = true),
         universePort = universePort,
         symbolMutexManager = mockk(relaxed = true),
@@ -264,5 +273,84 @@ class FlagScannerServiceTest {
 
             assertTrue(service.subscribeSymbol("AAPL", "US"), "First subscribe should return true")
             assertFalse(service.subscribeSymbol("AAPL", "US"), "Re-subscribe while active should return false")
+        }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Historical bootstrap replay — must feed the detector incrementally
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `bootstrap replays bars incrementally so a single pole is detected once, not on every bar`() =
+        runTest(testDispatcher) {
+            // Small detection parameters (mirrors PatternDetectorTest) so a compact, deterministic
+            // series forms exactly one flagpole that consolidates into a flag.
+            val detectConfig =
+                FlagStrategyConfig(
+                    usWatchlist = listOf("AAPL"),
+                    euWatchlist = emptyList(),
+                    atrPeriod = 3,
+                    atrMultiplier = 2.0,
+                    volumeMaPeriod = 5,
+                    volumeSpikeMultiplier = 1.5,
+                    poleMinBars = 2,
+                    poleMaxBars = 10,
+                    flagMinBars = 3,
+                    flagMaxBars = 15,
+                    maxRetracementPct = 0.50,
+                )
+
+            // 4 flat base bars → 2 pole bars (height 7, volume spike) → 3 consolidation bars.
+            // Fed incrementally this ends in FlagForming with the pole detected exactly once.
+            var t = Instant.EPOCH
+
+            fun bar(
+                open: Double,
+                high: Double,
+                low: Double,
+                close: Double,
+                volume: Long = 1_000,
+            ) = FiveMinuteBar(time = t.also { t = t.plusSeconds(300) }, open = open, high = high, low = low, close = close, volume = volume)
+
+            fun flat() = bar(100.0, 101.0, 100.0, 100.0)
+
+            val series =
+                listOf(
+                    flat(),
+                    flat(),
+                    flat(),
+                    flat(),
+                    bar(100.0, 103.0, 100.0, 103.0, volume = 3_000), // pole bar 1
+                    bar(103.0, 107.0, 103.0, 107.0, volume = 3_000), // pole bar 2 — height=7, spike
+                    bar(107.0, 107.5, 106.0, 106.5), // consol 1
+                    bar(106.5, 107.0, 106.0, 106.2), // consol 2
+                    bar(106.2, 106.8, 105.8, 106.0), // consol 3
+                )
+            coEvery { equityHistoricalBarsPort.fetch5MinBars(any(), any()) } returns series
+
+            // Capture the detector's DEBUG logs to count how often the flagpole is (re)detected.
+            val detectorLogger = LoggerFactory.getLogger(PatternDetector::class.java) as Logger
+            val appender = ListAppender<ILoggingEvent>().apply { start() }
+            val previousLevel = detectorLogger.level
+            detectorLogger.level = Level.DEBUG
+            detectorLogger.addAppender(appender)
+
+            try {
+                val service = buildService(config = detectConfig)
+                service.subscribeSymbol("AAPL", "US")
+                testDispatcher.scheduler.advanceUntilIdle()
+            } finally {
+                detectorLogger.detachAppender(appender)
+                detectorLogger.level = previousLevel
+            }
+
+            val flagpoleDetections = appender.list.count { it.formattedMessage.contains("Flagpole detected") }
+            // With incremental replay the single pole is detected once as it forms. The old
+            // addAll()-then-replay path re-detected it on every historical bar (it spun the
+            // state machine against a frozen full snapshot), producing many more detections.
+            assertEquals(
+                1,
+                flagpoleDetections,
+                "Bootstrap must replay bars incrementally — a single pole should be detected once, not re-detected per bar",
+            )
         }
 }

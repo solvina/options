@@ -25,6 +25,14 @@ An automated options/equities trading engine running two independent strategies:
 Currently running in **paper trading mode** with **live market data** on a paper IBKR account
 (paper account with a live data subscription — `use-live-market-data=true`).
 
+**The RPi is our paper-trading validation environment.** It runs the paper IBKR account
+(`DU7875979`) against live market data, so it is the place where every change is proven against
+real market behaviour before it can ever be considered for a live account. The policy is: **every
+time a consistent, self-contained change is delivered (build green, ktlint + all expected tests
+passing), deploy it to the RPi and let it validate against the live paper session.** Don't batch
+unrelated changes — deploy each coherent delivery so a regression can be traced to one change.
+See [Deployment & Validation Policy](#deployment--validation-policy) below.
+
 ---
 
 ## Filesystem Layout on the RPi
@@ -137,6 +145,24 @@ docker compose --env-file .env.rpi restart ib-gateway
 cd ~/options
 docker compose --env-file .env.rpi up -d
 ```
+
+---
+
+## Deployment & Validation Policy
+
+The RPi paper account is the validation gate for every change. The standing workflow is:
+
+1. **Make a consistent, self-contained change** — one coherent fix or feature, not a batch of
+   unrelated edits. Smaller deliveries keep paper validation attributable to a single change.
+2. **Build green** — `cd engine && ./gradlew build` must pass with ktlint and all expected tests.
+   (An intentionally-red regression test for a known-open bug must be called out, not counted.)
+3. **Commit & push** the change to `master` (`git@github.com:solvina/options.git`).
+4. **Deploy to the RPi** (see below) so it runs against the live paper session.
+5. **Validate on the RPi** — watch logs/health and confirm the change behaves as intended against
+   real market data before moving on. Only changes proven here are candidates for a live account.
+
+If you are already on the RPi, the build artifact is local — back up the current JAR, copy the new
+fat JAR into place, and restart the service (see [Deploying Only the JAR](#deploying-only-the-jar-engine-change-only)).
 
 ---
 

@@ -175,8 +175,15 @@ class FlagScannerService(
                 // Bootstrap with historical 5-min bars and replay through detector
                 runCatching {
                     val historical = equityHistoricalBarsPort.fetch5MinBars(symbol, strategyConfig.historicalBootstrapDays)
-                    buffer.addAll(historical)
-                    historical.forEach { bar -> detector.onNewBar(bar) }
+                    // Replay bars incrementally so the detector sees a growing/sliding window — exactly
+                    // as it does live (see the streamBars collector below). Pre-filling the buffer with
+                    // addAll() first makes every onNewBar() read the same full snapshot, so the same pole
+                    // is re-detected on every bar and the state machine spins pointlessly through
+                    // Idle → FlagpoleDetected → FlagForming → reset for each historical bar.
+                    historical.forEach { bar ->
+                        buffer.add(bar)
+                        detector.onNewBar(bar)
+                    }
                     logger.info {
                         "[${symbol.value}] Bootstrapped ${historical.size} historical bars — pattern state: ${detector.state.label()}"
                     }
