@@ -147,4 +147,37 @@ class IbkrContractCacheInFlightTest {
             val conId = cache.getOrFetchOptionConId(key)
             assertEquals(777_001, conId)
         }
+
+    @Test
+    fun `own 5s timeout (no IBKR response) marks the reqId timed-out and fails`() =
+        runTest {
+            every { optionParamsCache.getCached(symbol) } returns null
+            // client.reqContractDetails is a relaxed mock → IBKR never responds, deferred never completes.
+            // The lookup's OWN withTimeoutOrNull(5s) must elapse and run the teardown path.
+            val result = runCatching { cache.getOrFetchOptionConId(key) }
+
+            assertTrue(result.isFailure, "a genuine 5s timeout must fail the lookup")
+            assertTrue(
+                registry.timedOutReqIds.isNotEmpty(),
+                "its own 5s timeout must record the reqId as timed-out so late responses are discarded",
+            )
+        }
+
+    @Test
+    fun `external bounded wait does not poison the reqId as timed-out (root-cause regression)`() =
+        runTest {
+            every { optionParamsCache.getCached(symbol) } returns null
+
+            // An aggressive caller-side wait cancels the lookup before IBKR responds. This external
+            // cancellation must NOT be mislabeled as our own "5s timeout — IBKR not responding" and
+            // must NOT add the reqId to timedOutReqIds (which would discard IBKR's slightly-late
+            // response and leave the conId permanently unresolved — the original no-fills root cause).
+            val result = runCatching { withTimeout(50) { cache.getOrFetchOptionConId(key) } }
+
+            assertTrue(result.isFailure, "the external wait should cancel the lookup")
+            assertTrue(
+                registry.timedOutReqIds.isEmpty(),
+                "an external cancellation must not poison the reqId as a 5s timeout",
+            )
+        }
 }

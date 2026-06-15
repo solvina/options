@@ -16,6 +16,9 @@ import cz.solvina.options.domain.models.Symbol
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -46,6 +49,10 @@ class IbkrMarketTickAdapterContractResolutionTest {
             contractFactory = contractFactory,
             contractCache = contractCache,
             optionParamsCache = optionParamsCache,
+            // SupervisorJob (matching production) so a failed fetch surfaces only via await();
+            // Unconfined runs the detached fetch inline so resolution completes deterministically
+            // within runTest's virtual time (no real-thread dispatch).
+            conIdScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
         )
 
     private val symbol = Symbol("ASML")

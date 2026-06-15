@@ -14,11 +14,16 @@ import cz.solvina.options.domain.features.market.SpreadCreditTick
 import cz.solvina.options.domain.models.OptionContract
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
-import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.springframework.stereotype.Component
 import java.util.concurrent.atomic.AtomicReference
 
@@ -36,7 +41,14 @@ class IbkrMarketTickAdapter(
     private val contractFactory: IbkrContractFactory,
     private val contractCache: IbkrContractCache,
     private val optionParamsCache: IbkrOptionParamsCache,
+    // Independent scope for conId resolution so a bounded caller-side wait never cancels (and thus
+    // poisons) an in-flight IBKR contract lookup — a late-but-successful response still caches.
+    // Injected (the shared executionCoroutineScope bean) so it is decoupled from any caller's
+    // coroutine and overridable in tests.
+    private val conIdScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
 ) : MarketTickPort {
+    private val conIdResolveTimeoutMs = 1_500L
+
     override fun streamUnderlyingPrice(symbol: Symbol): Flow<Double> =
         callbackFlow {
             val reqId = registry.nextReqId()
@@ -139,8 +151,15 @@ class IbkrMarketTickAdapter(
                     },
                 )
 
-            val soldContract4Mkt = contractForMktData(soldContract)
-            val boughtContract4Mkt = contractForMktData(boughtContract)
+            // Resolve both leg conIds concurrently (each detached on conIdScope) before requesting
+            // market data, so data is requested with an unambiguous conId-based contract whenever the
+            // conId is known.
+            val (soldContract4Mkt, boughtContract4Mkt) =
+                coroutineScope {
+                    val s = async { contractForMktData(soldContract) }
+                    val b = async { contractForMktData(boughtContract) }
+                    s.await() to b.await()
+                }
 
             client.reqTickByTickData(soldTickReqId, soldContract4Mkt, "BidAsk", 0, true)
             client.reqTickByTickData(boughtTickReqId, boughtContract4Mkt, "BidAsk", 0, true)
@@ -178,15 +197,22 @@ class IbkrMarketTickAdapter(
         // Try cache first (instant)
         contractCache.getCachedOptionConId(key)?.let { return contractFactory.conIdContract(it) }
 
-        // Try fast fetch (100ms timeout) to populate cache if available
-        try {
-            val conId = withTimeout(100L) { contractCache.getOrFetchOptionConId(key) }
-            return contractFactory.conIdContract(conId)
-        } catch (_: TimeoutCancellationException) {
-            // Fetch timed out or failed, fall back to minimal contract spec
-        } catch (_: Exception) {
-            // Fetch failed for other reasons, fall back to minimal contract spec
-        }
+        // Resolve on an independent scope so the bounded wait below only stops *waiting* — it never
+        // cancels the IBKR lookup. The previous withTimeout(100) cancelled the fetch itself, which
+        // removed the pending request, discarded IBKR's ~250ms-late response, and left the conId
+        // permanently unresolved → ambiguous minimal-spec market data → no tick → no fill. With the
+        // fetch detached, a late-but-successful response still caches the conId for the next request.
+        val fetch = conIdScope.async { contractCache.getOrFetchOptionConId(key) }
+        val conId =
+            try {
+                // withTimeoutOrNull → null on OUR timeout; an outer-flow cancellation still propagates.
+                withTimeoutOrNull(conIdResolveTimeoutMs) { fetch.await() }
+            } catch (e: CancellationException) {
+                throw e // outer flow cancelled — propagate; the detached fetch still caches the conId
+            } catch (_: Exception) {
+                null // lookup genuinely failed (ambiguous/missing strike) — fall back to minimal spec
+            }
+        conId?.let { return contractFactory.conIdContract(it) }
 
         // Fall back to minimal contract spec (symbol+secType+currency+expiry+right only).
         // NOT adding exchange/tradingClass because it causes error 200 "not found" for US options.
