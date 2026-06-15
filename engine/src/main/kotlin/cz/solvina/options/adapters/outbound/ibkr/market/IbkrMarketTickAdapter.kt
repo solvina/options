@@ -20,7 +20,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.awaitClose
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.withTimeoutOrNull
@@ -151,15 +150,11 @@ class IbkrMarketTickAdapter(
                     },
                 )
 
-            // Resolve both leg conIds concurrently (each detached on conIdScope) before requesting
-            // market data, so data is requested with an unambiguous conId-based contract whenever the
-            // conId is known.
-            val (soldContract4Mkt, boughtContract4Mkt) =
-                coroutineScope {
-                    val s = async { contractForMktData(soldContract) }
-                    val b = async { contractForMktData(boughtContract) }
-                    s.await() to b.await()
-                }
+            // Resolve leg conIds SEQUENTIALLY (not concurrently): IBKR paces near-simultaneous
+            // reqContractDetails for the same underlying/expiry, delaying the second response by ~5s
+            // (past the lookup's timeout). One request at a time resolves in ~400ms and caches.
+            val soldContract4Mkt = contractForMktData(soldContract)
+            val boughtContract4Mkt = contractForMktData(boughtContract)
 
             client.reqTickByTickData(soldTickReqId, soldContract4Mkt, "BidAsk", 0, true)
             client.reqTickByTickData(boughtTickReqId, boughtContract4Mkt, "BidAsk", 0, true)
