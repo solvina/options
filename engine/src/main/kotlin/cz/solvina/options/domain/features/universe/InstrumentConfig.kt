@@ -6,6 +6,8 @@ import java.math.BigDecimal
 data class InstrumentConfig(
     val symbol: Symbol,
     val enabled: Boolean = true,
+    // Flag-strategy membership (intraday momentum). Independent of [enabled] (spread membership).
+    val flagEnabled: Boolean = false,
     // Entry filter overrides — null means use global ScannerConfig default
     val ivRankThreshold: Double? = null,
     val minDte: Int? = null,

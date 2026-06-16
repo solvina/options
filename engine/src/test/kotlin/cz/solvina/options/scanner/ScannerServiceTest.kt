@@ -189,6 +189,8 @@ class ScannerServiceTest {
             object : UniversePort {
                 override fun getWatchlist() = watchlist
 
+                override fun getFlagWatchlist() = emptyList<Symbol>()
+
                 override fun getActiveSymbols() = watchlist
 
                 override fun isMarketOpen(symbol: Symbol) = true

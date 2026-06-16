@@ -33,6 +33,8 @@ class UniversePersistenceAdapter(
 
     override fun getWatchlist(): List<Symbol> = cache.values.filter { it.enabled }.map { it.symbol }
 
+    override fun getFlagWatchlist(): List<Symbol> = cache.values.filter { it.flagEnabled }.map { it.symbol }
+
     override fun getActiveSymbols(): List<Symbol> = getWatchlist().filter { isMarketOpen(it) }
 
     override fun isMarketOpen(symbol: Symbol): Boolean {
@@ -86,6 +88,7 @@ class UniversePersistenceAdapter(
         InstrumentConfig(
             symbol = Symbol(symbol),
             enabled = enabled,
+            flagEnabled = flagEnabled,
             ivRankThreshold = ivRankThreshold?.toDouble(),
             minDte = minDte,
             maxDte = maxDte,
@@ -106,6 +109,7 @@ class UniversePersistenceAdapter(
         InstrumentUniverseEntity(
             symbol = symbol.value,
             enabled = enabled,
+            flagEnabled = flagEnabled,
             ivRankThreshold = ivRankThreshold?.toBigDecimal(),
             minDte = minDte,
             maxDte = maxDte,

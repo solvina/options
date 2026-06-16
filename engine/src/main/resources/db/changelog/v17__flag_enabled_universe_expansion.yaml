@@ -1,0 +1,96 @@
+databaseChangeLog:
+  # ---------------------------------------------------------------------------
+  # Adds a per-symbol flag-strategy toggle and expands the spread universe.
+  #
+  #   enabled       -> spread-strategy membership (existing column)
+  #   flag_enabled  -> flag-strategy membership (new); flag watchlist is now
+  #                    DB-driven, replacing flag.us-watchlist / flag.eu-watchlist
+  #                    in application.yml.
+  # ---------------------------------------------------------------------------
+  - changeSet:
+      id: v17__flag_enabled_column
+      author: solvina
+      changes:
+        - addColumn:
+            tableName: instrument_universe
+            columns:
+              - column:
+                  name: flag_enabled
+                  type: BOOLEAN
+                  defaultValueBoolean: false
+                  constraints:
+                    nullable: false
+      rollback:
+        - dropColumn:
+            tableName: instrument_universe
+            columnName: flag_enabled
+
+  # Idempotent expansion: 98 US spread names (enabled, not flagged) + SPCX
+  # (flag-only, recent IPO with no options yet so spread-disabled). ON CONFLICT
+  # leaves any pre-existing seed rows untouched.
+  - changeSet:
+      id: v17__universe_expansion_seed
+      author: solvina
+      changes:
+        - sql:
+            splitStatements: false
+            sql: >
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) VALUES
+              ('AAOI', true, false), ('AAPL', true, false), ('AAL', true, false), ('ABT', true, false),
+              ('ADBE', true, false), ('ADI', true, false), ('ADSK', true, false), ('ALAB', true, false),
+              ('AMAT', true, false), ('AMD', true, false), ('AMZN', true, false), ('ANET', true, false),
+              ('APP', true, false), ('APH', true, false), ('ASTS', true, false), ('AVGO', true, false),
+              ('AXTI', true, false), ('BA', true, false), ('BAC', true, false), ('BE', true, false),
+              ('BKNG', true, false), ('C', true, false), ('CAT', true, false), ('CBRS', true, false),
+              ('CIEN', true, false), ('COHR', true, false), ('COIN', true, false), ('COST', true, false),
+              ('CRM', true, false), ('CRDO', true, false), ('CRWD', true, false), ('CRWV', true, false),
+              ('CSCO', true, false), ('CVS', true, false), ('CVX', true, false), ('DDOG', true, false),
+              ('DELL', true, false), ('GE', true, false), ('GEV', true, false), ('GLW', true, false),
+              ('GOOG', true, false), ('GS', true, false), ('HD', true, false), ('HON', true, false),
+              ('HOOD', true, false), ('HPE', true, false), ('IBM', true, false), ('INTC', true, false),
+              ('INTU', true, false), ('IONQ', true, false), ('IREN', true, false), ('JNJ', true, false),
+              ('JPM', true, false), ('KLAC', true, false), ('LIN', true, false), ('LITE', true, false),
+              ('LLY', true, false), ('LRCX', true, false), ('MA', true, false), ('MCD', true, false),
+              ('META', true, false), ('MRK', true, false), ('MRVL', true, false), ('MS', true, false),
+              ('MSFT', true, false), ('MSTR', true, false), ('MU', true, false), ('NBIS', true, false),
+              ('NFLX', true, false), ('NOW', true, false), ('ORCL', true, false), ('PANW', true, false),
+              ('PEP', true, false), ('PFE', true, false), ('PLTR', true, false), ('PG', true, false),
+              ('QCOM', true, false), ('RKLB', true, false), ('ROKU', true, false), ('SATS', true, false),
+              ('SCHW', true, false), ('SMCI', true, false), ('SNDK', true, false), ('SNOW', true, false),
+              ('STX', true, false), ('SYK', true, false), ('TER', true, false), ('TMO', true, false),
+              ('TSLA', true, false), ('TXN', true, false), ('UBER', true, false), ('UNH', true, false),
+              ('V', true, false), ('VRT', true, false), ('VZ', true, false), ('WDC', true, false),
+              ('WMT', true, false), ('XOM', true, false),
+              ('SPCX', false, true)
+              ON CONFLICT (symbol) DO NOTHING;
+      rollback:
+        - sql:
+            sql: >
+              DELETE FROM instrument_universe WHERE symbol IN (
+              'AAOI','AAL','ABT','ADBE','ADI','ADSK','ALAB','AMAT','ANET','APP','APH','ASTS','AVGO','AXTI',
+              'BA','BAC','BE','BKNG','C','CAT','CBRS','CIEN','COHR','COIN','COST','CRM','CRDO','CRWD','CRWV',
+              'CSCO','CVS','CVX','DDOG','DELL','GE','GEV','GLW','GOOG','GS','HD','HON','HOOD','HPE','IBM',
+              'INTC','INTU','IONQ','IREN','JNJ','JPM','KLAC','LIN','LITE','LLY','LRCX','MA','MCD','MRK',
+              'MRVL','MS','MSTR','MU','NBIS','NFLX','NOW','ORCL','PANW','PEP','PFE','PLTR','PG','QCOM',
+              'RKLB','ROKU','SATS','SCHW','SMCI','SNDK','SNOW','STX','SYK','TER','TMO','TXN','UBER','V',
+              'VRT','VZ','WDC','WMT','XOM','SPCX');
+
+  # Flag membership: the 40 most-liquid intraday-momentum names (SPCX already
+  # flagged by the insert above => 41 flag symbols total). All rows exist by now.
+  - changeSet:
+      id: v17__flag_enable_backfill
+      author: solvina
+      changes:
+        - sql:
+            sql: >
+              UPDATE instrument_universe SET flag_enabled = true WHERE symbol IN (
+              'SPY','QQQ','IWM','AAPL','MSFT','NVDA','AMZN','META','GOOGL','TSLA','AMD','AVGO','NFLX','MU',
+              'INTC','MRVL','QCOM','AMAT','LRCX','KLAC','ANET','DELL','SMCI','COIN','PLTR','MSTR','HOOD',
+              'UBER','SNOW','CRWD','PANW','DDOG','NOW','ORCL','CRM','ADBE','JPM','BAC','GS','BA');
+      rollback:
+        - sql:
+            sql: >
+              UPDATE instrument_universe SET flag_enabled = false WHERE symbol IN (
+              'SPY','QQQ','IWM','AAPL','MSFT','NVDA','AMZN','META','GOOGL','TSLA','AMD','AVGO','NFLX','MU',
+              'INTC','MRVL','QCOM','AMAT','LRCX','KLAC','ANET','DELL','SMCI','COIN','PLTR','MSTR','HOOD',
+              'UBER','SNOW','CRWD','PANW','DDOG','NOW','ORCL','CRM','ADBE','JPM','BAC','GS','BA');

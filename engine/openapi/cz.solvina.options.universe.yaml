@@ -66,8 +66,30 @@ paths:
     patch:
       tags:
         - Universe
-      summary: Toggle enabled/disabled for an instrument
+      summary: Toggle spread enabled/disabled for an instrument
       operationId: toggleInstrument
+      parameters:
+        - name: symbol
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Updated instrument config
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstrumentConfigDto'
+        '404':
+          description: Symbol not found
+
+  /universe/{symbol}/toggle-flag:
+    patch:
+      tags:
+        - Universe
+      summary: Toggle flag-strategy enabled/disabled for an instrument
+      operationId: toggleFlag
       parameters:
         - name: symbol
           in: path
@@ -97,6 +119,11 @@ components:
           example: SPY
         enabled:
           type: boolean
+          description: Spread-strategy membership.
+        flagEnabled:
+          type: boolean
+          default: false
+          description: Flag-strategy (intraday momentum) membership. Defaults to false when omitted.
         ivRankThreshold:
           type: number
           format: double

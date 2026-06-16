@@ -43,10 +43,17 @@ class UniverseApiImpl(
         return ResponseEntity.ok(toggled.toDto())
     }
 
+    override suspend fun toggleFlag(symbol: String): ResponseEntity<InstrumentConfigDto> {
+        val existing = universePort.get(Symbol(symbol)) ?: return ResponseEntity.notFound().build()
+        val toggled = universePort.save(existing.copy(flagEnabled = !existing.flagEnabled))
+        return ResponseEntity.ok(toggled.toDto())
+    }
+
     private fun InstrumentConfig.toDto() =
         InstrumentConfigDto(
             symbol = symbol.value,
             enabled = enabled,
+            flagEnabled = flagEnabled,
             ivRankThreshold = ivRankThreshold,
             minDte = minDte,
             maxDte = maxDte,
@@ -67,6 +74,7 @@ class UniverseApiImpl(
         InstrumentConfig(
             symbol = Symbol(symbolOverride),
             enabled = enabled,
+            flagEnabled = flagEnabled ?: false,
             ivRankThreshold = ivRankThreshold,
             minDte = minDte,
             maxDte = maxDte,

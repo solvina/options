@@ -14,6 +14,8 @@ class InstrumentUniverseEntity(
     var symbol: String = "",
     @Column(nullable = false)
     var enabled: Boolean = true,
+    @Column(name = "flag_enabled", nullable = false)
+    var flagEnabled: Boolean = false,
     @Column(name = "iv_rank_threshold", precision = 5, scale = 2)
     var ivRankThreshold: BigDecimal? = null,
     @Column(name = "min_dte")

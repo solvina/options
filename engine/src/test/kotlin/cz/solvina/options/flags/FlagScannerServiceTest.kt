@@ -50,11 +50,7 @@ class FlagScannerServiceTest {
     private val aapl = Symbol("AAPL")
     private val sap = Symbol("SAP")
 
-    private val strategyConfig =
-        FlagStrategyConfig(
-            usWatchlist = listOf("AAPL"),
-            euWatchlist = listOf("SAP"),
-        )
+    private val strategyConfig = FlagStrategyConfig()
     private val tradingConfig =
         FlagTradingConfig(
             entryBlockMinutesBeforeClose = 5,
@@ -96,6 +92,7 @@ class FlagScannerServiceTest {
     // Default universe port: both markets closed, returns US schedule for AAPL and EU for SAP.
     private val defaultUniversePort =
         mockk<UniversePort> {
+            every { getFlagWatchlist() } returns listOf(aapl, sap)
             every { isMarketOpen(any()) } returns false
             every { getMarketSchedule(aapl) } returns usSchedule
             every { getMarketSchedule(sap) } returns euSchedule
@@ -231,6 +228,7 @@ class FlagScannerServiceTest {
             // AAPL market is open; SAP market is closed.
             val universePort =
                 mockk<UniversePort> {
+                    every { getFlagWatchlist() } returns listOf(aapl, sap)
                     every { isMarketOpen(aapl) } returns true
                     every { isMarketOpen(sap) } returns false
                     every { getMarketSchedule(aapl) } returns usSchedule
@@ -286,8 +284,6 @@ class FlagScannerServiceTest {
             // series forms exactly one flagpole that consolidates into a flag.
             val detectConfig =
                 FlagStrategyConfig(
-                    usWatchlist = listOf("AAPL"),
-                    euWatchlist = emptyList(),
                     atrPeriod = 3,
                     atrMultiplier = 2.0,
                     volumeMaPeriod = 5,

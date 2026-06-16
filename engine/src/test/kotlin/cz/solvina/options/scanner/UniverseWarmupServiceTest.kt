@@ -28,6 +28,8 @@ class UniverseWarmupServiceTest {
     ) = object : UniversePort {
         override fun getWatchlist(): List<Symbol> = symbols.map { sym(it) }
 
+        override fun getFlagWatchlist(): List<Symbol> = emptyList()
+
         override fun getActiveSymbols(): List<Symbol> = symbols.filter { it in open }.map { sym(it) }
 
         override fun isMarketOpen(symbol: Symbol): Boolean = symbol.value in open

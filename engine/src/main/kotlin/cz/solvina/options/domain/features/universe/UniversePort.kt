@@ -5,6 +5,9 @@ import cz.solvina.options.domain.models.Symbol
 interface UniversePort {
     fun getWatchlist(): List<Symbol>
 
+    /** Symbols enabled for the flag (intraday momentum) strategy. */
+    fun getFlagWatchlist(): List<Symbol>
+
     fun getActiveSymbols(): List<Symbol>
 
     /** Returns true if the underlying exchange for [symbol] is currently within regular trading hours. */

@@ -94,10 +94,18 @@ class FlagScannerService(
     // Runs just after EU open (09:01 Berlin) and just after US open (15:31 CEST = 09:31 ET).
     // Resubscribes any watchlist symbols whose stream ended at the previous day's close.
     @Scheduled(cron = "0 1 9 * * MON-FRI", zone = "Europe/Berlin")
-    fun onEuMarketOpen() = resubscribeWatchlist(strategyConfig.euWatchlist, "EU open resubscription")
+    fun onEuMarketOpen() = resubscribeWatchlist(flagSymbolsForSession("EU"), "EU open resubscription")
 
     @Scheduled(cron = "0 31 9 * * MON-FRI", zone = "America/New_York")
-    fun onUsMarketOpen() = resubscribeWatchlist(strategyConfig.usWatchlist, "US open resubscription")
+    fun onUsMarketOpen() = resubscribeWatchlist(flagSymbolsForSession("US"), "US open resubscription")
+
+    // Flag watchlist is DB-driven (instrument_universe.flag_enabled); split by each symbol's
+    // exchange session so the US/EU open crons resubscribe only the symbols they cover.
+    private fun flagSymbolsForSession(session: String): List<String> =
+        universePort
+            .getFlagWatchlist()
+            .filter { universePort.getMarketSchedule(it).session == session }
+            .map { it.value }
 
     // Runs every 5 minutes. Detects symbols whose last bar is older than STALE_BAR_MINUTES during
     // market hours and resubscribes them — handles silent IBKR subscription drops.
@@ -142,7 +150,7 @@ class FlagScannerService(
     }
 
     private fun resolveWatchlist(): List<Symbol> {
-        val all = (strategyConfig.euWatchlist + strategyConfig.usWatchlist).map { Symbol(it) }
+        val all = universePort.getFlagWatchlist()
         val open = all.filter { universePort.isMarketOpen(it) }
         open.groupBy { universePort.getMarketSchedule(it).session }.forEach { (session, symbols) ->
             logger.info { "Flag scanner: $session market open — scanning ${symbols.map { it.value }}" }

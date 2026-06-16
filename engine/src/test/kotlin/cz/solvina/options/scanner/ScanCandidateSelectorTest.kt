@@ -286,6 +286,8 @@ class ScanCandidateSelectorTest {
             object : UniversePort {
                 override fun getWatchlist() = emptyList<Symbol>()
 
+                override fun getFlagWatchlist() = emptyList<Symbol>()
+
                 override fun getActiveSymbols() = emptyList<Symbol>()
 
                 override fun isMarketOpen(symbol: Symbol) = true

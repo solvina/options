@@ -72,6 +72,8 @@ class BacktestSmokeTest {
             object : UniversePort {
                 override fun getWatchlist() = listOf(Symbol("SPY"))
 
+                override fun getFlagWatchlist() = emptyList<Symbol>()
+
                 override fun getActiveSymbols() = listOf(Symbol("SPY"))
 
                 override fun isMarketOpen(symbol: Symbol) = true

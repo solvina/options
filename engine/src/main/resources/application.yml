@@ -91,8 +91,7 @@ scanner:
   option-params-cache-ttl-hours: 1
 
 flag:
-  us-watchlist: [SPY, QQQ, AAPL, MSFT, NVDA]
-  eu-watchlist: [SAP, ASML, SIE, ALV]
+  # Watchlist is DB-driven via instrument_universe.flag_enabled (UniversePort.getFlagWatchlist).
   atr-period: 14
   atr-multiplier: 2.0
   volume-ma-period: 20

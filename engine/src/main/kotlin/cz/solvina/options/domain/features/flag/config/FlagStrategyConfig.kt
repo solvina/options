@@ -2,11 +2,14 @@ package cz.solvina.options.domain.features.flag.config
 
 import org.springframework.boot.context.properties.ConfigurationProperties
 
-/** Strategy parameters bound from application.yml under `flag:`. Not user-editable at runtime. */
+/**
+ * Strategy parameters bound from application.yml under `flag:`. Not user-editable at runtime.
+ *
+ * The flag watchlist is no longer configured here — it is DB-driven via
+ * `instrument_universe.flag_enabled` (see [cz.solvina.options.domain.features.universe.UniversePort.getFlagWatchlist]).
+ */
 @ConfigurationProperties(prefix = "flag")
 data class FlagStrategyConfig(
-    val usWatchlist: List<String> = listOf("SPY", "QQQ", "AAPL", "MSFT", "NVDA"),
-    val euWatchlist: List<String> = listOf("SAP", "ASML", "SIE", "ALV"),
     val atrPeriod: Int = 14,
     val atrMultiplier: Double = 2.0,
     val volumeMaPeriod: Int = 20,
