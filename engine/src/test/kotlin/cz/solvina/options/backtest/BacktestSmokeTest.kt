@@ -93,7 +93,23 @@ class BacktestSmokeTest {
                 override suspend fun delete(symbol: Symbol) = Unit
             }
 
-        val ivRankService = IvRankService(historicalAdapter, config, clock)
+        val noopIvStore =
+            object : cz.solvina.options.domain.features.volatility.IvRankStorePort {
+                override fun loadAll() = emptyMap<Symbol, cz.solvina.options.domain.features.volatility.StoredIvRank>()
+
+                override suspend fun save(
+                    symbol: Symbol,
+                    value: cz.solvina.options.domain.features.volatility.StoredIvRank,
+                ) = Unit
+            }
+        val ivRankService =
+            IvRankService(
+                historicalAdapter,
+                config,
+                clock,
+                noopIvStore,
+                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined),
+            )
 
         val executionService =
             TradeExecutionService(

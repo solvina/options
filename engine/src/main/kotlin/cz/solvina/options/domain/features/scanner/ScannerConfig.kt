@@ -61,6 +61,9 @@ data class ScannerConfig(
     // Cache TTLs
     val ivHistoryDays: Int = 365,
     val ivCacheTtlMinutes: Long = 60,
+    // After the cache TTL but within this window, a persisted IV rank is served stale while a
+    // refresh runs in the background — avoids a restart re-fetching every symbol's history at once.
+    val ivServeStaleHours: Long = 48,
     // Refresh every hour to catch underlying movement + strikes being descheduled
     val optionParamsCacheTtlHours: Long = 1,
 )

@@ -19,3 +19,5 @@ databaseChangeLog:
       file: db/changelog/v9__flag_context_journal.yaml
   - include:
       file: db/changelog/v15__close_reason_text.yaml
+  - include:
+      file: db/changelog/v16__iv_rank_cache.yaml

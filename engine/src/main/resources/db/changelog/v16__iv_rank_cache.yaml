@@ -1,0 +1,29 @@
+databaseChangeLog:
+  - changeSet:
+      id: v16__iv_rank_cache
+      author: claude
+      changes:
+        - createTable:
+            tableName: iv_rank_cache
+            columns:
+              - column:
+                  name: symbol
+                  type: VARCHAR(10)
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: rank
+                  type: DOUBLE PRECISION
+                  constraints:
+                    nullable: false
+              - column:
+                  name: current_iv
+                  type: DOUBLE PRECISION
+                  constraints:
+                    nullable: false
+              - column:
+                  name: calculated_at
+                  type: TIMESTAMP WITH TIME ZONE
+                  constraints:
+                    nullable: false
