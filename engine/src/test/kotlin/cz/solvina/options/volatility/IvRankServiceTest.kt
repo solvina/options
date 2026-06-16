@@ -96,9 +96,9 @@ class IvRankServiceTest {
 
             val result = svc.getIvRank(symbol)
 
-            assertEquals(50.0, result.rank)
+            assertEquals(50.0, result.rank, 1e-6)
             assertEquals(1, fetchCount.get())
-            assertEquals(50.0, store.saved[symbol]?.rank, "computed rank must be persisted")
+            assertEquals(50.0, store.saved[symbol]!!.rank, 1e-6, "computed rank must be persisted")
         }
 
     @Test
@@ -117,8 +117,8 @@ class IvRankServiceTest {
 
             val result = svc.getIvRank(symbol)
 
-            assertEquals(99.0, result.rank, "the stale value is served immediately")
+            assertEquals(99.0, result.rank, 1e-6, "the stale value is served immediately")
             assertEquals(1, fetchCount.get(), "a background refresh fetched fresh history")
-            assertEquals(50.0, store.saved[symbol]?.rank, "the refreshed value was persisted")
+            assertEquals(50.0, store.saved[symbol]!!.rank, 1e-6, "the refreshed value was persisted")
         }
 }

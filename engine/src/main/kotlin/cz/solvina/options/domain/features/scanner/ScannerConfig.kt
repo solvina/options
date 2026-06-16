@@ -64,6 +64,9 @@ data class ScannerConfig(
     // After the cache TTL but within this window, a persisted IV rank is served stale while a
     // refresh runs in the background — avoids a restart re-fetching every symbol's history at once.
     val ivServeStaleHours: Long = 48,
+    // Startup warmup: pre-compute IV rank for the universe in batches (open-market symbols first)
+    // so scans never block on a cold fetch. Batch size bounds concurrency alongside the rate limiter.
+    val warmupBatchSize: Int = 10,
     // Refresh every hour to catch underlying movement + strikes being descheduled
     val optionParamsCacheTtlHours: Long = 1,
 )
