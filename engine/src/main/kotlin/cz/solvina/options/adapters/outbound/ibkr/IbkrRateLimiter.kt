@@ -112,7 +112,15 @@ class IbkrRateLimiter(
     suspend fun <T> withContractDetails(block: suspend () -> T): T = contractDetailsGate.withPermit { block() }
 
     /** Acquire one market-data line. Caller MUST call [releaseMarketDataLine] when the subscription ends. */
-    suspend fun acquireMarketDataLine() = marketDataLines.acquire()
+    suspend fun acquireMarketDataLine() {
+        // DIAGNOSTIC: when no permits remain, acquire() blocks until a line frees — which can delay
+        // a spread's tick subscription past calculateFreshCredit's 3s wait, surfacing as a no-tick
+        // abort. WARN so market-data-line exhaustion (the line-budget question) is visible.
+        if (marketDataLines.availablePermits == 0) {
+            logger.warn { "Market-data lines exhausted (cap=${config.marketDataLines}) — acquire will block until a line frees" }
+        }
+        marketDataLines.acquire()
+    }
 
     fun releaseMarketDataLine() = marketDataLines.release()
 

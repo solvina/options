@@ -475,6 +475,7 @@ class TradeExecutionService(
     }
 
     private suspend fun calculateFreshCredit(request: TradeExecutionRequest): Triple<BigDecimal, QuoteFreshnessResult?, SpreadCreditTick?> {
+        val startNanos = System.nanoTime()
         logger.info { "[${request.underlyingSymbol}] calculateFreshCredit: waiting 500ms for market data to settle" }
         delay(500) // Wait for market data to settle
 
@@ -547,11 +548,21 @@ class TradeExecutionService(
             }
             Triple(freshCredit, null, tick)
         } catch (e: TimeoutCancellationException) {
+            val elapsedMs = (System.nanoTime() - startNanos) / 1_000_000
+            // DIAGNOSTIC: this is market-data starvation, NOT price drift — but it is currently
+            // reported as MARKET_MOVED_TOO_FAR. Log the true cause + contract context so the no-tick
+            // rate (and its likely cause: ambiguous no-conId contract or exhausted mkt-data lines)
+            // is visible in the journal. See contractForMktData fallback + acquireMarketDataLine logs.
+            logger.warn {
+                "[${request.underlyingSymbol}] NO MARKET-DATA TICK in ${elapsedMs}ms (starvation, not price drift) — " +
+                    "aborting entry. sold=${request.soldContract.strike}P/${request.soldContract.expiry} " +
+                    "bought=${request.boughtContract.strike}P/${request.boughtContract.expiry}"
+            }
             Triple(
                 BigDecimal.ZERO,
                 QuoteFreshnessResult(
                     outcome = ExecutionOutcome.MARKET_MOVED_TOO_FAR,
-                    message = "[${request.underlyingSymbol}] No market data tick received in 3s",
+                    message = "[${request.underlyingSymbol}] No market data tick received in ${elapsedMs}ms (no-tick starvation)",
                 ),
                 null,
             )

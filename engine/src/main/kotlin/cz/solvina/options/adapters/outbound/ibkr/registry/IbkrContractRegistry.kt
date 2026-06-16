@@ -107,8 +107,18 @@ class IbkrContractRegistry(
         msg: String,
     ) {
         val ex = RuntimeException("IBKR error [code=$code]: $msg")
-        pendingContractDetails.remove(id)?.deferred?.completeExceptionally(ex)
-        pendingOptionParams.remove(id)?.deferred?.completeExceptionally(ex)
+        val cd = pendingContractDetails.remove(id)
+        val op = pendingOptionParams.remove(id)
+        // DIAGNOSTIC: attribute the failure to the contract-resolution flow so the high-volume
+        // error-200 ("no security definition") storm is visibly tied to conId/params lookups
+        // rather than buried in the generic EWrapper error log.
+        if (cd != null || op != null) {
+            logger.warn {
+                "Contract resolution failed [reqId=$id code=$code flow=${if (cd != null) "contractDetails" else "optionParams"}]: $msg"
+            }
+        }
+        cd?.deferred?.completeExceptionally(ex)
+        op?.deferred?.completeExceptionally(ex)
     }
 
     fun cancelAllPending(cause: Exception) {

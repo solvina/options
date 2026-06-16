@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.withTimeoutOrNull
 import org.springframework.stereotype.Component
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 private val logger = KotlinLogging.logger {}
@@ -84,6 +85,8 @@ class IbkrMarketTickAdapter(
         boughtContract: OptionContract,
     ): Flow<SpreadCreditTick> =
         callbackFlow {
+            val streamStartNanos = System.nanoTime()
+            val firstTickLogged = AtomicBoolean(false)
             val soldTickReqId = registry.nextReqId()
             val boughtTickReqId = registry.nextReqId()
             val soldGreeksReqId = registry.nextReqId()
@@ -96,6 +99,12 @@ class IbkrMarketTickAdapter(
                 val s = soldPrices.get()
                 val b = boughtPrices.get()
                 if (s.bid.isNaN() || s.ask.isNaN() || b.bid.isNaN() || b.ask.isNaN()) return
+                if (firstTickLogged.compareAndSet(false, true)) {
+                    logger.info {
+                        "[${soldContract.symbol}] First spread-credit tick in " +
+                            "${(System.nanoTime() - streamStartNanos) / 1_000_000}ms (${soldContract.strike}P/${boughtContract.strike}P)"
+                    }
+                }
                 val soldMid = (s.bid + s.ask) / 2
                 val boughtMid = (b.bid + b.ask) / 2
                 val soldDelta =
@@ -161,6 +170,12 @@ class IbkrMarketTickAdapter(
             val boughtContract4Mkt = contractForMktData(boughtContract)
 
             // 4 market-data lines: 2 tick-by-tick (bid/ask) + 2 continuous (greeks/fallback bid/ask).
+            // DIAGNOSTIC: log free lines before acquiring — if ~0, lines are exhausted and the acquire
+            // below blocks, delaying the subscription past calculateFreshCredit's 3s tick wait.
+            logger.info {
+                "[${soldContract.symbol}] Spread credit stream acquiring 4 mkt-data lines " +
+                    "(available=${rateLimiter.availableMarketDataLines()}) for ${soldContract.strike}P/${boughtContract.strike}P"
+            }
             repeat(4) { rateLimiter.acquireMarketDataLine() }
             client.reqTickByTickData(soldTickReqId, soldContract4Mkt, "BidAsk", 0, true)
             client.reqTickByTickData(boughtTickReqId, boughtContract4Mkt, "BidAsk", 0, true)
@@ -197,7 +212,10 @@ class IbkrMarketTickAdapter(
         val key = OptionContractKey(contract.symbol, contract.expiry, contract.strike, contract.type)
 
         // Try cache first (instant)
-        contractCache.getCachedOptionConId(key)?.let { return contractFactory.conIdContract(it) }
+        contractCache.getCachedOptionConId(key)?.let {
+            logger.debug { "[${contract.symbol}] mkt-data conId from cache (${contract.strike}P ${contract.expiry})" }
+            return contractFactory.conIdContract(it)
+        }
 
         // Resolve on an independent scope so the bounded wait below only stops *waiting* — it never
         // cancels the IBKR lookup. The previous withTimeout(100) cancelled the fetch itself, which
@@ -214,10 +232,19 @@ class IbkrMarketTickAdapter(
             } catch (_: Exception) {
                 null // lookup genuinely failed (ambiguous/missing strike) — fall back to minimal spec
             }
-        conId?.let { return contractFactory.conIdContract(it) }
+        conId?.let {
+            logger.debug { "[${contract.symbol}] mkt-data conId resolved=$it (${contract.strike}P ${contract.expiry})" }
+            return contractFactory.conIdContract(it)
+        }
 
         // Fall back to minimal contract spec (symbol+secType+currency+expiry+right only).
         // NOT adding exchange/tradingClass because it causes error 200 "not found" for US options.
+        // DIAGNOSTIC: the minimal spec is ambiguous for multi-exchange symbols → IBKR error 200 →
+        // no tick → calculateFreshCredit aborts. WARN so the fallback rate is visible in the journal.
+        logger.warn {
+            "[${contract.symbol}] mkt-data conId UNRESOLVED for ${contract.strike}P ${contract.expiry} ${contract.type} — " +
+                "using ambiguous minimal-spec contract (expect IBKR error 200 / no tick → no fill)"
+        }
         return contractFactory.optionContract(contract)
     }
 }
