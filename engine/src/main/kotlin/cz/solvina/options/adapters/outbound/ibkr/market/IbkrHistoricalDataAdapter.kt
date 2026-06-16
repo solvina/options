@@ -2,6 +2,7 @@ package cz.solvina.options.adapters.outbound.ibkr.market
 
 import com.ib.client.EClientSocket
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
+import cz.solvina.options.adapters.outbound.ibkr.IbkrRateLimiter
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrHistoricalDataRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.PendingBarsRequest
 import cz.solvina.options.domain.features.volatility.HistoricalDataPort
@@ -22,6 +23,7 @@ class IbkrHistoricalDataAdapter(
     private val registry: IbkrHistoricalDataRegistry,
     private val client: EClientSocket,
     private val contractFactory: IbkrContractFactory,
+    private val rateLimiter: IbkrRateLimiter,
 ) : HistoricalDataPort {
     override fun fetchDailyBars(
         symbol: Symbol,
@@ -40,6 +42,8 @@ class IbkrHistoricalDataAdapter(
     ): Flow<HistoricalBar> =
         callbackFlow {
             val reqId = registry.nextReqId()
+            // Rate-limited: suspends to respect IBKR's historical pacing before firing.
+            rateLimiter.acquireHistorical()
 
             registry.pendingHistoricalBars[reqId] =
                 PendingBarsRequest(
@@ -64,6 +68,9 @@ class IbkrHistoricalDataAdapter(
                 null,
             )
 
-            awaitClose { registry.pendingHistoricalBars.remove(reqId) }
+            awaitClose {
+                registry.pendingHistoricalBars.remove(reqId)
+                rateLimiter.releaseHistorical()
+            }
         }.buffer(Channel.UNLIMITED)
 }

@@ -4,6 +4,8 @@ import com.ib.client.Contract
 import com.ib.client.EClientSocket
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.IbkrInstrumentsConfig
+import cz.solvina.options.adapters.outbound.ibkr.IbkrRateLimitConfig
+import cz.solvina.options.adapters.outbound.ibkr.IbkrRateLimiter
 import cz.solvina.options.adapters.outbound.ibkr.InstrumentDef
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrOptionParamsCache
@@ -49,6 +51,7 @@ class IbkrMarketTickAdapterContractResolutionTest {
             contractFactory = contractFactory,
             contractCache = contractCache,
             optionParamsCache = optionParamsCache,
+            rateLimiter = IbkrRateLimiter(IbkrRateLimitConfig(), java.time.Clock.systemUTC()),
             // SupervisorJob (matching production) so a failed fetch surfaces only via await();
             // Unconfined runs the detached fetch inline so resolution completes deterministically
             // within runTest's virtual time (no real-thread dispatch).

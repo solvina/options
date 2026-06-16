@@ -1,6 +1,7 @@
 package cz.solvina.options.adapters.outbound.ibkr.registry
 
 import com.ib.client.Bar
+import cz.solvina.options.adapters.outbound.ibkr.IbkrRateLimiter
 import cz.solvina.options.domain.models.HistoricalBar
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.stereotype.Component
@@ -27,6 +28,7 @@ internal data class PendingRawBarsRequest(
 @Component
 class IbkrHistoricalDataRegistry(
     private val idCounter: IbkrIdCounter,
+    private val rateLimiter: IbkrRateLimiter,
 ) {
     internal val pendingHistoricalBars = ConcurrentHashMap<Int, PendingBarsRequest>()
 
@@ -64,6 +66,8 @@ class IbkrHistoricalDataRegistry(
         code: Int,
         msg: String,
     ) {
+        // 162 = historical-data pacing violation; 420 = "max rate of messages" pacing.
+        if (code == 162 || code == 420) rateLimiter.notePacingViolation()
         val ex = RuntimeException("IBKR error [code=$code]: $msg")
         pendingHistoricalBars.remove(id)?.onError?.invoke(ex)
         pendingRawBars.remove(id)?.onError?.invoke(ex)

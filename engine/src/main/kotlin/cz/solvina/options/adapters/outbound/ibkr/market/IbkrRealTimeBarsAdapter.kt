@@ -2,6 +2,7 @@ package cz.solvina.options.adapters.outbound.ibkr.market
 
 import com.ib.client.EClientSocket
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
+import cz.solvina.options.adapters.outbound.ibkr.IbkrRateLimiter
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
 import cz.solvina.options.domain.features.bars.RealTimeBar
 import cz.solvina.options.domain.features.bars.RealTimeBarsPort
@@ -21,12 +22,15 @@ class IbkrRealTimeBarsAdapter(
     private val registry: IbkrMarketDataRegistry,
     private val client: EClientSocket,
     private val contractFactory: IbkrContractFactory,
+    private val rateLimiter: IbkrRateLimiter,
 ) : RealTimeBarsPort {
     override fun streamBars(symbol: Symbol): Flow<RealTimeBar> =
         callbackFlow {
             val reqId = registry.nextReqId()
             val contract = contractFactory.stockContract(symbol)
 
+            // Each real-time bar subscription holds one IBKR market-data line for the session.
+            rateLimiter.acquireMarketDataLine()
             registry.pendingRealTimeBars[reqId] = { bar -> trySend(bar) }
 
             logger.info { "[${symbol.value}] Subscribing to 5-sec real-time bars (reqId=$reqId, RTH only)" }
@@ -36,6 +40,7 @@ class IbkrRealTimeBarsAdapter(
                 registry.pendingRealTimeBars.remove(reqId)
                 runCatching { client.cancelRealTimeBars(reqId) }
                     .onFailure { e -> logger.warn { "[${symbol.value}] cancelRealTimeBars failed: ${e.message}" } }
+                rateLimiter.releaseMarketDataLine()
                 logger.info { "[${symbol.value}] Unsubscribed from real-time bars (reqId=$reqId)" }
             }
         }.buffer(Channel.UNLIMITED)

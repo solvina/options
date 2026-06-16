@@ -5,6 +5,8 @@ import com.ib.client.ContractDetails
 import com.ib.client.EClientSocket
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.IbkrInstrumentsConfig
+import cz.solvina.options.adapters.outbound.ibkr.IbkrRateLimitConfig
+import cz.solvina.options.adapters.outbound.ibkr.IbkrRateLimiter
 import cz.solvina.options.adapters.outbound.ibkr.InstrumentDef
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrContractRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrIdCounter
@@ -41,6 +43,7 @@ class IbkrContractCacheInFlightTest {
             registry = registry,
             client = client,
             contractFactory = contractFactory,
+            rateLimiter = IbkrRateLimiter(IbkrRateLimitConfig(), java.time.Clock.systemUTC()),
         )
 
     @BeforeEach

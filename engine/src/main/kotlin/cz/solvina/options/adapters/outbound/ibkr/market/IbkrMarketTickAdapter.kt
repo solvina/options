@@ -3,6 +3,7 @@ package cz.solvina.options.adapters.outbound.ibkr.market
 import com.ib.client.Contract
 import com.ib.client.EClientSocket
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
+import cz.solvina.options.adapters.outbound.ibkr.IbkrRateLimiter
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrOptionParamsCache
 import cz.solvina.options.adapters.outbound.ibkr.cache.OptionContractKey
@@ -40,6 +41,7 @@ class IbkrMarketTickAdapter(
     private val contractFactory: IbkrContractFactory,
     private val contractCache: IbkrContractCache,
     private val optionParamsCache: IbkrOptionParamsCache,
+    private val rateLimiter: IbkrRateLimiter,
     // Independent scope for conId resolution so a bounded caller-side wait never cancels (and thus
     // poisons) an in-flight IBKR contract lookup — a late-but-successful response still caches.
     // Injected (the shared executionCoroutineScope bean) so it is decoupled from any caller's
@@ -51,6 +53,7 @@ class IbkrMarketTickAdapter(
     override fun streamUnderlyingPrice(symbol: Symbol): Flow<Double> =
         callbackFlow {
             val reqId = registry.nextReqId()
+            rateLimiter.acquireMarketDataLine()
             registry.pendingContinuousMarketData[reqId] =
                 PendingContinuousMarketDataRequest(
                     onUpdate = { snapshot ->
@@ -65,6 +68,7 @@ class IbkrMarketTickAdapter(
             awaitClose {
                 registry.pendingContinuousMarketData.remove(reqId)
                 client.cancelMktData(reqId)
+                rateLimiter.releaseMarketDataLine()
                 logger.debug { "[$symbol] Cancelled underlying price stream (reqId=$reqId)" }
             }
         }
@@ -156,6 +160,8 @@ class IbkrMarketTickAdapter(
             val soldContract4Mkt = contractForMktData(soldContract)
             val boughtContract4Mkt = contractForMktData(boughtContract)
 
+            // 4 market-data lines: 2 tick-by-tick (bid/ask) + 2 continuous (greeks/fallback bid/ask).
+            repeat(4) { rateLimiter.acquireMarketDataLine() }
             client.reqTickByTickData(soldTickReqId, soldContract4Mkt, "BidAsk", 0, true)
             client.reqTickByTickData(boughtTickReqId, boughtContract4Mkt, "BidAsk", 0, true)
             client.reqMktData(soldGreeksReqId, soldContract4Mkt, "100", false, false, null)
@@ -175,6 +181,7 @@ class IbkrMarketTickAdapter(
                 client.cancelMktData(soldGreeksReqId)
                 registry.pendingContinuousMarketData.remove(boughtGreeksReqId)
                 client.cancelMktData(boughtGreeksReqId)
+                repeat(4) { rateLimiter.releaseMarketDataLine() }
                 logger.debug {
                     "Cancelled spread credit stream for " +
                         "${soldContract.strike}P/${boughtContract.strike}P"
