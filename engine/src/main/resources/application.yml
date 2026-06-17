@@ -108,13 +108,15 @@ flag:
   flag-max-bars: 20
   max-retracement-pct: 0.50
   historical-bootstrap-days: 3
-  # Entry quality filters (set permissive defaults; tune per backtest findings)
+  # Entry quality filters. INTERIM loosening 2026-06-17 — every live breakout today was a near-miss
+  # on one of these (channel-slope, flag-bars, retracement, pole/ATR band). Pending backtest
+  # validation. Previous values in parentheses.
   skip-first-rth-minutes: 90
-  require-negative-channel-slope: true
-  min-flagpole-atr-multiple: 2.0
-  max-flagpole-atr-multiple: 4.0
-  min-flag-retracement-pct: 0.25
-  min-flag-bars-for-entry: 7
+  require-negative-channel-slope: false   # was true — many real bull flags have a flat/slightly-rising channel
+  min-flagpole-atr-multiple: 1.5          # was 2.0
+  max-flagpole-atr-multiple: 5.0          # was 4.0
+  min-flag-retracement-pct: 0.15          # was 0.25
+  min-flag-bars-for-entry: 5              # was 7
 
 influxdb:
   url: http://localhost:8086
