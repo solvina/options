@@ -43,6 +43,13 @@ enum class ExecutionOutcome {
     MARKET_MOVED_TOO_FAR,
 
     /**
+     * No fresh market-data tick arrived for the spread legs within the pre-submission wait window —
+     * market-data starvation, NOT genuine price drift. Distinct from MARKET_MOVED_TOO_FAR so the
+     * no-fill cause is attributable (the legs' contract likely never delivered a quote).
+     */
+    NO_MARKET_DATA,
+
+    /**
      * Leg-by-leg entry: protective LONG leg filled but SHORT leg did not (auto-unwind off).
      * A bounded long-debit position remains open and is recorded as BROKEN_LONG_ONLY for manual
      * handling — never a naked short.

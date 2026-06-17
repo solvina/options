@@ -1,6 +1,12 @@
 spring:
   application:
     name: options
+  task:
+    scheduling:
+      # Multi-thread the scheduler so the long spread scan can't starve the flag/watchdog crons
+      # (they previously shared a single thread; the US-open flag cron was blocked by the scan).
+      pool:
+        size: 4
   webflux:
     base-path: /options
   datasource:

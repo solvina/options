@@ -10,4 +10,10 @@ data class OptionQuote(
     val ask: Money,
     val mid: Money,
     val greeks: OptionGreeks,
+    /**
+     * True when this quote's prices/greeks came from a Black-Scholes fallback (no live market data),
+     * not from a real IBKR snapshot. Synthetic quotes are fine for theoretical strike selection but
+     * MUST NOT be used to launch an order — there is no real market, so the entry would never fill.
+     */
+    val synthetic: Boolean = false,
 )

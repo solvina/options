@@ -561,7 +561,7 @@ class TradeExecutionService(
             Triple(
                 BigDecimal.ZERO,
                 QuoteFreshnessResult(
-                    outcome = ExecutionOutcome.MARKET_MOVED_TOO_FAR,
+                    outcome = ExecutionOutcome.NO_MARKET_DATA,
                     message = "[${request.underlyingSymbol}] No market data tick received in ${elapsedMs}ms (no-tick starvation)",
                 ),
                 null,

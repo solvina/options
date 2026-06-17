@@ -747,7 +747,9 @@ class TradeExecutionServiceTest {
             advanceTimeBy(4_000)
             val result = resultDeferred.await()
 
-            assertEquals(ExecutionOutcome.MARKET_MOVED_TOO_FAR, result.outcome)
+            // No tick within the freshness window = market-data starvation, now distinctly labelled
+            // NO_MARKET_DATA (not MARKET_MOVED_TOO_FAR, which is reserved for genuine price drift).
+            assertEquals(ExecutionOutcome.NO_MARKET_DATA, result.outcome)
         }
 
     // -------------------------------------------------------------------------

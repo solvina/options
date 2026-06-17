@@ -7,6 +7,7 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.runBlocking
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
+import java.util.concurrent.atomic.AtomicBoolean
 
 private val logger = KotlinLogging.logger {}
 
@@ -16,6 +17,11 @@ class ScannerScheduler(
     private val connectionStatusPort: ConnectionStatusPort,
     private val killSwitch: TradingKillSwitch,
 ) {
+    // Guards against overlapping scans. The scheduler is now a multi-thread pool (so flag/watchdog
+    // crons aren't starved), so a slow scan that overruns the 15-min cadence must not run twice
+    // concurrently. Also surfaces the overrun as a diagnostic.
+    private val scanInProgress = AtomicBoolean(false)
+
     @Scheduled(cron = "\${scanner.cron:0 */15 9-22 * * MON-FRI}", zone = "Europe/Berlin")
     fun runScan() {
         if (killSwitch.scannerPaused) {
@@ -26,10 +32,18 @@ class ScannerScheduler(
             logger.warn { "Scanner skipped: IBKR not connected" }
             return
         }
-        logger.info { "Scheduled scanner run triggered" }
-        runBlocking {
-            runCatching { scannerPort.scan() }
-                .onFailure { e -> logger.error(e) { "Scanner run failed: ${e.message}" } }
+        if (!scanInProgress.compareAndSet(false, true)) {
+            logger.warn { "Scanner skipped: previous scan still running (overruns the 15-min cadence)" }
+            return
+        }
+        try {
+            logger.info { "Scheduled scanner run triggered" }
+            runBlocking {
+                runCatching { scannerPort.scan() }
+                    .onFailure { e -> logger.error(e) { "Scanner run failed: ${e.message}" } }
+            }
+        } finally {
+            scanInProgress.set(false)
         }
     }
 }

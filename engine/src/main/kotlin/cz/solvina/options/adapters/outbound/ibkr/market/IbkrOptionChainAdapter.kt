@@ -60,10 +60,17 @@ class IbkrOptionChainAdapter(
         // strikesByExpiry[expiry] contains fine-grained near-term increments ($2.50/$5) that
         // don't exist for far-out monthly expiries ($10 increments). The verified set eliminates
         // those phantoms so candidate selection only ever picks real, tradeable strikes.
+        // Authoritative strikes only. Resolve the verified set (one reqContractDetails, cached +
+        // conIds warmed) rather than falling back to the reqSecDefOptParams union, which contains
+        // phantom near-term strikes that don't exist for far-out monthlies — the confirmed cause of
+        // "Strike not found" → no tick → no fill. If we can't verify, skip the symbol this cycle.
         val expiryStrikes =
             contractCache.getVerifiedStrikes(symbol, expiry, OptionType.PUT)
-                ?: params.strikesByExpiry[expiry]
-                ?: params.strikes
+                ?: contractCache.getOrFetchVerifiedStrikes(symbol, expiry, OptionType.PUT)
+                ?: run {
+                    logger.warn { "[$symbol] Verified strikes unavailable for $expiry — skipping to avoid phantom strikes" }
+                    return emptyList()
+                }
         val validStrikes =
             expiryStrikes.filter { strike ->
                 strike >= boughtLegFloor && strike <= upperBound
@@ -144,6 +151,7 @@ class IbkrOptionChainAdapter(
                                 vega = snapshot.vega.takeIf { !it.isNaN() } ?: 0.0,
                                 iv = snapshot.impliedVol.takeIf { !it.isNaN() } ?: 0.0,
                             ),
+                        synthetic = false,
                     )
                 }
 
@@ -174,6 +182,9 @@ class IbkrOptionChainAdapter(
                             vega = BlackScholes.vega(spot, strikeDouble, tte, RISK_FREE_RATE, sigma) / 100.0,
                             iv = sigma,
                         ),
+                    // BS-fallback: no live market for this strike. Usable for theoretical selection,
+                    // but the selector must NOT launch an order on it (would never get a tick).
+                    synthetic = true,
                 )
             }.getOrElse { e ->
                 logger.warn { "[$symbol] Failed to get greeks for strike $strike: ${e.message}" }

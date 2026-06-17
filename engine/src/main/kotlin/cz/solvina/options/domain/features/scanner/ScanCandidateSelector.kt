@@ -105,6 +105,19 @@ class ScanCandidateSelector(
             return null
         }
 
+        // P0.0 — never launch on a strike with no live market (Black-Scholes-fallback quote). The
+        // synthetic prices/greeks are fine for picking a strike, but an order on them never gets a
+        // tick → NO_MARKET_DATA abort. Skip cleanly and retry next scan when real data is present.
+        if (soldQuote.synthetic || boughtQuote.synthetic) {
+            logger.info {
+                "[$symbol] Skipping — selected legs lack live market data (BS-fallback): " +
+                    "sold=${soldQuote.contract.strike}(synthetic=${soldQuote.synthetic}) " +
+                    "bought=${boughtQuote.contract.strike}(synthetic=${boughtQuote.synthetic})"
+            }
+            tradeLogger.info { "SKIP   $symbol  no live option market for selected legs (BS-fallback)" }
+            return null
+        }
+
         // 5. Credit check — use mid for filters, bid side for the initial order price
         val midCredit =
             soldQuote.mid.amount
@@ -139,6 +152,17 @@ class ScanCandidateSelector(
             soldQuote.bid.amount
                 .subtract(boughtQuote.ask.amount)
                 .setScale(4, RoundingMode.HALF_UP)
+
+        // P1 — require the ACHIEVABLE combo credit (natural cross = soldBid − boughtAsk) to clear the
+        // min-credit floor. Selecting off mid while the real combo bid sits below the floor was the
+        // other no-fill cause: the order could never fill at a credit we'd accept. Skip, don't launch.
+        if (bidCredit < minCreditPerShare) {
+            logger.info {
+                "[$symbol] Skipping — achievable combo bid \$$bidCredit < min credit \$$minCreditPerShare (would never fill at floor)"
+            }
+            tradeLogger.info { "SKIP   $symbol  combo_bid=\$$bidCredit < floor=\$$minCreditPerShare" }
+            return null
+        }
 
         val floorCredit = bidCredit.max(minCreditPerShare).setScale(4, RoundingMode.HALF_UP)
 

@@ -213,6 +213,81 @@ class IbkrContractCache(
         return conId
     }
 
+    /**
+     * Proactively resolve the authoritative (verified) strike set for an expiry+right with ONE
+     * reqContractDetails, caching both the strike set AND every strike's conId. Called during the
+     * scan so candidate selection only ever sees real, tradeable strikes (no phantoms), and so
+     * execution finds the conId already cached (no per-entry contract-details storm / ambiguous
+     * minimal-spec fallback that yields IBKR error 200 → no tick → no fill). Returns null if the
+     * lookup fails/times out — the caller should skip the symbol for this cycle.
+     */
+    suspend fun getOrFetchVerifiedStrikes(
+        symbol: Symbol,
+        expiry: LocalDate,
+        optionType: OptionType,
+    ): Set<BigDecimal>? {
+        verifiedStrikes[VerifiedKey(symbol, expiry, optionType)]?.let { return it }
+        evictExpired()
+
+        val reqId = registry.nextReqId()
+        val deferred = CompletableDeferred<List<com.ib.client.ContractDetails>>()
+        registry.pendingContractDetails[reqId] = PendingContractRequest(deferred, CopyOnWriteArrayList())
+
+        val cachedParams = optionParamsCache.getCached(symbol)
+        val cachedExchange = cachedParams?.exchange
+        val cachedTradingClass = cachedParams?.tradingClass
+        val def = contractFactory.defFor(symbol)
+        val searchContract =
+            com.ib.client.Contract().apply {
+                symbol(symbol.value)
+                secType("OPT")
+                currency(def.currency)
+                lastTradeDateOrContractMonth(
+                    expiry.format(
+                        java.time.format.DateTimeFormatter
+                            .ofPattern("yyyyMMdd"),
+                    ),
+                )
+                right(optionType.ibkrCode)
+            }
+
+        val details: List<com.ib.client.ContractDetails> =
+            rateLimiter.withContractDetails {
+                client.reqContractDetails(reqId, searchContract)
+                withTimeoutOrNull(5000L) { deferred.await() }
+                    ?: run {
+                        registry.pendingContractDetails.remove(reqId)
+                        registry.timedOutReqIds.add(reqId)
+                        logger.warn { "[$symbol $expiry $optionType] Verified-strikes lookup timeout (5s) — skipping symbol this cycle" }
+                        null
+                    }
+            } ?: return null
+
+        val actualStrikes = details.map { it.contract().strike() }.toSet()
+        verifiedStrikes[VerifiedKey(symbol, expiry, optionType)] =
+            actualStrikes.mapTo(TreeSet()) { BigDecimal(it.toString()) }
+
+        // Warm the per-strike conId cache (prefer the primary series) so execution resolves instantly.
+        details
+            .groupBy { it.contract().strike() }
+            .forEach { (strike, group) ->
+                val chosen =
+                    group.firstOrNull { d ->
+                        (cachedExchange == null || d.contract().exchange() == cachedExchange) &&
+                            (cachedTradingClass.isNullOrBlank() || d.contract().tradingClass() == cachedTradingClass)
+                    } ?: group.firstOrNull()
+                chosen?.contract()?.conid()?.let { conId ->
+                    optionConIds.putIfAbsent(
+                        OptionContractKey(symbol, expiry, BigDecimal(strike.toString()), optionType),
+                        conId,
+                    )
+                }
+            }
+
+        logger.debug { "[$symbol $expiry] Verified ${actualStrikes.size} strikes + warmed conIds (proactive)" }
+        return verifiedStrikes[VerifiedKey(symbol, expiry, optionType)]
+    }
+
     fun isMissing(key: OptionContractKey): Boolean =
         missingContracts[key]?.let { Duration.between(it, Instant.now()) < missingContractTtl } ?: false
 
