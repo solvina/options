@@ -6,6 +6,7 @@ import com.ib.client.Order
 import com.ib.client.OrderCancel
 import cz.solvina.options.adapters.outbound.ibkr.IbkrConnectionConfig
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
+import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import cz.solvina.options.domain.features.flag.BracketOrderIds
 import cz.solvina.options.domain.features.flag.BracketOrderPort
@@ -28,6 +29,7 @@ class IbkrBracketOrderAdapter(
     private val client: EClientSocket,
     private val contractFactory: IbkrContractFactory,
     private val connectionConfig: IbkrConnectionConfig,
+    private val contractCache: IbkrContractCache,
 ) : BracketOrderPort {
     override suspend fun submitBracketOrder(
         symbol: Symbol,
@@ -38,6 +40,17 @@ class IbkrBracketOrderAdapter(
     ): BracketOrderIds {
         val contract = contractFactory.stockContract(symbol)
         val qty = Decimal.get(shares.toLong())
+
+        // Snap all three prices to the contract's valid tick grid. Raw pattern-derived prices (e.g.
+        // 137.03 for an EU stock that ticks in 0.05) are rejected by IBKR with error 110.
+        val entry = contractCache.roundToTick(symbol, entryPrice)
+        val stop = contractCache.roundToTick(symbol, stopLossPrice)
+        val pt = contractCache.roundToTick(symbol, profitTargetPrice)
+        if (entry.compareTo(entryPrice) != 0 || stop.compareTo(stopLossPrice) != 0 || pt.compareTo(profitTargetPrice) != 0) {
+            logger.info {
+                "[$symbol] Rounded bracket prices to tick: entry $entryPrice→$entry stop $stopLossPrice→$stop pt $profitTargetPrice→$pt"
+            }
+        }
         val ocaGroup = "FLAG_${symbol.value}_${System.currentTimeMillis()}"
 
         val entryId = registry.nextOrderId()
@@ -49,7 +62,7 @@ class IbkrBracketOrderAdapter(
             Order().apply {
                 action("BUY")
                 orderType("STP")
-                auxPrice(entryPrice.toDouble())
+                auxPrice(entry.toDouble())
                 totalQuantity(qty)
                 tif("DAY")
                 transmit(false) // hold — submit as a group
@@ -61,7 +74,7 @@ class IbkrBracketOrderAdapter(
             Order().apply {
                 action("SELL")
                 orderType("STP")
-                auxPrice(stopLossPrice.toDouble())
+                auxPrice(stop.toDouble())
                 totalQuantity(qty)
                 tif("GTC")
                 parentId(entryId)
@@ -76,7 +89,7 @@ class IbkrBracketOrderAdapter(
             Order().apply {
                 action("SELL")
                 orderType("LMT")
-                lmtPrice(profitTargetPrice.toDouble())
+                lmtPrice(pt.toDouble())
                 totalQuantity(qty)
                 tif("GTC")
                 parentId(entryId)
@@ -92,7 +105,7 @@ class IbkrBracketOrderAdapter(
         registry.pendingOrderStatus[ptId] = CompletableDeferred()
 
         logger.info {
-            "[$symbol] Placing bracket order: entry=$entryPrice SL=$stopLossPrice PT=$profitTargetPrice " +
+            "[$symbol] Placing bracket order: entry=$entry SL=$stop PT=$pt " +
                 "qty=$shares entryId=$entryId slId=$slId ptId=$ptId ocaGroup=$ocaGroup"
         }
 

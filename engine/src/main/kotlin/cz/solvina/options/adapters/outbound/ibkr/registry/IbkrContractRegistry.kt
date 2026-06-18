@@ -1,6 +1,7 @@
 package cz.solvina.options.adapters.outbound.ibkr.registry
 
 import com.ib.client.ContractDetails
+import com.ib.client.PriceIncrement
 import cz.solvina.options.adapters.outbound.ibkr.cache.OptionParams
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CompletableDeferred
@@ -37,6 +38,24 @@ class IbkrContractRegistry(
     // Tracks reqIds that timed out on our side — late IBKR responses for these are discarded
     // to prevent stale callbacks from completing a recycled reqId's deferred with wrong data.
     internal val timedOutReqIds = ConcurrentHashMap.newKeySet<Int>()
+
+    // Market-rule (price-increment) tables keyed by IBKR marketRuleId. Used to round order prices
+    // to the contract's valid tick grid (MiFID II tick size is price-banded for EU equities).
+    private val marketRuleCache = ConcurrentHashMap<Int, List<PriceIncrement>>()
+    private val pendingMarketRules = ConcurrentHashMap<Int, CompletableDeferred<List<PriceIncrement>>>()
+
+    fun cachedMarketRule(marketRuleId: Int): List<PriceIncrement>? = marketRuleCache[marketRuleId]
+
+    fun registerMarketRule(marketRuleId: Int): CompletableDeferred<List<PriceIncrement>> =
+        pendingMarketRules.getOrPut(marketRuleId) { CompletableDeferred() }
+
+    fun onMarketRule(
+        marketRuleId: Int,
+        increments: List<PriceIncrement>,
+    ) {
+        marketRuleCache[marketRuleId] = increments
+        pendingMarketRules.remove(marketRuleId)?.complete(increments)
+    }
 
     fun nextReqId(): Int = idCounter.next()
 

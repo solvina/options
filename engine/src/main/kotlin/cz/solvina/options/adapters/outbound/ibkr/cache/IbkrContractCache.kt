@@ -1,6 +1,7 @@
 package cz.solvina.options.adapters.outbound.ibkr.cache
 
 import com.ib.client.EClientSocket
+import com.ib.client.PriceIncrement
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.IbkrRateLimiter
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrContractRegistry
@@ -19,6 +20,7 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.context.annotation.Lazy
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
+import java.math.RoundingMode
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
@@ -39,6 +41,15 @@ class IbkrContractCache(
     @Lazy @Autowired
     private lateinit var optionParamsCache: IbkrOptionParamsCache
     private val underlyingConIds = ConcurrentHashMap<Symbol, Int>()
+
+    // Tick metadata for the underlying stock, captured from its ContractDetails. minTick is the
+    // finest increment; marketRuleIds (CSV) lets us resolve the price-banded tick (MiFID II).
+    private data class StockTickMeta(
+        val minTick: Double,
+        val marketRuleIds: String,
+    )
+
+    private val stockTickMeta = ConcurrentHashMap<Symbol, StockTickMeta>()
     private val optionConIds = ConcurrentHashMap<OptionContractKey, Int>()
     private val inFlightOptionConIds = ConcurrentHashMap<OptionContractKey, Deferred<Int>>()
 
@@ -86,9 +97,69 @@ class IbkrContractCache(
             details.firstOrNull()?.contract()?.conid()
                 ?: error("No stock contract found for $symbol")
 
+        details.firstOrNull()?.let { cd ->
+            stockTickMeta[symbol] = StockTickMeta(minTick = cd.minTick(), marketRuleIds = cd.marketRuleIds() ?: "")
+        }
+
         underlyingConIds[symbol] = conId
         logger.debug { "[$symbol] Underlying conId = $conId" }
         return conId
+    }
+
+    /**
+     * Rounds [price] to the underlying stock's valid tick grid so order prices don't get rejected
+     * with IBKR error 110 ("price does not conform to the minimum price variation"). EU equities
+     * (MiFID II) have price-banded ticks, so we prefer the market-rule increment for the price band
+     * and fall back to the contract's [StockTickMeta.minTick]. No-op (2dp) if no metadata is available.
+     */
+    suspend fun roundToTick(
+        symbol: Symbol,
+        price: BigDecimal,
+    ): BigDecimal {
+        val tick = tickSizeFor(symbol, price.toDouble())
+        if (tick <= 0.0) return price.setScale(2, RoundingMode.HALF_UP)
+        val tickBd = BigDecimal.valueOf(tick)
+        val scale = maxOf(tickBd.stripTrailingZeros().scale(), 0)
+        return price
+            .divide(tickBd, 0, RoundingMode.HALF_UP)
+            .multiply(tickBd)
+            .setScale(scale, RoundingMode.HALF_UP)
+    }
+
+    private suspend fun tickSizeFor(
+        symbol: Symbol,
+        price: Double,
+    ): Double {
+        val meta =
+            stockTickMeta[symbol] ?: run {
+                runCatching { getOrFetchUnderlyingConId(symbol) } // side-effect: populates stockTickMeta
+                stockTickMeta[symbol]
+            } ?: return 0.0
+
+        // Prefer the price-banded market rule (MiFID II). marketRuleIds is a CSV aligned with the
+        // contract's exchanges; the first id is the primary listing's rule.
+        meta.marketRuleIds
+            .split(",")
+            .firstOrNull { it.isNotBlank() }
+            ?.trim()
+            ?.toIntOrNull()
+            ?.let { ruleId ->
+                getOrFetchMarketRule(ruleId)
+                    ?.filter { it.lowEdge() <= price }
+                    ?.maxByOrNull { it.lowEdge() }
+                    ?.increment()
+                    ?.takeIf { it > 0.0 }
+                    ?.let { return it }
+            }
+
+        return meta.minTick.takeIf { it > 0.0 } ?: 0.0
+    }
+
+    private suspend fun getOrFetchMarketRule(marketRuleId: Int): List<PriceIncrement>? {
+        registry.cachedMarketRule(marketRuleId)?.let { return it }
+        val deferred = registry.registerMarketRule(marketRuleId)
+        client.reqMarketRule(marketRuleId)
+        return withTimeoutOrNull(3_000L) { deferred.await() }
     }
 
     suspend fun getOrFetchOptionConId(key: OptionContractKey): Int {

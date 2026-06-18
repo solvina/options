@@ -815,7 +815,8 @@ class IbkrEWrapper(
         marketRuleId: Int,
         priceIncrements: Array<out PriceIncrement>,
     ) {
-        logger.debug { "marketRule: marketRuleId=$marketRuleId" }
+        logger.debug { "marketRule: marketRuleId=$marketRuleId increments=${priceIncrements.size}" }
+        contractRegistry.onMarketRule(marketRuleId, priceIncrements.toList())
     }
 
     override fun pnl(
