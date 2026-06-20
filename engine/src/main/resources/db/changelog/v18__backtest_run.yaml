@@ -9,26 +9,109 @@ databaseChangeLog:
         - createTable:
             tableName: backtest_run
             columns:
-              - column: { name: id, type: UUID, constraints: { primaryKey: true, nullable: false } }
-              - column: { name: created_at, type: TIMESTAMP WITH TIME ZONE, constraints: { nullable: false } }
-              - column: { name: label, type: TEXT }
-              - column: { name: strategy, type: TEXT, constraints: { nullable: false } }
-              - column: { name: from_date, type: DATE, constraints: { nullable: false } }
-              - column: { name: to_date, type: DATE, constraints: { nullable: false } }
-              - column: { name: symbols, type: TEXT, constraints: { nullable: false } }
-              - column: { name: params_json, type: TEXT, constraints: { nullable: false } }
-              - column: { name: initial_capital, type: NUMERIC(18, 2), constraints: { nullable: false } }
-              - column: { name: final_capital, type: NUMERIC(18, 2), constraints: { nullable: false } }
-              - column: { name: total_pnl, type: NUMERIC(18, 2), constraints: { nullable: false } }
-              - column: { name: total_pnl_pct, type: NUMERIC(10, 4), constraints: { nullable: false } }
-              - column: { name: trade_count, type: INT, constraints: { nullable: false } }
-              - column: { name: win_count, type: INT, constraints: { nullable: false } }
-              - column: { name: loss_count, type: INT, constraints: { nullable: false } }
-              - column: { name: eod_count, type: INT, constraints: { nullable: false } }
-              - column: { name: win_rate, type: DOUBLE PRECISION, constraints: { nullable: false } }
-              - column: { name: avg_r_multiple, type: NUMERIC(10, 4) }
-              - column: { name: avg_win_r, type: NUMERIC(10, 4) }
-              - column: { name: avg_loss_r, type: NUMERIC(10, 4) }
-              - column: { name: profit_factor, type: NUMERIC(12, 4) }
-              - column: { name: max_drawdown_pct, type: NUMERIC(10, 4), constraints: { nullable: false } }
-              - column: { name: trades_json, type: TEXT, constraints: { nullable: false } }
+              - column:
+                  name: id
+                  type: UUID
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: created_at
+                  type: TIMESTAMP WITH TIME ZONE
+                  constraints:
+                    nullable: false
+              - column:
+                  name: label
+                  type: TEXT
+              - column:
+                  name: strategy
+                  type: TEXT
+                  constraints:
+                    nullable: false
+              - column:
+                  name: from_date
+                  type: DATE
+                  constraints:
+                    nullable: false
+              - column:
+                  name: to_date
+                  type: DATE
+                  constraints:
+                    nullable: false
+              - column:
+                  name: symbols
+                  type: TEXT
+                  constraints:
+                    nullable: false
+              - column:
+                  name: params_json
+                  type: TEXT
+                  constraints:
+                    nullable: false
+              - column:
+                  name: initial_capital
+                  type: NUMERIC(18, 2)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: final_capital
+                  type: NUMERIC(18, 2)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: total_pnl
+                  type: NUMERIC(18, 2)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: total_pnl_pct
+                  type: NUMERIC(10, 4)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: trade_count
+                  type: INT
+                  constraints:
+                    nullable: false
+              - column:
+                  name: win_count
+                  type: INT
+                  constraints:
+                    nullable: false
+              - column:
+                  name: loss_count
+                  type: INT
+                  constraints:
+                    nullable: false
+              - column:
+                  name: eod_count
+                  type: INT
+                  constraints:
+                    nullable: false
+              - column:
+                  name: win_rate
+                  type: DOUBLE PRECISION
+                  constraints:
+                    nullable: false
+              - column:
+                  name: avg_r_multiple
+                  type: NUMERIC(10, 4)
+              - column:
+                  name: avg_win_r
+                  type: NUMERIC(10, 4)
+              - column:
+                  name: avg_loss_r
+                  type: NUMERIC(10, 4)
+              - column:
+                  name: profit_factor
+                  type: NUMERIC(12, 4)
+              - column:
+                  name: max_drawdown_pct
+                  type: NUMERIC(10, 4)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: trades_json
+                  type: TEXT
+                  constraints:
+                    nullable: false
