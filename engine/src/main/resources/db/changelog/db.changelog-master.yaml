@@ -23,3 +23,5 @@ databaseChangeLog:
       file: db/changelog/v16__iv_rank_cache.yaml
   - include:
       file: db/changelog/v17__flag_enabled_universe_expansion.yaml
+  - include:
+      file: db/changelog/v18__backtest_run.yaml
