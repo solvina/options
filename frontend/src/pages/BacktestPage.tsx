@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 
 interface BacktestTradeDto {
   id: string
@@ -49,6 +49,34 @@ interface BacktestResult {
   avgLossR: number | null
   profitFactor: number | null
   maxDrawdownPct: number
+  trades: BacktestTradeDto[]
+}
+
+interface RunOverview {
+  id: string
+  createdAt: string
+  label: string | null
+  strategy: string
+  from: string
+  to: string
+  symbols: string[]
+  initialCapital: number
+  finalCapital: number
+  totalPnl: number
+  totalPnlPct: number
+  tradeCount: number
+  winCount: number
+  lossCount: number
+  eodCount: number
+  winRate: number
+  avgRMultiple: number | null
+  profitFactor: number | null
+  maxDrawdownPct: number
+}
+
+interface RunDetail {
+  overview: RunOverview
+  params: Record<string, unknown>
   trades: BacktestTradeDto[]
 }
 
@@ -177,6 +205,164 @@ function TradesTable({ trades }: { trades: BacktestTradeDto[] }) {
   )
 }
 
+/** Rebuilds a BacktestResult from a persisted run so the existing SummaryGrid/TradesTable can render
+ *  it. avgWinR/avgLossR aren't in the overview, so derive them from the per-trade R-multiples. */
+function overviewToResult(d: RunDetail): BacktestResult {
+  const wins = d.trades.map(t => t.rMultiple).filter((r): r is number => r != null && r > 0)
+  const losses = d.trades.map(t => t.rMultiple).filter((r): r is number => r != null && r < 0)
+  const avg = (a: number[]): number | null => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : null)
+  const o = d.overview
+  return {
+    symbols: o.symbols,
+    from: o.from,
+    to: o.to,
+    initialCapital: o.initialCapital,
+    finalCapital: o.finalCapital,
+    totalPnl: o.totalPnl,
+    totalPnlPct: o.totalPnlPct,
+    tradeCount: o.tradeCount,
+    winCount: o.winCount,
+    lossCount: o.lossCount,
+    eodCount: o.eodCount,
+    winRate: o.winRate,
+    avgRMultiple: o.avgRMultiple,
+    avgWinR: avg(wins),
+    avgLossR: avg(losses),
+    profitFactor: o.profitFactor,
+    maxDrawdownPct: o.maxDrawdownPct,
+    trades: d.trades,
+  }
+}
+
+/** Shows the exact parameters a run used (so they can be read off and re-run). */
+function ParamsBlock({ params }: { params: Record<string, unknown> }) {
+  const entries = Object.entries(params).filter(([, v]) => v != null)
+  if (entries.length === 0) return null
+  return (
+    <div className="flex flex-wrap gap-2">
+      {entries.map(([k, v]) => (
+        <span key={k} className="inline-flex items-center rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+          <span className="font-medium text-foreground/80">{k}:</span>
+          &nbsp;{Array.isArray(v) ? v.join(',') : String(v)}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+/** Browse persisted backtest runs and open one to view its params + summary + trades. */
+function BacktestHistory({ reloadSignal }: { reloadSignal: number }) {
+  const [runs, setRuns] = useState<RunOverview[]>([])
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [selected, setSelected] = useState<RunDetail | null>(null)
+  const [selectedLoading, setSelectedLoading] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    fetch('/api/backtest/runs')
+      .then(r => {
+        if (!r.ok) throw new Error(`${r.status}`)
+        return r.json()
+      })
+      .then((d: RunOverview[]) => {
+        if (!cancelled) setRuns(d)
+      })
+      .catch(e => {
+        if (!cancelled) setError(String(e))
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [reloadSignal])
+
+  async function openRun(id: string) {
+    setSelectedLoading(true)
+    setError(null)
+    try {
+      const res = await fetch(`/api/backtest/runs/${id}`)
+      if (!res.ok) throw new Error(`${res.status}`)
+      setSelected(await res.json())
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setSelectedLoading(false)
+    }
+  }
+
+  return (
+    <section className="space-y-3">
+      <h2 className="text-base font-medium">History ({runs.length})</h2>
+      {error && <p className="text-sm text-red-600 dark:text-red-400">Error: {error}</p>}
+      {loading && <p className="text-sm text-muted-foreground">Loading…</p>}
+      {!loading && runs.length === 0 && <p className="text-sm text-muted-foreground">No saved runs yet.</p>}
+      {runs.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-border text-left text-muted-foreground">
+                {['When', 'Label', 'Period', 'Symbols', 'Trades', 'Win%', 'P&L', 'PF', 'Max DD', ''].map(h => (
+                  <th key={h} className="pb-2 pr-3 font-medium whitespace-nowrap">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {runs.map(r => {
+                const pnlColor = r.totalPnl >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'
+                return (
+                  <tr
+                    key={r.id}
+                    onClick={() => openRun(r.id)}
+                    className={`border-b border-border/40 last:border-0 hover:bg-muted/30 transition-colors cursor-pointer ${selected?.overview.id === r.id ? 'bg-muted/40' : ''}`}
+                  >
+                    <td className="py-1.5 pr-3 tabular-nums text-muted-foreground whitespace-nowrap">
+                      {new Date(r.createdAt).toLocaleString('en-GB', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    </td>
+                    <td className="py-1.5 pr-3 max-w-[12rem] truncate">{r.label ?? '—'}</td>
+                    <td className="py-1.5 pr-3 whitespace-nowrap">{r.from} – {r.to}</td>
+                    <td className="py-1.5 pr-3 font-mono max-w-[10rem] truncate">{r.symbols.join(', ')}</td>
+                    <td className="py-1.5 pr-3 tabular-nums">{r.tradeCount}</td>
+                    <td className="py-1.5 pr-3 tabular-nums">{fmtPct(r.winRate * 100)}</td>
+                    <td className={`py-1.5 pr-3 tabular-nums font-medium ${pnlColor}`}>{fmtMoney(r.totalPnl)}</td>
+                    <td className="py-1.5 pr-3 tabular-nums">{fmt(r.profitFactor)}</td>
+                    <td className="py-1.5 pr-3 tabular-nums">{fmtPct(r.maxDrawdownPct)}</td>
+                    <td className="py-1.5 pr-3 text-muted-foreground whitespace-nowrap">view →</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {selectedLoading && <p className="text-sm text-muted-foreground">Loading run…</p>}
+      {selected && (
+        <div className="border border-border rounded-lg p-4 space-y-4 bg-muted/10">
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-sm font-medium">
+              {selected.overview.label ?? selected.overview.id.slice(0, 8)}
+              <span className="ml-2 text-xs font-normal text-muted-foreground">
+                {selected.overview.symbols.join(', ')} · {selected.overview.from} – {selected.overview.to}
+              </span>
+            </div>
+            <button onClick={() => setSelected(null)} className="text-xs text-muted-foreground hover:text-foreground">close ✕</button>
+          </div>
+          <ParamsBlock params={selected.params} />
+          <SummaryGrid r={overviewToResult(selected)} />
+          <div>
+            <h3 className="text-sm font-medium mb-2">Trades ({selected.trades.length})</h3>
+            <TradesTable trades={selected.trades} />
+          </div>
+        </div>
+      )}
+    </section>
+  )
+}
+
 export function BacktestPage() {
   const [symbols, setSymbols] = useState('SPY')
   const [from, setFrom] = useState(monthsAgo(3))
@@ -198,6 +384,7 @@ export function BacktestPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<BacktestResult | null>(null)
+  const [reloadSignal, setReloadSignal] = useState(0)
 
   async function run() {
     setLoading(true)
@@ -228,6 +415,7 @@ export function BacktestPage() {
         throw new Error(`${res.status}: ${text}`)
       }
       setResult(await res.json())
+      setReloadSignal(s => s + 1) // refresh the history list with the newly-saved run
     } catch (e) {
       setError(String(e))
     } finally {
@@ -357,6 +545,9 @@ export function BacktestPage() {
           </section>
         </div>
       )}
+
+      {/* Saved-run history */}
+      <BacktestHistory reloadSignal={reloadSignal} />
     </div>
   )
 }
