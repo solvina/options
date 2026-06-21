@@ -6,6 +6,7 @@ import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
 import java.math.BigDecimal
 import java.math.RoundingMode
+import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZoneOffset
@@ -29,6 +30,9 @@ class BacktestEngine(
         /** When set, exits use a trailing stop [this]×R below the running peak (no fixed target) —
          *  rides the move and exits on pullback. Typically combined with holdOvernight. */
         val trailStopRMultiple: Double? = null,
+        /** Detection/exit timeframe in minutes. Stored data is 5-min; 10/15/… are aggregated from it
+         *  (exact, since they're multiples). Must be a multiple of 5. */
+        val barMinutes: Int = 5,
     )
 
     data class Summary(
@@ -84,8 +88,11 @@ class BacktestEngine(
                     .plusDays(1)
                     .atStartOfDay(ZoneOffset.UTC)
                     .toInstant()
-            val bars = barStore.readBars(symbol, fromInstant, toInstant)
-            logger.info { "[${symbol.value}] Loaded ${bars.size} bars ($warmupFrom..${request.to})" }
+            val raw = barStore.readBars(symbol, fromInstant, toInstant)
+            val bars = aggregateBars(raw, request.barMinutes)
+            logger.info {
+                "[${symbol.value}] Loaded ${raw.size} 5-min bars → ${bars.size} ${request.barMinutes}-min bars"
+            }
             allBars[symbol] = bars
         }
 
@@ -317,6 +324,30 @@ class BacktestEngine(
     // -------------------------------------------------------------------------
     // Fill simulation
     // -------------------------------------------------------------------------
+
+    /** Aggregates 5-min bars into clock-aligned [barMinutes]-minute OHLCV bars (no-op if 5).
+     *  10/15/… min are exact multiples of 5-min, so this is lossless vs natively-fetched bars. */
+    private fun aggregateBars(
+        bars: List<FiveMinuteBar>,
+        barMinutes: Int,
+    ): List<FiveMinuteBar> {
+        if (barMinutes <= 5 || bars.isEmpty()) return bars
+        val bucketSec = barMinutes * 60L
+        return bars
+            .groupBy { it.time.epochSecond / bucketSec }
+            .toSortedMap()
+            .map { (bucket, group) ->
+                val sorted = group.sortedBy { it.time }
+                FiveMinuteBar(
+                    time = Instant.ofEpochSecond(bucket * bucketSec),
+                    open = sorted.first().open,
+                    high = sorted.maxOf { it.high },
+                    low = sorted.minOf { it.low },
+                    close = sorted.last().close,
+                    volume = sorted.sumOf { it.volume },
+                )
+            }
+    }
 
     private fun simulateEntry(
         bar: FiveMinuteBar,
