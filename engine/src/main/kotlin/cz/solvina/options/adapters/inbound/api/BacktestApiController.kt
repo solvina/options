@@ -57,6 +57,7 @@ class BacktestApiController(
         val profitTargetR: Double = 2.0,
         val stopAtrMultiple: Double? = null,
         val holdOvernight: Boolean = false,
+        val trailStopRMultiple: Double? = null,
     )
 
     data class FlagBacktestResponse(
@@ -151,6 +152,7 @@ class BacktestApiController(
                 initialCapital = request.initialCapital,
                 maxOpenPositions = request.maxOpenPositions,
                 holdOvernight = request.holdOvernight,
+                trailStopRMultiple = request.trailStopRMultiple,
             )
 
         val result = engine.run<FlagPosition>(engineRequest, strategy)

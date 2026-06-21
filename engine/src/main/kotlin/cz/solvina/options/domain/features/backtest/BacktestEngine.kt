@@ -26,6 +26,9 @@ class BacktestEngine(
         /** When true, positions are NOT force-closed at day end — they hold until stop/target hit
          *  (multi-day swing), instead of the default intraday EOD liquidation. */
         val holdOvernight: Boolean = false,
+        /** When set, exits use a trailing stop [this]×R below the running peak (no fixed target) —
+         *  rides the move and exits on pullback. Typically combined with holdOvernight. */
+        val trailStopRMultiple: Double? = null,
     )
 
     data class Summary(
@@ -163,10 +166,13 @@ class BacktestEngine(
                 // 2. Check exits for open positions
                 val toClose = mutableListOf<OpenPosition>()
                 for (op in open.filter { it.signal.symbol == symbol }) {
+                    // Peak through the PREVIOUS bar — the trailing stop on this bar trails off that,
+                    // not this bar's own high (avoids within-bar lookahead).
+                    val peakBeforeBar = op.highestSeen
                     op.highestSeen = op.highestSeen.max(BigDecimal.valueOf(bar.high))
                     op.lowestSeen = op.lowestSeen.min(BigDecimal.valueOf(bar.low))
 
-                    val (closePrice, reason) = simulateExit(bar, op) ?: continue
+                    val (closePrice, reason) = simulateExit(bar, op, peakBeforeBar, request.trailStopRMultiple) ?: continue
                     val pnl =
                         closePrice
                             .subtract(op.actualEntryPrice)
@@ -186,6 +192,7 @@ class BacktestEngine(
                         "profit_target" -> winCount++
                         "stop_loss" -> lossCount++
                         "eod_liquidation" -> eodCount++
+                        "trailing_stop" -> if (pnl >= BigDecimal.ZERO) winCount++ else lossCount++
                     }
                     strategy.onPositionClosed(op.signal.tradeId, closePrice, reason, bar.time, op.highestSeen, op.lowestSeen)
                     toClose.add(op)
@@ -330,8 +337,23 @@ class BacktestEngine(
     private fun simulateExit(
         bar: FiveMinuteBar,
         op: OpenPosition,
+        peakBeforeBar: BigDecimal,
+        trailStopRMultiple: Double?,
     ): Pair<BigDecimal, String>? {
         val sl = op.signal.stopLossPrice.toDouble()
+
+        // Trailing-stop mode: no fixed target — exit when price pulls back to [trail]×R below the
+        // running peak. The trail never sits below the initial stop.
+        if (trailStopRMultiple != null) {
+            val riskPerShare = op.signal.entryPrice.toDouble() - sl
+            val trailStop = maxOf(sl, peakBeforeBar.toDouble() - trailStopRMultiple * riskPerShare)
+            return when {
+                bar.open <= trailStop -> BigDecimal.valueOf(bar.open) to "trailing_stop" // gap below
+                bar.low <= trailStop -> BigDecimal.valueOf(trailStop).setScale(2, RoundingMode.HALF_UP) to "trailing_stop"
+                else -> null
+            }
+        }
+
         val pt = op.signal.profitTargetPrice.toDouble()
         return when {
             bar.open <= sl -> BigDecimal.valueOf(bar.open) to "stop_loss" // gap-down through stop

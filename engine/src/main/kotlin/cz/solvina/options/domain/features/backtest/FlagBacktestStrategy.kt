@@ -155,6 +155,7 @@ class FlagBacktestStrategy(
                 "profit_target" -> FlagStatus.CLOSED_PROFIT
                 "stop_loss" -> FlagStatus.CLOSED_STOP
                 "eod_liquidation" -> FlagStatus.CLOSED_EOD
+                "trailing_stop" -> if (pnl >= BigDecimal.ZERO) FlagStatus.CLOSED_PROFIT else FlagStatus.CLOSED_STOP
                 else -> FlagStatus.CLOSED_MANUAL
             }
         completed.add(
