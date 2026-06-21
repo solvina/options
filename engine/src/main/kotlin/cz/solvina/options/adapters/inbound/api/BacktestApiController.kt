@@ -53,6 +53,10 @@ class BacktestApiController(
         val maxFlagpoleAtrMultiple: Double? = null,
         val minFlagRetracementPct: Double? = null,
         val minFlagBarsForEntry: Int? = null,
+        // Exit / reward-risk levers (backtest-only sweep knobs)
+        val profitTargetR: Double = 2.0,
+        val stopAtrMultiple: Double? = null,
+        val holdOvernight: Boolean = false,
     )
 
     data class FlagBacktestResponse(
@@ -131,7 +135,13 @@ class BacktestApiController(
                 minFlagRetracementPct = request.minFlagRetracementPct ?: strategyConfig.minFlagRetracementPct,
                 minFlagBarsForEntry = request.minFlagBarsForEntry ?: strategyConfig.minFlagBarsForEntry,
             )
-        val strategy = FlagBacktestStrategy(effectiveStrategyConfig, tradingConfig)
+        val strategy =
+            FlagBacktestStrategy(
+                effectiveStrategyConfig,
+                tradingConfig,
+                profitTargetR = request.profitTargetR,
+                stopAtrMultiple = request.stopAtrMultiple,
+            )
         val engine = BacktestEngine(barStore)
         val engineRequest =
             BacktestEngine.Request(
@@ -140,6 +150,7 @@ class BacktestApiController(
                 to = request.to,
                 initialCapital = request.initialCapital,
                 maxOpenPositions = request.maxOpenPositions,
+                holdOvernight = request.holdOvernight,
             )
 
         val result = engine.run<FlagPosition>(engineRequest, strategy)

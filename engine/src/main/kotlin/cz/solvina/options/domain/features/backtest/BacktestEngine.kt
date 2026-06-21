@@ -23,6 +23,9 @@ class BacktestEngine(
         val maxOpenPositions: Int = 3,
         /** Calendar days before [from] to warm up the pattern detector. */
         val warmupDays: Long = 10L,
+        /** When true, positions are NOT force-closed at day end — they hold until stop/target hit
+         *  (multi-day swing), instead of the default intraday EOD liquidation. */
+        val holdOvernight: Boolean = false,
     )
 
     data class Summary(
@@ -200,9 +203,44 @@ class BacktestEngine(
                 }
             }
 
-            // EOD: liquidate all remaining open positions at last-bar close
+            // EOD: liquidate all remaining open positions at last-bar close — unless holdOvernight,
+            // in which case positions carry to the next day and exit only on stop/target.
+            if (!request.holdOvernight) {
+                for (op in open.toList()) {
+                    val lastBar = lastBarBySymbol[op.signal.symbol] ?: continue
+                    op.highestSeen = op.highestSeen.max(BigDecimal.valueOf(lastBar.high))
+                    op.lowestSeen = op.lowestSeen.min(BigDecimal.valueOf(lastBar.low))
+                    val closePrice = BigDecimal.valueOf(lastBar.close)
+                    val pnl =
+                        closePrice
+                            .subtract(op.actualEntryPrice)
+                            .multiply(BigDecimal(op.signal.shares))
+                            .setScale(2, RoundingMode.HALF_UP)
+                    capital = capital.add(pnl)
+                    val (newPeak, drawdown) = updateDrawdown(capital, peakCapital)
+                    peakCapital = newPeak
+                    if (drawdown > maxDrawdown) maxDrawdown = drawdown
+                    eodCount++
+                    recordRMultiple(pnl, op, rList, winRList, lossRList)
+                    if (pnl >= BigDecimal.ZERO) {
+                        totalWinPnl = totalWinPnl.add(pnl)
+                    } else {
+                        totalLossPnl = totalLossPnl.add(pnl.abs())
+                    }
+                    strategy.onPositionClosed(op.signal.tradeId, closePrice, "eod_liquidation", lastBar.time, op.highestSeen, op.lowestSeen)
+                }
+                open.clear()
+            }
+
+            // Expire unfilled pending entries (breakout entries are intraday; they don't carry over)
+            pending.forEach { strategy.onEntryExpired(it.signal.tradeId) }
+            pending.clear()
+        }
+
+        // holdOvernight: mark-to-market any positions still open at the end of the backtest window.
+        if (request.holdOvernight) {
             for (op in open.toList()) {
-                val lastBar = lastBarBySymbol[op.signal.symbol] ?: continue
+                val lastBar = backtestBars[op.signal.symbol]?.lastOrNull() ?: continue
                 op.highestSeen = op.highestSeen.max(BigDecimal.valueOf(lastBar.high))
                 op.lowestSeen = op.lowestSeen.min(BigDecimal.valueOf(lastBar.low))
                 val closePrice = BigDecimal.valueOf(lastBar.close)
@@ -217,18 +255,10 @@ class BacktestEngine(
                 if (drawdown > maxDrawdown) maxDrawdown = drawdown
                 eodCount++
                 recordRMultiple(pnl, op, rList, winRList, lossRList)
-                if (pnl >= BigDecimal.ZERO) {
-                    totalWinPnl = totalWinPnl.add(pnl)
-                } else {
-                    totalLossPnl = totalLossPnl.add(pnl.abs())
-                }
+                if (pnl >= BigDecimal.ZERO) totalWinPnl = totalWinPnl.add(pnl) else totalLossPnl = totalLossPnl.add(pnl.abs())
                 strategy.onPositionClosed(op.signal.tradeId, closePrice, "eod_liquidation", lastBar.time, op.highestSeen, op.lowestSeen)
             }
             open.clear()
-
-            // Expire unfilled pending entries
-            pending.forEach { strategy.onEntryExpired(it.signal.tradeId) }
-            pending.clear()
         }
 
         val totalPnl = capital.subtract(request.initialCapital)

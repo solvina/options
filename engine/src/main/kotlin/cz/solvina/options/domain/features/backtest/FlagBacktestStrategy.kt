@@ -33,6 +33,9 @@ private val logger = KotlinLogging.logger {}
 class FlagBacktestStrategy(
     private val strategyConfig: FlagStrategyConfig,
     private val tradingConfig: FlagTradingConfig,
+    // Exit/R:R levers (live strategy is fixed at 2R + flag-low stop). Tunable here for backtest sweeps.
+    private val profitTargetR: Double = 2.0,
+    private val stopAtrMultiple: Double? = null,
 ) : BacktestableStrategy {
     private val detectors = mutableMapOf<Symbol, PatternDetector>()
     private val buffers = mutableMapOf<Symbol, BarBuffer>()
@@ -187,10 +190,15 @@ class FlagBacktestStrategy(
         session: String,
     ): BacktestSignal.OpenBracket? {
         val entryPrice = BigDecimal(state.resistanceLevel).setScale(2, RoundingMode.HALF_UP)
+        val bars = buffer.snapshot()
+        val atrAtEntry = AtrCalculator.atr(bars, strategyConfig.atrPeriod).takeIf { !it.isNaN() }
         val stopLossPrice =
-            BigDecimal(state.flag.lowestLow)
-                .subtract(BigDecimal("0.01"))
-                .setScale(2, RoundingMode.HALF_UP)
+            if (stopAtrMultiple != null && atrAtEntry != null && atrAtEntry > 0) {
+                // ATR-based stop instead of the flag low — wider stop, fewer noise stop-outs.
+                BigDecimal(entryPrice.toDouble() - stopAtrMultiple * atrAtEntry).setScale(2, RoundingMode.HALF_UP)
+            } else {
+                BigDecimal(state.flag.lowestLow).subtract(BigDecimal("0.01")).setScale(2, RoundingMode.HALF_UP)
+            }
         val risk = entryPrice.subtract(stopLossPrice).abs()
         if (risk <= BigDecimal.ZERO) return null
 
@@ -201,11 +209,8 @@ class FlagBacktestStrategy(
                 .coerceAtLeast(1)
         val profitTarget =
             entryPrice
-                .add(entryPrice.subtract(stopLossPrice).multiply(BigDecimal.valueOf(2)))
+                .add(entryPrice.subtract(stopLossPrice).multiply(BigDecimal.valueOf(profitTargetR)))
                 .setScale(2, RoundingMode.HALF_UP)
-
-        val bars = buffer.snapshot()
-        val atrAtEntry = AtrCalculator.atr(bars, strategyConfig.atrPeriod).takeIf { !it.isNaN() }
         val volumeMaRaw = VolumeAnalysis.volumeMa(bars, strategyConfig.volumeMaPeriod).takeIf { !it.isNaN() }
         val flagAvgVolume =
             state.flag.bars
