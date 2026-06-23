@@ -47,6 +47,13 @@ class FlagManagementService(
      * OPEN positions for the given market session (or all sessions when null).
      */
     suspend fun checkEodLiquidation(session: String? = null) {
+        // Hold-overnight mode (best config): eodLiqMinutesBeforeClose <= 0 disables EOD liquidation,
+        // so trailing-stop positions ride to their stop/target across days instead of being force-
+        // closed at the bell. Set the config value to 0 to enable hold-overnight.
+        if (flagTradingConfigPort.get().eodLiqMinutesBeforeClose <= 0) {
+            logger.debug { "EOD liquidation disabled (hold-overnight) — skipping" }
+            return
+        }
         val open = flagPort.findOpen()
         val toClose =
             when {

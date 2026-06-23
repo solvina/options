@@ -209,7 +209,7 @@ class FlagExecutionServiceTest {
             shares: Int,
             entryPrice: BigDecimal,
             stopLossPrice: BigDecimal,
-            profitTargetPrice: BigDecimal,
+            trailAmount: BigDecimal,
         ) = BracketOrderIds(entryOrderId = 1, stopLossOrderId = 2, profitTargetOrderId = 3)
 
         override suspend fun cancelOrder(orderId: Int) {}

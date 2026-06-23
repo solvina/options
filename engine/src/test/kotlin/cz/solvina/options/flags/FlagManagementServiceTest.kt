@@ -320,7 +320,7 @@ class FlagManagementServiceTest {
             shares: Int,
             entryPrice: BigDecimal,
             stopLossPrice: BigDecimal,
-            profitTargetPrice: BigDecimal,
+            trailAmount: BigDecimal,
         ) = throw UnsupportedOperationException("not needed in this test")
 
         override suspend fun cancelOrder(orderId: Int) {

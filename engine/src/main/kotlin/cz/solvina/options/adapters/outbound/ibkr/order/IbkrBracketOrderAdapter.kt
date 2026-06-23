@@ -36,28 +36,20 @@ class IbkrBracketOrderAdapter(
         shares: Int,
         entryPrice: BigDecimal,
         stopLossPrice: BigDecimal,
-        profitTargetPrice: BigDecimal,
+        trailAmount: BigDecimal,
     ): BracketOrderIds {
         val contract = contractFactory.stockContract(symbol)
         val qty = Decimal.get(shares.toLong())
 
-        // Snap all three prices to the contract's valid tick grid. Raw pattern-derived prices (e.g.
-        // 137.03 for an EU stock that ticks in 0.05) are rejected by IBKR with error 110.
+        // Snap prices/distance to the contract's valid tick grid (IBKR rejects off-grid with err 110).
         val entry = contractCache.roundToTick(symbol, entryPrice)
         val stop = contractCache.roundToTick(symbol, stopLossPrice)
-        val pt = contractCache.roundToTick(symbol, profitTargetPrice)
-        if (entry.compareTo(entryPrice) != 0 || stop.compareTo(stopLossPrice) != 0 || pt.compareTo(profitTargetPrice) != 0) {
-            logger.info {
-                "[$symbol] Rounded bracket prices to tick: entry $entryPrice→$entry stop $stopLossPrice→$stop pt $profitTargetPrice→$pt"
-            }
-        }
-        val ocaGroup = "FLAG_${symbol.value}_${System.currentTimeMillis()}"
+        val trail = contractCache.roundToTick(symbol, trailAmount)
 
         val entryId = registry.nextOrderId()
-        val slId = registry.nextOrderId()
-        val ptId = registry.nextOrderId()
+        val trailId = registry.nextOrderId()
 
-        // Parent: Stop-Market BUY
+        // Parent: Stop-Market BUY at the breakout level.
         val parent =
             Order().apply {
                 action("BUY")
@@ -65,55 +57,38 @@ class IbkrBracketOrderAdapter(
                 auxPrice(entry.toDouble())
                 totalQuantity(qty)
                 tif("DAY")
-                transmit(false) // hold — submit as a group
+                transmit(false) // hold — submit with the child
                 if (connectionConfig.account.isNotBlank()) account(connectionConfig.account)
             }
 
-        // Child 1: Stop-Market SELL (stop loss)
-        val stopLoss =
+        // Child: Trailing-Stop SELL — rides the move, exits on a [trail] pullback, never below the
+        // initial stop. GTC so it holds overnight (no fixed target, no EOD force-close) = best config.
+        val trailStop =
             Order().apply {
                 action("SELL")
-                orderType("STP")
-                auxPrice(stop.toDouble())
+                orderType("TRAIL")
+                auxPrice(trail.toDouble()) // trailing distance
+                trailStopPrice(stop.toDouble()) // initial stop trigger
                 totalQuantity(qty)
                 tif("GTC")
                 parentId(entryId)
-                ocaGroup(ocaGroup)
-                ocaType(1) // cancel other orders on fill
-                transmit(false)
+                transmit(true) // transmit the pair
                 if (connectionConfig.account.isNotBlank()) account(connectionConfig.account)
             }
 
-        // Child 2: Limit SELL (profit target) — transmit=true triggers the whole group
-        val profitTarget =
-            Order().apply {
-                action("SELL")
-                orderType("LMT")
-                lmtPrice(pt.toDouble())
-                totalQuantity(qty)
-                tif("GTC")
-                parentId(entryId)
-                ocaGroup(ocaGroup)
-                ocaType(1)
-                transmit(true) // transmit the entire bracket
-                if (connectionConfig.account.isNotBlank()) account(connectionConfig.account)
-            }
-
-        // Register deferreds before placing orders
         registry.pendingOrderStatus[entryId] = CompletableDeferred()
-        registry.pendingOrderStatus[slId] = CompletableDeferred()
-        registry.pendingOrderStatus[ptId] = CompletableDeferred()
+        registry.pendingOrderStatus[trailId] = CompletableDeferred()
 
         logger.info {
-            "[$symbol] Placing bracket order: entry=$entry SL=$stop PT=$pt " +
-                "qty=$shares entryId=$entryId slId=$slId ptId=$ptId ocaGroup=$ocaGroup"
+            "[$symbol] Placing entry + trailing stop: entry=$entry initialStop=$stop trail=$trail " +
+                "qty=$shares entryId=$entryId trailId=$trailId"
         }
 
         client.placeOrder(entryId, contract, parent)
-        client.placeOrder(slId, contract, stopLoss)
-        client.placeOrder(ptId, contract, profitTarget)
+        client.placeOrder(trailId, contract, trailStop)
 
-        return BracketOrderIds(entryId, slId, ptId)
+        // Single protective order — return its id as both stop and target so close logic cancels it.
+        return BracketOrderIds(entryId, trailId, trailId)
     }
 
     override suspend fun cancelOrder(orderId: Int) {

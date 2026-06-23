@@ -73,15 +73,19 @@ class FlagExecutionService(
                 .toInt()
                 .coerceAtLeast(1)
 
-        val profitTarget =
+        // Best config: trailing stop 2R behind the peak (no fixed target), held overnight. The
+        // trail distance is 2 × initial risk; profitTarget is kept only as a nominal display
+        // reference (entry + 2R) — the live protective exit is the trailing stop.
+        val trailAmount =
             request.entryPrice
-                .add(
-                    request.entryPrice.subtract(request.stopLossPrice).multiply(BigDecimal.valueOf(2)),
-                ).setScale(2, RoundingMode.HALF_UP)
+                .subtract(request.stopLossPrice)
+                .multiply(BigDecimal.valueOf(2))
+                .setScale(2, RoundingMode.HALF_UP)
+        val profitTarget = request.entryPrice.add(trailAmount).setScale(2, RoundingMode.HALF_UP)
 
         logger.info {
-            "[${request.symbol}] Submitting bracket order: entry=${request.entryPrice} " +
-                "stop=${request.stopLossPrice} pt=$profitTarget shares=$shares " +
+            "[${request.symbol}] Submitting entry + trailing stop: entry=${request.entryPrice} " +
+                "stop=${request.stopLossPrice} trail=\$$trailAmount shares=$shares " +
                 "risk=\$${risk.multiply(BigDecimal(shares)).setScale(2, RoundingMode.HALF_UP)}"
         }
 
@@ -92,7 +96,7 @@ class FlagExecutionService(
                     shares = shares,
                     entryPrice = request.entryPrice,
                     stopLossPrice = request.stopLossPrice,
-                    profitTargetPrice = profitTarget,
+                    trailAmount = trailAmount,
                 )
             }.getOrElse { e ->
                 logger.error(e) { "[${request.symbol}] Bracket order submission failed: ${e.message}" }

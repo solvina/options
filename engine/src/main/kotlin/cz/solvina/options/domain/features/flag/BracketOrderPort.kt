@@ -17,19 +17,21 @@ data class EntryFill(
 
 interface BracketOrderPort {
     /**
-     * Submits a native TWS bracket order:
+     * Submits an entry + trailing-stop exit (the backtest "best config": let winners run, no fixed
+     * target, hold overnight):
      * - Parent: Stop-Market BUY at [entryPrice]
-     * - Child 1: Stop-Market SELL at [stopLossPrice] (OCA group)
-     * - Child 2: Limit SELL at [profitTargetPrice] (OCA group)
+     * - Child: Trailing-Stop SELL — trailing distance [trailAmount], initial stop [stopLossPrice]
+     *   (TRAIL order, GTC).
      *
-     * Returns the three order IDs immediately (orders are live at IBKR before this returns).
+     * Returns order IDs immediately. The single trailing protective order's id is returned as both
+     * stopLossOrderId and profitTargetOrderId (so existing close logic cancels it).
      */
     suspend fun submitBracketOrder(
         symbol: Symbol,
         shares: Int,
         entryPrice: BigDecimal,
         stopLossPrice: BigDecimal,
-        profitTargetPrice: BigDecimal,
+        trailAmount: BigDecimal,
     ): BracketOrderIds
 
     /** Cancels the given order. Safe to call on already-cancelled orders (no-throw). */
