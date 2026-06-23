@@ -38,6 +38,11 @@ private val logger = KotlinLogging.logger {}
 
 private const val STALE_BAR_MINUTES = 10L
 
+// Minimum gap between (re)subscriptions of the same symbol. Prevents the watchdog from re-churning a
+// symbol every tick when its data farm is down — each churn can leak a server-side reqRealTimeBars
+// slot (IBKR error 456 "max real-time requests"), so we cap resubscribe frequency per symbol.
+private const val RESUBSCRIBE_COOLDOWN_MINUTES = 15L
+
 @Service
 class FlagScannerService(
     private val realTimeBarsPort: RealTimeBarsPort,
@@ -58,6 +63,9 @@ class FlagScannerService(
     private val aggregators = ConcurrentHashMap<Symbol, BarAggregator>()
     private val buffers = ConcurrentHashMap<Symbol, BarBuffer>()
     private val detectors = ConcurrentHashMap<Symbol, PatternDetector>()
+
+    // When each symbol was last (re)subscribed — bounds watchdog resubscribe frequency (anti-leak).
+    private val lastSubscribeAt = ConcurrentHashMap<Symbol, Instant>()
 
     // Serialises the open-position count check and order submission so two concurrent breakout
     // signals cannot both read below maxOpenPositions before either one persists PENDING.
@@ -115,15 +123,20 @@ class FlagScannerService(
         val anyMarketOpen = subscriptions.keys.any { universePort.isMarketOpen(it) }
         if (!anyMarketOpen) return
 
-        val staleThreshold = Instant.now(clock).minus(STALE_BAR_MINUTES, ChronoUnit.MINUTES)
+        val now = Instant.now(clock)
+        val staleThreshold = now.minus(STALE_BAR_MINUTES, ChronoUnit.MINUTES)
+        val cooldownThreshold = now.minus(RESUBSCRIBE_COOLDOWN_MINUTES, ChronoUnit.MINUTES)
         val stale =
             subscriptions.keys.filter { symbol ->
                 val lastBar = buffers[symbol]?.snapshot()?.lastOrNull()
                 val jobActive = subscriptions[symbol]?.isActive == true
-                // Stale: job alive but no bar received within the staleness window.
+                // Skip symbols (re)subscribed within the cooldown: gives a fresh subscription time to
+                // produce a bar AND prevents re-churning a dead-farm symbol every tick (the leak).
+                val subscribedRecently = lastSubscribeAt[symbol]?.isAfter(cooldownThreshold) == true
+                // Stale: job alive, not just (re)subscribed, and no bar within the staleness window.
                 // A dead job is handled by onEuMarketOpen/onUsMarketOpen; we only resubscribe
                 // jobs that are still alive (from Kotlin's perspective) but IBKR stopped sending.
-                jobActive && (lastBar == null || lastBar.time.isBefore(staleThreshold))
+                jobActive && !subscribedRecently && (lastBar == null || lastBar.time.isBefore(staleThreshold))
             }
 
         if (stale.isEmpty()) return
@@ -170,6 +183,7 @@ class FlagScannerService(
     }
 
     private fun subscribe(symbol: Symbol) {
+        lastSubscribeAt[symbol] = Instant.now(clock)
         val aggregator = BarAggregator(symbol.value)
         val buffer = BarBuffer()
         val detector = PatternDetector(symbol.value, buffer, strategyConfig)
