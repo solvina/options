@@ -45,16 +45,20 @@ class IbkrBracketOrderAdapter(
         val entry = contractCache.roundToTick(symbol, entryPrice)
         val stop = contractCache.roundToTick(symbol, stopLossPrice)
         val trail = contractCache.roundToTick(symbol, trailAmount)
+        // A TRAIL child can only attach to a limit / stop-limit parent (IBKR err 328), so the entry
+        // is a stop-LIMIT: trigger at the breakout, limit 0.3% above to fill with bounded slippage.
+        val entryLimit = contractCache.roundToTick(symbol, entryPrice.multiply(BigDecimal("1.003")))
 
         val entryId = registry.nextOrderId()
         val trailId = registry.nextOrderId()
 
-        // Parent: Stop-Market BUY at the breakout level.
+        // Parent: Stop-LIMIT BUY at the breakout level (stop-limit so the TRAIL child can attach).
         val parent =
             Order().apply {
                 action("BUY")
-                orderType("STP")
+                orderType("STP LMT")
                 auxPrice(entry.toDouble())
+                lmtPrice(entryLimit.toDouble())
                 totalQuantity(qty)
                 tif("DAY")
                 transmit(false) // hold — submit with the child
