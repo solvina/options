@@ -20,12 +20,15 @@ internal suspend fun reqMktDataSnapshot(
     val reqId = registry.nextReqId()
     val deferred = CompletableDeferred<MarketDataSnapshot>()
     registry.pendingMarketData[reqId] = PendingMarketDataRequest(deferred)
-    client.reqMktData(reqId, contract, genericTickList, true, false, null)
+    client.reqMktData(reqId, contract, genericTickList, false, false, null)
     return try {
-        withTimeout(4_000L) { deferred.await() }
+        withTimeout(2_500L) { deferred.await() }
     } catch (_: TimeoutCancellationException) {
         registry.pendingMarketData.remove(reqId)
         MarketDataSnapshot()
+    } finally {
+        registry.pendingMarketData.remove(reqId)
+        client.cancelMktData(reqId)
     }
 }
 

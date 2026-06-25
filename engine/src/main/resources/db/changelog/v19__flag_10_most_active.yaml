@@ -1,0 +1,21 @@
+databaseChangeLog:
+  # ---------------------------------------------------------------------------
+  # Restrict flag trading to the 10 most-active stocks.
+  # These are mega-cap and liquid ETFs with highest intraday volume.
+  # ---------------------------------------------------------------------------
+  - changeSet:
+      id: v19__flag_10_most_active
+      author: solvina
+      changes:
+        - sql:
+            sql: >
+              UPDATE instrument_universe SET flag_enabled = false WHERE flag_enabled = true;
+              UPDATE instrument_universe SET flag_enabled = true WHERE symbol IN (
+              'SPY','QQQ','AAPL','MSFT','AMZN','NVDA','TSLA','META','GOOGL','IWM');
+      rollback:
+        - sql:
+            sql: >
+              UPDATE instrument_universe SET flag_enabled = true WHERE symbol IN (
+              'SPY','QQQ','IWM','AAPL','MSFT','NVDA','AMZN','META','GOOGL','TSLA','AMD','AVGO','NFLX','MU',
+              'INTC','MRVL','QCOM','AMAT','LRCX','KLAC','ANET','DELL','SMCI','COIN','PLTR','MSTR','HOOD',
+              'UBER','SNOW','CRWD','PANW','DDOG','NOW','ORCL','CRM','ADBE','JPM','BAC','GS','BA','SPCX');
