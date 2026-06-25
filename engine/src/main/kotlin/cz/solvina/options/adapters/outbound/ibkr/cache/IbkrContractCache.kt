@@ -325,11 +325,11 @@ class IbkrContractCache(
         val details: List<com.ib.client.ContractDetails> =
             rateLimiter.withContractDetails {
                 client.reqContractDetails(reqId, searchContract)
-                withTimeoutOrNull(5000L) { deferred.await() }
+                withTimeoutOrNull(15000L) { deferred.await() }
                     ?: run {
                         registry.pendingContractDetails.remove(reqId)
                         registry.timedOutReqIds.add(reqId)
-                        logger.warn { "[$symbol $expiry $optionType] Verified-strikes lookup timeout (5s) — skipping symbol this cycle" }
+                        logger.warn { "[$symbol $expiry $optionType] Verified-strikes lookup timeout (15s) — skipping symbol this cycle" }
                         null
                     }
             } ?: return null
