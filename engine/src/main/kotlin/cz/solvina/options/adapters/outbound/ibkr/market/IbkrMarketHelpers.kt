@@ -22,7 +22,7 @@ internal suspend fun reqMktDataSnapshot(
     registry.pendingMarketData[reqId] = PendingMarketDataRequest(deferred)
     client.reqMktData(reqId, contract, genericTickList, false, false, null)
     return try {
-        withTimeout(2_500L) { deferred.await() }
+        withTimeout(5_000L) { deferred.await() }
     } catch (_: TimeoutCancellationException) {
         registry.pendingMarketData.remove(reqId)
         MarketDataSnapshot()
