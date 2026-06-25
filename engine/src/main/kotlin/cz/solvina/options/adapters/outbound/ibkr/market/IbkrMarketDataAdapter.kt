@@ -3,24 +3,17 @@ package cz.solvina.options.adapters.outbound.ibkr.market
 import com.ib.client.EClientSocket
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
-import cz.solvina.options.domain.features.market.BlackScholes
 import cz.solvina.options.domain.features.market.MarketDataPort
-import cz.solvina.options.domain.features.volatility.VolatilityPort
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
-import cz.solvina.options.domain.models.OptionType
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.flow.lastOrNull
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
 import java.math.RoundingMode
-import java.time.LocalDate
-import java.time.temporal.ChronoUnit
 
 private val logger = KotlinLogging.logger {}
-
-private const val RISK_FREE_RATE = 0.05
 
 @Component
 class IbkrMarketDataAdapter(
@@ -28,7 +21,6 @@ class IbkrMarketDataAdapter(
     private val client: EClientSocket,
     private val contractFactory: IbkrContractFactory,
     private val historicalDataAdapter: IbkrHistoricalDataAdapter,
-    private val volatilityPort: VolatilityPort,
 ) : MarketDataPort {
     override suspend fun getUnderlyingPrice(symbol: Symbol): Money {
         val snapshot = reqMktDataSnapshot(registry, client, contractFactory.stockContract(symbol), "", SnapshotReady.STOCK_PRICE)
@@ -56,22 +48,12 @@ class IbkrMarketDataAdapter(
         val mid = midPrice(snapshot.bid, snapshot.ask)
         if (mid > BigDecimal.ZERO) return Money(mid)
 
-        // No live/delayed data — fall back to Black-Scholes (e.g. US options on paper account)
-        val symbol = contract.symbol
-        val spot = runCatching { getUnderlyingPrice(symbol).amount.toDouble() }.getOrNull() ?: return Money(BigDecimal.ZERO)
-        val sigma = volatilityPort.getIvRank(symbol).currentIv
-        if (sigma <= 0.0) {
-            logger.debug { "[$symbol] getOptionMid: no IV data, returning 0" }
-            return Money(BigDecimal.ZERO)
+        // No live market — do NOT fabricate a price. Log for investigation and return zero so callers
+        // (reporting/monitoring) render "unavailable" rather than acting on calculated data.
+        logger.warn {
+            "[${contract.symbol}] getOptionMid: no live bid/ask for ${contract.strike}${contract.type} " +
+                "exp=${contract.expiry} (bid=${snapshot.bid} ask=${snapshot.ask}) — returning 0, no BS fallback"
         }
-        val tte = ChronoUnit.DAYS.between(LocalDate.now(), contract.expiry).toInt() / 365.0
-        if (tte <= 0.0) return Money(BigDecimal.ZERO)
-        if (contract.type != OptionType.PUT) {
-            logger.debug { "[$symbol] getOptionMid BS fallback only supports PUT, returning 0 for ${contract.type}" }
-            return Money(BigDecimal.ZERO)
-        }
-        val bsMid = BlackScholes.putPrice(spot, contract.strike.toDouble(), tte, RISK_FREE_RATE, sigma)
-        logger.debug { "[$symbol] getOptionMid BS fallback: ${contract.strike}${contract.type} bs=${"%.4f".format(bsMid)}" }
-        return Money(BigDecimal(bsMid).setScale(4, RoundingMode.HALF_UP))
+        return Money(BigDecimal.ZERO)
     }
 }

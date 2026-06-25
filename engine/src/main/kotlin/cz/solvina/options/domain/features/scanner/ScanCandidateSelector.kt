@@ -105,19 +105,6 @@ class ScanCandidateSelector(
             return null
         }
 
-        // P0.0 — never launch on a strike with no live market (Black-Scholes-fallback quote). The
-        // synthetic prices/greeks are fine for picking a strike, but an order on them never gets a
-        // tick → NO_MARKET_DATA abort. Skip cleanly and retry next scan when real data is present.
-        if (soldQuote.synthetic || boughtQuote.synthetic) {
-            logger.info {
-                "[$symbol] Skipping — selected legs lack live market data (BS-fallback): " +
-                    "sold=${soldQuote.contract.strike}(synthetic=${soldQuote.synthetic}) " +
-                    "bought=${boughtQuote.contract.strike}(synthetic=${boughtQuote.synthetic})"
-            }
-            tradeLogger.info { "SKIP   $symbol  no live option market for selected legs (BS-fallback)" }
-            return null
-        }
-
         // 5. Credit check — use mid for filters, bid side for the initial order price
         val midCredit =
             soldQuote.mid.amount
