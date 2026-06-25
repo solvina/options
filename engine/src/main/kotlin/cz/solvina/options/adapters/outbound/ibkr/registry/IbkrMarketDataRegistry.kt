@@ -11,6 +11,10 @@ private val logger = KotlinLogging.logger {}
 
 internal data class PendingMarketDataRequest(
     val deferred: CompletableDeferred<MarketDataSnapshot>,
+    /** Streaming reqMktData (snapshot=false) never emits tickSnapshotEnd, so the deferred is resolved
+     *  as soon as this predicate accepts the accumulated snapshot. Defaults to "never ready", which
+     *  preserves the old timeout-only behaviour for callers that don't supply one. */
+    val isReady: (MarketDataSnapshot) -> Boolean = { false },
     @Volatile var snapshot: MarketDataSnapshot = MarketDataSnapshot(),
 )
 
@@ -69,6 +73,17 @@ class IbkrMarketDataRegistry(
 
     fun nextReqId(): Int = idCounter.next()
 
+    /** Resolve a streaming snapshot request the moment its readiness predicate is satisfied. Without
+     *  this the deferred only ever completes on timeout (which discards the real ticks), so every
+     *  option quote degrades to a Black-Scholes "synthetic" fallback and no spread is ever launched. */
+    private fun completeIfReady(reqId: Int) {
+        val request = pendingMarketData[reqId] ?: return
+        val snapshot = request.snapshot
+        if (request.isReady(snapshot) && pendingMarketData.remove(reqId, request)) {
+            request.deferred.complete(snapshot)
+        }
+    }
+
     fun onTickPrice(
         reqId: Int,
         field: Int,
@@ -83,6 +98,7 @@ class IbkrMarketDataRegistry(
                     9 -> request.snapshot.copy(close = price)
                     else -> return@let
                 }
+            completeIfReady(reqId)
         }
         pendingContinuousMarketData[reqId]?.let { request ->
             val updated =
@@ -121,6 +137,7 @@ class IbkrMarketDataRegistry(
 
         pendingMarketData[reqId]?.let { request ->
             request.snapshot = request.snapshot.withGreeks()
+            completeIfReady(reqId)
         }
         // Continuous subscription — update Greeks silently (read on next bid/ask tick via emitIfReady)
         pendingContinuousMarketData[reqId]?.let { request ->

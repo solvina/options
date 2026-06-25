@@ -132,6 +132,7 @@ class IbkrOptionChainAdapter(
                         client,
                         contractFactory.optionContract(contract, params.exchange, params.tradingClass, params.multiplier),
                         "",
+                        SnapshotReady.OPTION_QUOTE,
                     )
                 val bid = snapshot.bid.takeIf { !it.isNaN() } ?: 0.0
                 val ask = snapshot.ask.takeIf { !it.isNaN() } ?: 0.0

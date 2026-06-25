@@ -31,7 +31,7 @@ class IbkrMarketDataAdapter(
     private val volatilityPort: VolatilityPort,
 ) : MarketDataPort {
     override suspend fun getUnderlyingPrice(symbol: Symbol): Money {
-        val snapshot = reqMktDataSnapshot(registry, client, contractFactory.stockContract(symbol), "")
+        val snapshot = reqMktDataSnapshot(registry, client, contractFactory.stockContract(symbol), "", SnapshotReady.STOCK_PRICE)
         val price = snapshot.last.takeIf { !it.isNaN() } ?: snapshot.close.takeIf { !it.isNaN() }
         if (price != null) return Money(BigDecimal(price).setScale(2, RoundingMode.HALF_UP))
 
@@ -44,7 +44,7 @@ class IbkrMarketDataAdapter(
     }
 
     override suspend fun getOptionMidLive(contract: OptionContract): Money? {
-        val snapshot = reqMktDataSnapshot(registry, client, contractFactory.optionContract(contract), "")
+        val snapshot = reqMktDataSnapshot(registry, client, contractFactory.optionContract(contract), "", SnapshotReady.OPTION_PRICE)
         val mid = midPrice(snapshot.bid, snapshot.ask)
         // Live bid/ask only — deliberately no Black-Scholes / previous-day fallback. Price-based
         // exit decisions must not run on synthetic data; a null tells the caller to skip the cycle.
@@ -52,7 +52,7 @@ class IbkrMarketDataAdapter(
     }
 
     override suspend fun getOptionMid(contract: OptionContract): Money {
-        val snapshot = reqMktDataSnapshot(registry, client, contractFactory.optionContract(contract), "")
+        val snapshot = reqMktDataSnapshot(registry, client, contractFactory.optionContract(contract), "", SnapshotReady.OPTION_PRICE)
         val mid = midPrice(snapshot.bid, snapshot.ask)
         if (mid > BigDecimal.ZERO) return Money(mid)
 
