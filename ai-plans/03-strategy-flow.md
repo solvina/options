@@ -2,9 +2,15 @@
 
 ## Bull Put Spread — Scanner + Exit Monitor
 
+**Live Parameters (2026-06-26)**:
+- Entry: IV > 45%, DTE 30–50 (prefer 45), delta 0.25–0.30, credit ≥ $0.35
+- Exit: TP at 50% credit, SL at 200% credit, time at 21 DTE
+- Risk: Drift ≤ 5%, max 5 open spreads, execution timeout 15 min
+- Monitoring: Quote health (LIVE/STALE/BLIND), orphan detection every 5 min
+
 ```mermaid
 flowchart TD
-    subgraph SCHEDULER["Every 15 min (MON-FRI 03:00–15:00 ET)"]
+    subgraph SCHEDULER["Every 15 min (MON-FRI 9:00–23:00 CEST)"]
         T1([Scanner triggered])
     end
 
@@ -47,12 +53,13 @@ flowchart TD
         M2 -- no --> SKIP4([skip])
         M2 -- yes --> M3{isAnyExchangeOpen?\n(config-driven)}
         M3 -- no --> SKIP5([skip])
-        M3 -- yes --> E10[fetch mid for sold + bought put]
+        M3 -- yes --> QH["Quote Health Check:\nLIVE/STALE/BLIND"]
+        QH --> E10[fetch mid for sold + bought put]
         E10 --> C12{spread value\n≤ credit × 50%?}
         C12 -- yes --> CLOSE_TP[MARKET close → CLOSED_PROFIT]
-        C12 -- no --> C13{spread value\n≥ credit + credit × 100%?}
+        C12 -- no --> C13{spread value\n≥ credit × 200%?}
         C13 -- yes --> CLOSE_SL[MARKET close → CLOSED_STOP]
-        C13 -- no --> C14{DTE ≤ 14?}
+        C13 -- no --> C14{DTE ≤ 21?}
         C14 -- yes --> CLOSE_TIME[MARKET close → CLOSED_TIME]
         C14 -- no --> HOLD([hold — store lastSpreadValue])
         CLOSE_TP & CLOSE_SL & CLOSE_TIME --> DB2[(update spread in PostgreSQL)]
