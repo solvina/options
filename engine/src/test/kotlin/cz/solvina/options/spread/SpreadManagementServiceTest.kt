@@ -118,6 +118,7 @@ class SpreadManagementServiceTest {
         executionPort = executionPort,
         config = config,
         clock = clock,
+        quoteHealthService = mockk(relaxed = true),
         positionsPort = positionsPort,
     )
 
@@ -183,6 +184,7 @@ class SpreadManagementServiceTest {
                 executionPort = mockk(relaxed = true),
                 config = config,
                 clock = clockAtEntry,
+                quoteHealthService = mockk(relaxed = true),
             ).softClose(spread.id!!)
 
             val sellBackPrice = slot<Money>()
@@ -232,6 +234,7 @@ class SpreadManagementServiceTest {
                 executionPort = mockk(relaxed = true),
                 config = config,
                 clock = clockAtEntry,
+                quoteHealthService = mockk(relaxed = true),
             ).checkExits()
 
             assertEquals(SpreadStatus.CLOSED_STOP, updated.captured.status)
@@ -356,6 +359,7 @@ class SpreadManagementServiceTest {
                 executionPort = mockk(relaxed = true),
                 config = config,
                 clock = clockAtEntry,
+                quoteHealthService = mockk(relaxed = true),
             ).checkExits()
 
             coVerify(exactly = 0) { orderPort.placeAndAwaitFill(any(), any(), any(), any()) }
@@ -597,7 +601,10 @@ class SpreadManagementServiceTest {
                                 currency = "USD",
                                 expiry = expiry,
                                 strike = strike,
-                                optionRight = "Put",
+                                // IBKR reports the right as "P"/"C" (Types.Right.getApiString),
+                                // not "Put"/"Call" — match real account data so this test guards
+                                // positionMatchesLeg against the orphan-creating mismatch regression.
+                                optionRight = "P",
                                 quantity = BigDecimal("-1"),
                                 avgCost = BigDecimal.ZERO,
                             )

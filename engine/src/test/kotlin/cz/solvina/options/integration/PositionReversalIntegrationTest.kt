@@ -153,6 +153,7 @@ class PositionReversalIntegrationTest {
                     openOrdersAdapter = openOrdersAdapter,
                     client = mockClient,
                     orderCancellationService = mockCancellationService,
+                    positionsPort = mockk(relaxed = true),
                 )
 
             recoveryService.recover()
@@ -211,6 +212,7 @@ class PositionReversalIntegrationTest {
                     executionPort = mockk(relaxed = true),
                     config = config,
                     clock = clock,
+                    quoteHealthService = mockk(relaxed = true),
                 )
 
             service.checkExits()
@@ -321,6 +323,7 @@ class PositionReversalIntegrationTest {
                     openOrdersAdapter = openOrdersAdapter,
                     client = mockClient,
                     orderCancellationService = mockk(relaxed = true),
+                    positionsPort = mockk(relaxed = true),
                 )
 
             recoveryService.recover()

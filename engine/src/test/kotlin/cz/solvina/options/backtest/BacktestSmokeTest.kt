@@ -5,6 +5,7 @@ import cz.solvina.options.domain.features.scanner.ScanCandidateSelector
 import cz.solvina.options.domain.features.scanner.ScannerConfig
 import cz.solvina.options.domain.features.scanner.ScannerService
 import cz.solvina.options.domain.features.spread.SpreadManagementService
+import cz.solvina.options.domain.features.spread.service.QuoteHealthService
 import cz.solvina.options.domain.features.universe.InstrumentConfig
 import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.features.volatility.IvRankService
@@ -161,6 +162,7 @@ class BacktestSmokeTest {
                 executionPort = executionService,
                 config = config,
                 clock = clock,
+                quoteHealthService = QuoteHealthService(60, 300, 2),
             )
 
         val engine =

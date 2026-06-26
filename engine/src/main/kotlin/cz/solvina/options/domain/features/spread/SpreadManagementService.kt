@@ -185,7 +185,12 @@ class SpreadManagementService(
             pos.secType == "OPT" &&
             pos.expiry == contract.expiry &&
             pos.strike == contract.strike &&
-            pos.optionRight?.equals("Put", ignoreCase = true) == true &&
+            // IBKR reports the right via Types.Right.getApiString() = "P"/"C" (first char only),
+            // never "Put"/"Call". Derive the expected code from the leg's own contract so this
+            // matches both puts (bull put) and calls (bear call). Matching against "Put" here was a
+            // latent bug: it never matched, so force-close skipped buy-backs and verification
+            // falsely passed, marking spreads CLOSED while the real IBKR legs stayed open (orphans).
+            pos.optionRight?.equals(contract.type.ibkrCode, ignoreCase = true) == true &&
             pos.quantity.compareTo(BigDecimal.ZERO) != 0
 
     /**
