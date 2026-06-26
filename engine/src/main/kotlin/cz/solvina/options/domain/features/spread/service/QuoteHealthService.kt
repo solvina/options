@@ -1,7 +1,6 @@
 package cz.solvina.options.domain.features.spread.service
 
 import io.github.oshai.kotlinlogging.KotlinLogging
-import kotlinx.coroutines.sync.Mutex
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
 import java.time.Duration
@@ -43,11 +42,12 @@ class QuoteHealthService(
         val now = Instant.now()
         val ageSeconds = Duration.between(asOf, now).seconds
 
-        val health = when {
-            ageSeconds < quoteStaleSeconds -> QuoteHealth.LIVE
-            ageSeconds < quoteBlindSeconds -> QuoteHealth.STALE
-            else -> QuoteHealth.BLIND
-        }
+        val health =
+            when {
+                ageSeconds < quoteStaleSeconds -> QuoteHealth.LIVE
+                ageSeconds < quoteBlindSeconds -> QuoteHealth.STALE
+                else -> QuoteHealth.BLIND
+            }
 
         if (health == QuoteHealth.BLIND) {
             blindCycleCounts[symbol] = blindCycleCounts.getOrDefault(symbol, 0) + 1
