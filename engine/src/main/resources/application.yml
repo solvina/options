@@ -67,9 +67,9 @@ scanner:
   min-dte: 30
   max-dte: 50
   preferred-dte: 45
-  target-delta: 0.15
-  delta-min: 0.10
-  delta-max: 0.20
+  target-delta: 0.30               # short put ~30-delta (more premium); was 0.15
+  delta-min: 0.25                  # accept short-put delta band 0.25–0.30; was 0.10
+  delta-max: 0.30                  # was 0.20
   strike-band-percent: 0.20
   candidate-strike-count: 7
   spread-width-usd: 5.0
@@ -77,8 +77,8 @@ scanner:
   max-risk-percent: 0.025
   max-open-spreads: 5
   take-profit-percent: 0.50
-  stop-loss-percent: 1.00
-  time-profit-dte: 14
+  stop-loss-percent: 2.00          # exit when buyback ≥ 3× credit (loss = 200% of credit); was 1.00 — breathing room
+  time-profit-dte: 21              # manage/close at 21 DTE (tastytrade-style); was 14
   drift-protection-pct: 0.05       # Conservative: 0.01 → 0.05 (allow 5% movement, not 1%)
   execution-timeout-minutes: 15
   ticks-before-price-adjust: 5
