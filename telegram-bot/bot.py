@@ -9,7 +9,6 @@ import json
 import asyncio
 import subprocess
 import logging
-import threading
 from pathlib import Path
 from dotenv import load_dotenv
 from telegram import Update
@@ -19,100 +18,90 @@ from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, fil
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-BOT_TOKEN    = os.environ["TELEGRAM_BOT_TOKEN"]
-ALLOWED_CHAT = int(os.environ["TELEGRAM_CHAT_ID"])
-CLAUDE_BIN   = os.environ.get("CLAUDE_BIN", "/home/solvina/.local/bin/claude")
-CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "haiku")
-WORK_DIR     = Path(__file__).parent
+BOT_TOKEN     = os.environ["TELEGRAM_BOT_TOKEN"]
+ALLOWED_CHAT  = int(os.environ["TELEGRAM_CHAT_ID"])
+CLAUDE_BIN    = os.environ.get("CLAUDE_BIN", "/home/solvina/.local/bin/claude")
+CLAUDE_MODEL  = os.environ.get("CLAUDE_MODEL", "haiku")
+CLAUDE_TIMEOUT = int(os.environ.get("CLAUDE_TIMEOUT", "120"))
+WORK_DIR      = Path(__file__).parent
+
+BOT_SYSTEM_PROMPT = (
+    "You are a Telegram chat assistant. Reply with a single, concise final "
+    "message. Do not send progress updates, status notes, or 'let me check' "
+    "preambles — only the finished answer. Keep formatting plain-text friendly."
+)
 
 logging.basicConfig(format="%(asctime)s [%(levelname)s] %(message)s", level=logging.INFO)
 log = logging.getLogger(__name__)
 
-# ── Persistent Claude session ─────────────────────────────────────────────────
+# ── Claude session (one `claude -p` invocation per turn) ───────────────────────
 
 class ClaudeSession:
     """
-    Wraps a single long-running `claude -p --input-format stream-json` process.
-    Messages are sent via stdin; responses read from stdout until a 'result' event.
-    Auto-restarts if the process dies.
+    Drives Claude Code the way it's designed for headless use: a fresh, short-lived
+    `claude -p` process per message. Conversation continuity is kept by capturing the
+    `session_id` from each reply and passing it back via `--resume` on the next turn.
+
+    A short-lived process reads its whole stdout to EOF, so no buffered output can
+    leak into a later turn — replies can never drift onto an older question.
     """
 
     def __init__(self, model: str = "haiku"):
         self.model = model
-        self._proc: subprocess.Popen | None = None
+        self._session_id: str | None = None
         self._lock = asyncio.Lock()
 
-    def _start_process(self):
-        log.info("Starting claude process (model=%s)…", self.model)
-        self._proc = subprocess.Popen(
-            [
-                CLAUDE_BIN, "-p",
-                "--input-format", "stream-json",
-                "--output-format", "stream-json",
-                "--verbose",
-                "--model", self.model,
-                "--dangerously-skip-permissions",
-            ],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1,
-            cwd=str(WORK_DIR),
-        )
-        # Drain stderr silently so it doesn't block
-        threading.Thread(target=self._drain_stderr, daemon=True).start()
-        log.info("Claude process started (pid=%d)", self._proc.pid)
+    def _run(self, message: str) -> str:
+        """Blocking: spawn one claude process, return its result text."""
+        argv = [
+            CLAUDE_BIN, "-p", message,
+            "--output-format", "json",
+            "--model", self.model,
+            "--append-system-prompt", BOT_SYSTEM_PROMPT,
+            "--dangerously-skip-permissions",
+        ]
+        if self._session_id:
+            argv += ["--resume", self._session_id]
 
-    def _drain_stderr(self):
-        for line in self._proc.stderr:
-            stripped = line.rstrip()
-            if stripped:
-                log.debug("claude stderr: %s", stripped)
+        try:
+            proc = subprocess.run(
+                argv,
+                capture_output=True,
+                text=True,
+                timeout=CLAUDE_TIMEOUT,
+                cwd=str(WORK_DIR),
+            )
+        except subprocess.TimeoutExpired:
+            return f"⚠️ Claude timed out after {CLAUDE_TIMEOUT}s."
 
-    def _is_alive(self) -> bool:
-        return self._proc is not None and self._proc.poll() is None
+        if proc.returncode != 0:
+            err = (proc.stderr or "").strip() or f"exit code {proc.returncode}"
+            log.error("claude failed: %s", err)
+            return f"⚠️ Claude error: {err[:500]}"
 
-    def _send_recv(self, message: str) -> str:
-        """Blocking: send message, read stream until result event."""
-        payload = json.dumps({
-            "type": "user",
-            "message": {"role": "user", "content": message}
-        }) + "\n"
+        try:
+            obj = json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            log.error("claude output not JSON: %s", proc.stdout[:500])
+            return "_(no response)_"
 
-        self._proc.stdin.write(payload)
-        self._proc.stdin.flush()
+        # Carry the session forward so the next turn continues this conversation.
+        sid = obj.get("session_id")
+        if sid:
+            self._session_id = sid
 
-        for raw in self._proc.stdout:
-            raw = raw.strip()
-            if not raw:
-                continue
-            try:
-                ev = json.loads(raw)
-                if ev.get("type") == "result":
-                    if ev.get("is_error"):
-                        return f"⚠️ {ev.get('result', 'Unknown error')}"
-                    return ev.get("result", "_(no response)_").strip()
-            except json.JSONDecodeError:
-                pass  # partial line or non-JSON — ignore
-
-        return "_(process closed without result)_"
+        if obj.get("is_error"):
+            return f"⚠️ {obj.get('result', 'Unknown error')}"
+        return (obj.get("result") or "_(no response)_").strip()
 
     async def chat(self, message: str) -> str:
         async with self._lock:
-            if not self._is_alive():
-                self._start_process()
             loop = asyncio.get_event_loop()
-            return await loop.run_in_executor(None, self._send_recv, message)
+            return await loop.run_in_executor(None, self._run, message)
 
-    def restart(self):
-        if self._proc:
-            try:
-                self._proc.terminate()
-            except Exception:
-                pass
-        self._proc = None
-        log.info("Session reset — process will restart on next message")
+    def reset(self):
+        self._session_id = None
+        log.info("Session reset — next message starts a fresh conversation")
 
 
 # Global session (starts lazily on first message)
@@ -166,22 +155,20 @@ async def handle_start(update: Update, context):
 async def handle_reset(update: Update, context):
     if not is_allowed(update):
         return
-    session.restart()
+    session.reset()
     await update.message.reply_text("🔄 Session reset. Fresh conversation!")
 
 async def handle_haiku(update: Update, context):
     if not is_allowed(update):
         return
     session.model = "haiku"
-    session.restart()
-    await update.message.reply_text("⚡ Switched to Haiku (fast). Session reset.")
+    await update.message.reply_text("⚡ Switched to Haiku (fast). Context kept.")
 
 async def handle_sonnet(update: Update, context):
     if not is_allowed(update):
         return
     session.model = "sonnet"
-    session.restart()
-    await update.message.reply_text("🧠 Switched to Sonnet (smarter). Session reset.")
+    await update.message.reply_text("🧠 Switched to Sonnet (smarter). Context kept.")
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
