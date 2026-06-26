@@ -1,255 +1,160 @@
-# Bear Call Strategy Implementation Plan — 2026-06-26 (rev. 2)
+# Multi-Strategy Spread Framework — Bear Call as Strategy #2 — 2026-06-26 (rev. 3)
 
-**Status**: Pre-implementation design, reconciled against engine source
-**Target**: Phase after bull put validation (post US session)
-**Effort**: ~4 weeks engine + data; UI/Greeks dashboard tracked separately (see note)
+**Status**: Phase 0 (slice 1) shipped; remainder pre-implementation
+**Target**: After bull put validation; bear call is the first *new* strategy on a clean framework
+**Effort**: ~4–5 weeks engine + data; UI/Greeks dashboard tracked separately
 
-> **Rev. 2 note**: The first draft assumed the spread management / persistence / port
-> layer was already generic. It is not — it is hard-typed to `BullPutSpread`. This revision
-> scopes the generalization work explicitly, removes the (broken) skew-adjustment factor,
-> scopes dividend handling to US/American-style options only, and gates bear-call enablement
-> on the dividend-data pipeline being live (not deferred). Verified call sites are cited inline.
-
----
-
-## Executive Summary & Recommendation
-
-### Question: Reuse Bull Put Code or Separate Implementation?
-
-**Recommendation: SEPARATE strategy models + a SHARED `Spread` abstraction.**
-
-This is *not* "reuse the existing services as-is" — most of them are concrete on `BullPutSpread`
-today and must be generalized first. See "Reality Check" below before estimating.
-
-#### Why separate strategy models (despite identical entry parameters):
-
-1. **Different risk evolution** — bull put risk is downside (spreads tighten as the stock
-   rises); bear call risk is upside (spreads blow out as the stock rises). Early-assignment
-   mechanics differ entirely (dividend trap on short calls vs. theta on short puts).
-2. **Different assignment surface** — short calls carry ex-dividend early-assignment risk on
-   **American-style (US)** names. Short puts do not. This is the core reason the strategies
-   diverge operationally.
-3. **Future divergence is likely** — dividend calendars, hedged (call+put) portfolio analysis,
-   per-strategy risk limits. Keeping models separate is cheaper than un-merging later.
-
-#### Why we can share *most* infrastructure (after generalization):
-
-- ✅ Order execution (`TradeExecutionService`, BAG/leg-by-leg) — already keyed off
-  `TradeExecutionRequest`, which carries `soldContract`/`boughtContract` with their own
-  `OptionType`. **Genuinely reusable as-is.**
-- ✅ Position reconciliation — `PositionReconciliationService:158` matches on
-  `pos.optionRight == optionType.ibkrCode`, derived from the contract. **Already option-type
-  agnostic.**
-- ✅ Quote-health monitoring (LIVE/STALE/BLIND) — operates on contracts, not put-specific.
-- ⚠️ Exit framework (TP%/SL%/DTE) — logic is generic in spirit but lives in a class hard-typed
-  to `BullPutSpread`. Reusable **after** the model is abstracted.
+> **What changed in rev. 3 (operator instruction):** The goal is no longer "bolt on bear call."
+> It is to **refactor into a clean, explicitly-named, extensible multi-strategy framework** where
+> bull put is simply the first concrete strategy and bear call is the second — and adding a third
+> (e.g. iron condor, put credit ladder) is "add a module + register it," touching **zero** core code.
+> Two hard rules from the operator:
+> 1. **Name things for what they are.** Code that is bull-put-specific must *say* `BullPut`
+>    (classes, tables, config, endpoints, tests). No more generically-named-but-secretly-bull-put types.
+> 2. **Clean and maintainable over expedient.** Prefer a small, well-factored core + thin strategy
+>    modules over copy-paste. Shared behaviour lives in one place; divergence lives behind a strategy seam.
 
 ---
 
-## Reality Check — What Is Actually Generic Today
+## Progress so far (rev. 3)
 
-Audited against `engine/src/main` on 2026-06-26. This supersedes the first draft's
-"shared infrastructure (generic)" claims.
-
-| Component | File | Today | Action |
-|-----------|------|-------|--------|
-| `SpreadLeg`, `SpreadStatus` | `spread/model/` | Generic | Reuse |
-| `OptionType` | `models/OptionType.kt` | Has `PUT("P")`, `CALL("C")` | Reuse |
-| `TradeExecutionRequest` | `execution/model/` | Carries sold/bought `OptionContract` w/ type | Reuse |
-| `TradeExecutionService` | `execution/` | Order-centric, not put-specific | Reuse (see cap fix) |
-| `PositionReconciliationService` | `ibkr/order/` | Matches on `optionRight == ibkrCode` | Reuse |
-| `QuoteHealthService` | `spread/service/` | Contract-based | Reuse |
-| **`SpreadPort`** | `spread/SpreadPort.kt` | **Every method typed `BullPutSpread`** | **Generalize** |
-| **`SpreadManagementService`** | `spread/` | **Concrete `BullPutSpread` throughout** | **Generalize** |
-| **`PreTradeValidator`** | `execution/` | Counts bull puts only (`:31`) | **Make strategy-aware** |
-| **`ScannerService`** | `scanner/` | Counts bull puts only (`:46`) | **Make strategy-aware** |
-| **`TradeExecutionService` cap** | `execution/` | Counts bull puts only (`:98`) | **Make strategy-aware** |
-| **`SpreadManagementService.positionMatchesLeg`** | `spread/` | **Hard-codes `"Put"` (`:188`)** | **Bug — derive from contract** |
-| **`SpreadPositionEntity`** | `persistence/.../entity/` | `@Table("spread_positions")` | **Rename → `bull_put_spreads`** |
-| `ScanCandidateSelector` | `scanner/` | Filters `OptionType.PUT` (`:80`), sells higher strike | Fork for calls |
+- ✅ **Phase 0, slice 1 — shipped & deployed (`97f14b6`, live on paper since 19:28 CEST 2026-06-26).**
+  Fixed the orphan-creating `positionMatchesLeg` put/`"P"` mismatch (now derives the right from the
+  leg's own `contract.type.ibkrCode`, correct for puts *and* calls) and **restored the engine test
+  suite to compiling/green** (it had not compiled since the Phase 1 monitoring commit `1d542d5`).
+  This was the prerequisite that makes the rest of Phase 0 safe to attempt.
+- 📌 **Prod runs live PostgreSQL** (`options-db-1`, postgres:16 on :5433, `ddl-auto: validate`,
+  Liquibase, 18 changesets applied). CLAUDE.md's "not running in production" note is stale. Every
+  schema change below MUST be a Liquibase changeset that exactly matches the JPA entities, or the
+  engine fails to boot. See [[prod_postgres_is_live]].
 
 ---
 
-## Architecture (Revised)
+## Naming / Rename Mandate (operator rule #1)
+
+Audited current names vs. what they actually are. **Bull-put-specific code gets a `BullPut` name;
+genuinely-generic code keeps a neutral name.** Because prod is on `ddl-auto: validate` + Liquibase,
+the table/entity renames are real migrations (build phase — clean renames are acceptable).
+
+| Current (misleading) | What it is | Target name |
+|----------------------|------------|-------------|
+| `scanner/ScanCandidateSelector` | Bull-put selection (filters PUTs, sells higher strike) | `strategy/bullput/BullPutCandidateSelector` (impl of `SpreadCandidateSelector`) |
+| `spread/SpreadPort` (typed `BullPutSpread`) | Bull-put persistence port | `strategy/bullput/BullPutSpreadPort` |
+| `persistence/.../SpreadPositionEntity` `@Table("spread_positions")` | Bull-put row | `BullPutSpreadEntity` `@Table("bull_put_spreads")` |
+| `persistence/.../SpreadPositionRepository` | Bull-put repo | `BullPutSpreadRepository` |
+| `persistence/.../SpreadPersistenceAdapter` | Bull-put adapter | `BullPutSpreadPersistenceAdapter` |
+| `api/SpreadsApiImpl`, `GET /spreads` | Bull-put API | `BullPutSpreadsApiImpl`, `GET /bull-put-spreads` |
+| `scanner/ScannerConfig` (flat; entry/exit params are bull-put) | Mixed | Split: `scanner.bull-put.*` + `scanner.bear-call.*` + shared `scanner.*`/`scanner.portfolio.*` |
+| `ScanCandidateSelectorTest` | Bull-put test | `BullPutCandidateSelectorTest` |
+
+**Genuinely generic — keep neutral, do NOT prefix:**
+`SpreadLeg`, `SpreadStatus`, `SpreadManagementService` (becomes truly generic, see below),
+`ScannerService` / `ScannerScheduler` (orchestration), `TradeExecutionService`,
+`PositionReconciliationService` (already option-type agnostic), `QuoteHealthService`,
+`OptionContract` / `OptionType`.
+
+---
+
+## Target Architecture — a Strategy framework, not a fork
 
 ```
-Shared Abstraction (NEW — Phase 0)
-└── sealed interface Spread  (id, symbol, soldLeg, boughtLeg, credit, maxRisk,
-                              quantity, status, ivRankAtEntry, openedAt, closeReason, …)
-    ├── BullPutSpread  (existing data class → implements Spread)
-    └── BearCallSpread (new data class → implements Spread, + exDividendDate)
+GENERIC CORE  (knows nothing about puts vs calls; never edited to add a strategy)
+├── model/
+│   ├── Spread            (sealed interface: id, symbol, soldLeg, boughtLeg, credit,
+│   │                      maxRisk, qty, status, ivRankAtEntry, openedAt, closeReason, …)
+│   ├── SpreadLeg, SpreadStatus
+│   └── StrategyId        (enum: BULL_PUT, BEAR_CALL, … — discriminator)
+├── SpreadStrategy<T : Spread>   (the seam — one per strategy, see interface below)
+├── SpreadStrategyRegistry       (holds all registered strategies; the only injection point
+│                                 the scanner/manager iterate over)
+├── SpreadManagementService      (GENERIC: runs TP/SL/DTE for any Spread, then delegates to
+│                                 strategy.strategyExitSignal(...) for strategy-specific exits)
+├── SpreadQueryFacade            (cross-strategy reads: active count, portfolio risk, dashboards —
+│                                 the home of the shared portfolio cap)
+├── TradeExecutionService        (already order-centric; only the cap becomes facade-backed)
+├── PositionReconciliationService, QuoteHealthService   (already generic)
+└── ScannerService / Scheduler   (iterate registry × universe; no per-strategy branches)
 
-Shared Infrastructure (generalized to operate on Spread)
-├── SpreadPort<T : Spread> OR two concrete ports behind a SpreadQueryFacade
-├── SpreadManagementService (TP/SL/DTE exits; positionMatchesLeg fixed)
-├── TradeExecutionService    (already order-centric; only the cap counts both)
-├── PositionReconciliationService (already option-type agnostic)
-└── QuoteHealthService
-
-Strategy-Specific (separate)
-├── Bull Put: ScanCandidateSelector (existing, PUT path)
-└── Bear Call:
-    ├── BearCallScanCandidateSelector (CALL path: sell higher strike, buy strike+width)
-    ├── BearCallDividendService        (US American-style only; see Phase 3)
-    └── bear-call config namespace
+STRATEGY MODULES  (each self-contained; adding one = new package + register, no core edits)
+├── strategy/bullput/
+│   ├── BullPutSpread : Spread
+│   ├── BullPutCandidateSelector : SpreadCandidateSelector
+│   ├── BullPutSpreadPort + persistence (BullPutSpreadEntity → table bull_put_spreads)
+│   ├── BullPutStrategy : SpreadStrategy<BullPutSpread>   (strategyExitSignal = null; no extra exits)
+│   └── config: scanner.bull-put.*
+└── strategy/bearcall/                                    (NEW)
+    ├── BearCallSpread : Spread        (+ exDividendDate)
+    ├── BearCallCandidateSelector : SpreadCandidateSelector  (filters CALLs; sells LOWER strike,
+    │                                  buys strike+width; entry blocked near ex-div, US only)
+    ├── BearCallSpreadPort + persistence (BearCallSpreadEntity → table bear_call_spreads)
+    ├── BearCallDividendService        (US/American-style assignment protection)
+    ├── BearCallStrategy : SpreadStrategy<BearCallSpread>    (strategyExitSignal = dividend exit)
+    └── config: scanner.bear-call.*
 ```
 
-**Port strategy decision (pick one in Phase 0):**
-- **(A) Generic `SpreadPort<T>`** — one interface, two JPA adapters/tables. Cleaner long-term,
-  more upfront churn.
-- **(B) Two concrete ports** (`BullPutSpreadPort`, `BearCallSpreadPort`) + a thin
-  `SpreadQueryFacade` for cross-strategy reads (open counts, combined risk, dashboards).
-  Less churn to existing call sites.
-
-Recommend **(B)** — it isolates the new table without rewriting every existing
-`spreadPort.findOpen()` caller, and the facade is exactly where the shared-cap logic belongs.
-
----
-
-## Implementation Phases
-
-### Phase 0: `Spread` Abstraction & Generalization (3-4 days) — NEW, gating
-
-This did not exist in the first draft and gates everything else.
-
-1. Extract `sealed interface Spread` with the common fields; make `BullPutSpread` implement it.
-2. Introduce `BearCallSpread` (below) implementing `Spread`.
-3. **Fix `positionMatchesLeg`** (`SpreadManagementService:188`) to derive the right from
-   `leg.contract.type.ibkrCode` instead of the hard-coded `"Put"`. Add a regression test that
-   force-closes a bear-call position and asserts both legs verify closed.
-4. Decide port strategy (A vs. B above) and refactor `SpreadManagementService` /
-   `SpreadPort` to the chosen shape. Keep bull-put behaviour byte-for-byte identical
-   (existing tests stay green).
-
-### Phase 1: Bear Call Model & Database (2 days)
+### The strategy seam
 
 ```kotlin
-data class BearCallSpread(
-    val id: UUID?,
-    val symbol: Symbol,
-    val soldLeg: SpreadLeg,    // SHORT call (LOWER strike)
-    val boughtLeg: SpreadLeg,  // LONG call (HIGHER strike)
-    val creditPerShare: BigDecimal,
-    val maxRiskPerShare: BigDecimal,   // = width − credit (same formula as bull put)
-    val quantity: Int = 1,
-    val status: SpreadStatus,
-    val ivRankAtEntry: Double?,
-    val underlyingPriceAtEntry: BigDecimal?,
-    val openedAt: Instant,
-    val closedAt: Instant? = null,
-    val closeReason: String? = null,
-    val closePricePerShare: BigDecimal? = null,
-    val lastSpreadValue: BigDecimal? = null,
-    val underlyingPriceAtExit: BigDecimal? = null,
-    val ivRankAtExit: BigDecimal? = null,
-    val exDividendDate: LocalDate? = null,   // NEW: dividend risk tracking (US only)
-) : Spread
+sealed interface Spread {
+    val id: UUID?
+    val symbol: Symbol
+    val soldLeg: SpreadLeg
+    val boughtLeg: SpreadLeg
+    val creditPerShare: BigDecimal
+    val maxRiskPerShare: BigDecimal
+    val quantity: Int
+    val status: SpreadStatus
+    val strategyId: StrategyId
+    // … shared lifecycle fields (openedAt, closeReason, lastSpreadValue, exit context)
+}
+
+/** One per strategy. The ONLY place put-vs-call (or future) divergence is allowed to live. */
+interface SpreadStrategy<T : Spread> {
+    val id: StrategyId
+    /** Strategy-scoped entry/exit params (resolved with per-symbol universe overrides). */
+    fun params(symbol: Symbol): StrategyParams
+    /** Scan one symbol → an execution request, or null to skip. */
+    suspend fun selectCandidate(symbol: Symbol, capital: Money): TradeExecutionRequest?
+    /** Hard entry gate beyond credit/IV (e.g. bear-call ex-dividend buffer). Default: allow. */
+    suspend fun entryBlocked(symbol: Symbol): Boolean = false
+    /** Strategy-specific exit beyond generic TP/SL/DTE (e.g. dividend force-exit). Default: none. */
+    suspend fun strategyExitSignal(spread: T): ExitSignal? = null
+    /** Open/active rows for cap + dashboards. */
+    suspend fun activeCount(): Int
+    suspend fun openRisk(): BigDecimal
+}
 ```
 
-> **Strike direction**: a bear call sells the **lower** strike and buys **strike + width**
-> (the higher strike is the long protection). This is the mirror of the bull put, which sells
-> the higher strike. Get this right in both the model docs and the scanner.
+`SpreadManagementService.checkExits()` becomes: load open spreads across all strategies (via the
+registry/facade), run the **generic** TP/SL/DTE evaluation, then for each spread call
+`registry.forSpread(spread).strategyExitSignal(spread)` and act on it. Bull put returns `null`
+(no change in behaviour); bear call returns the dividend exit. **No `if (spread is BearCall)`
+branches in the core** — the `when` is resolved once, in the registry lookup.
 
-**Database (build phase — clean rename is fine):**
-- Liquibase `vNN__bull_put_rename.yaml`: `RENAME TABLE spread_positions → bull_put_spreads`
-  (update `@Table` on the entity, the repository, and the v2 index names accordingly).
-- Liquibase `vNN__bear_call_spreads.yaml`: create `bear_call_spreads` (same columns as
-  `bull_put_spreads` + `ex_dividend_date`). `close_reason` stays `TEXT` (per project convention).
-- Cross-strategy reads go through the `SpreadQueryFacade` (option B), not a DB union view.
-
-### Phase 2: Bear Call Scanner (2-3 days)
-
-`BearCallScanCandidateSelector` — fork of `ScanCandidateSelector` with these differences only:
-
-1. Filter `chain.filter { it.contract.type == OptionType.CALL }` (vs. `PUT` at `:80`).
-2. Short = sell at delta target; long = buy strike **+ width** (`targetBoughtStrike =
-   soldStrike + spreadWidthUsd`, vs. `− width` for puts at `:98`).
-3. Credit/maxRisk math is **unchanged** — `midCredit = soldMid − boughtMid`,
-   `maxRisk = width − credit`. The scanner already prices off **real market quotes**, so the
-   actual call skew is *already reflected* in those quotes.
-4. **Entry filter (US only)**: skip if `universePort.get(symbol).exDividendDate` is within the
-   `ex-dividend-entry-buffer-hours` window. No-op when the date is null or the name is EU.
-
-**No skew-adjustment factor.** (Removed from the first draft.) Multiplying an already-real,
-achievable market credit by a constant haircut models nothing and discards valid trades. If
-bear calls should clear a higher bar, express that as a **separate, higher
-`bear-call.min-credit-per-share`**, applied to the real credit — not a multiplier.
-
-### Phase 3: Dividend Assignment Protection (3-4 days) — US / American-style only
-
-> **Gating rule**: bear-call entry stays `enabled: false` until the ex-dividend data pipeline
-> below is live and populating `bear_call_spreads.ex_dividend_date` /
-> `universe.next_dividend_amount`. The smart-exit logic is inert with null data, so shipping it
-> without the data source would mean the strategy's primary incremental risk control is dead
-> code. The pipeline is part of this MVP, **not** a deferred future ticket.
-
-**Scope**: American-style options only (US listings). EUREX equity options are typically
-European-style — no early assignment — so the dividend service must early-return for EU names
-(gate on exchange/style, not just on a null date).
-
-**Dividend data pipeline (MVP, not deferred):**
-- Add `universe.ex_dividend_date: LocalDate?` and `universe.next_dividend_amount: BigDecimal?`.
-- Scheduled refresh job using `reqFundamentalData` (IB Gateway), updating the N least-recently-
-  refreshed US instruments per cycle. (EU names skipped.)
-
-**`BearCallDividendService.checkSmartDividendExit()`** — runs inside the generalized
-`SpreadManagementService.checkExits` cycle, for bear calls on US names only. Force-close at
-market when **all three** hold:
-1. Ex-dividend within `dividend-check-window-hours` (24–48h).
-2. Short call is **ITM** (`spot > shortCall.strike`).
-3. Short-call extrinsic (live mid − intrinsic) **< estimated dividend amount**.
-
-Close via the same `forceCloseSpread(...)` path the existing exits use (not an invented
-`closeSpread(id, price, status)` signature), with a new `SpreadStatus.CLOSED_DIVIDEND_RISK`.
-Fallback: if extrinsic can't be evaluated (no live quote) and conditions 1–2 hold, exit anyway
-(assignment loss dominates slippage). Caveat to monitor: market-closing illiquid ITM calls near
-ex-div can realize meaningful slippage — log realized vs. theoretical for tuning.
-
-### Phase 4: Execution & Shared Portfolio Cap (2 days)
-
-Execution itself is reused (`TradeExecutionService`, BAG for US, leg-by-leg for EU). The real
-work is the **shared cap**, which today is enforced in **three** independent sites that each
-count bull puts only:
-
-- `TradeExecutionService:98` (`countByStatus(OPEN)+CLOSING+in-flight`)
-- `ScannerService:46` (`PENDING+OPEN+CLOSING` early-out)
-- `PreTradeValidator:31` (`findOpen()+findByStatus(CLOSING)`)
-
-All three must sum **both** strategies via the `SpreadQueryFacade`, or the cap silently becomes
-per-strategy (up to 10 open). Add a test: open 5 mixed bull-put/bear-call spreads, assert the
-6th entry is rejected at every gate.
-
-```kotlin
-// SpreadQueryFacade
-suspend fun activeSpreadCount(): Int =
-    bullPutPort.countActive() + bearCallPort.countActive()   // OPEN + CLOSING + PENDING
-suspend fun activePortfolioRisk(): BigDecimal =
-    bullPutPort.openRisk() + bearCallPort.openRisk()
-```
-
-### Phase 5: API & UI (sized separately — see note)
-
-- New endpoints: `GET /bear-call-spreads`, `/bear-call-spreads/{id}`,
-  `PUT /bear-call-spreads/{id}/close`, `GET /bear-call-spreads/dividend-risk`.
-- Rename `GET /spreads` → `/bull-put-spreads`; `GET /account/all-positions` and `/health`
-  report both via the facade.
-- Frontend: separate `[Bull Puts] [Bear Calls] [Dashboard]` tabs; bear-call tab adds a
-  dividend-watch panel.
-
-> **Combined-Greeks dashboard is NOT in this MVP.** The engine deliberately removed
-> Black-Scholes/Greeks from the trading path (see CLAUDE.md), so there is no per-position live
-> Greeks source to aggregate. Treat "blended Greeks / combined risk heatmap" as a follow-up that
-> first needs a live-Greeks feed. The MVP dashboard shows P&L, open counts, and defined max-loss
-> (which we already have), not Greeks.
+**Adding strategy #3** = create `strategy/ironcondor/`, implement `SpreadStrategy`, add a Liquibase
+table + entity, register the bean. Core, scanner, manager, execution, reconciliation: untouched.
 
 ---
 
-## Configuration
+## Config refactor (operator rule #1, applied to YAML)
 
-**Bull Put** (existing, unchanged):
+`ScannerConfig` today flatly mixes bull-put entry/exit params with shared infra. Split it:
+
 ```yaml
-scanner:
-  bull-put:
+scanner:                         # SHARED infra only
+  cron: "0 */15 9-22 * * MON-FRI"
+  monitor-delay-ms: 60000
+  scanner-paused: false
+  monitor-paused: false
+  trading-enabled: true
+  iv-cache-ttl-minutes: 60
+  warmup-batch-size: 10
+  # execution/order-chase/fees/cooldowns … (all strategy-agnostic) stay here
+  portfolio:                     # SHARED across all strategies
+    max-open-spreads: 5          # TOTAL, enforced at all gate sites via SpreadQueryFacade
+    max-portfolio-risk-usd: 17500
+
+  bull-put:                      # strategy-scoped (was the flat scanner.* entry/exit params)
     enabled: true
     target-delta: 0.30
     delta-min: 0.25
@@ -264,13 +169,9 @@ scanner:
     stop-loss-percent: 2.00
     time-profit-dte: 21
     drift-protection-pct: 0.05
-```
 
-**Bear Call** (new namespace; note: NO skew-adjustment):
-```yaml
-scanner:
-  bear-call:
-    enabled: false   # gated on dividend pipeline + paper validation
+  bear-call:                     # strategy-scoped (NEW; note: NO skew-adjustment, see Phase 3)
+    enabled: false               # gated on dividend pipeline + paper validation
     target-delta: 0.30
     delta-min: 0.25
     delta-max: 0.30
@@ -279,76 +180,128 @@ scanner:
     max-dte: 50
     preferred-dte: 45
     spread-width-usd: 5.0
-    min-credit-per-share: 0.40        # higher bar than bull put if desired — applied to REAL credit
+    min-credit-per-share: 0.40   # higher bar than bull put if desired — applied to REAL market credit
     take-profit-percent: 0.50
     stop-loss-percent: 2.00
     time-profit-dte: 21
     drift-protection-pct: 0.05
-    # Bear-call specific (US / American-style only)
-    dividend-check-window-hours: 48   # smart exit if ex-div within this window
-    ex-dividend-entry-buffer-hours: 48 # skip entry if ex-div within this window
+    dividend-check-window-hours: 48     # US/American-style only
+    ex-dividend-entry-buffer-hours: 48
 ```
 
-**Portfolio limits** (SHARED across both strategies):
-```yaml
-scanner:
-  portfolio:
-    max-open-spreads: 5          # TOTAL across both strategies — enforced at all 3 gate sites
-    max-portfolio-risk-usd: 17500
-```
+Preserve the existing **per-symbol universe overrides** (instrument row beats strategy default) —
+just resolve them per strategy instead of from one flat config. `StrategyParams` is the resolved view.
 
 ---
 
-## Risks (Revised)
+## Reality Check — what is generic today (verified against `engine/src/main`)
+
+| Component | Today | Action |
+|-----------|-------|--------|
+| `SpreadLeg`, `SpreadStatus`, `OptionType` (`PUT("P")`/`CALL("C")`) | Generic | Reuse |
+| `TradeExecutionRequest` (carries sold/bought `OptionContract` + type) | Generic | Reuse |
+| `TradeExecutionService` | Order-centric | Reuse; cap → facade |
+| `PositionReconciliationService` (`pos.optionRight == optionType.ibkrCode`) | Option-type agnostic | Reuse |
+| `QuoteHealthService` | Contract-based | Reuse |
+| `SpreadManagementService.positionMatchesLeg` | **Fixed in slice 1** (was `"Put"` literal) | Done ✅ |
+| `SpreadPort` / `SpreadManagementService` typing | Hard-typed `BullPutSpread` | Generalize to `Spread` + registry |
+| Cap gates (`TradeExecutionService:98`, `ScannerService:46`, `PreTradeValidator:31`) | Count bull puts only | Route all three through `SpreadQueryFacade` |
+| `ScanCandidateSelector` | Bull-put (PUT filter, sell higher) | Rename + extract `SpreadCandidateSelector` |
+| `SpreadPositionEntity` `@Table("spread_positions")` | Bull-put row | Rename table + entity |
+
+---
+
+## Implementation Phases
+
+### Phase 0 — Framework extraction & clean rename (gating)  ▸ slice 1 DONE
+- ✅ **Slice 1 (shipped):** fix `positionMatchesLeg`; restore green test suite.
+- **Slice 2 (next):** introduce `Spread` sealed interface + `StrategyId`; make `BullPutSpread`
+  implement it. Introduce `SpreadStrategy<T>` + `SpreadStrategyRegistry` with **only `BullPutStrategy`**
+  registered. Generalize `SpreadManagementService` to operate on `Spread` + the registry seam, keeping
+  bull-put behaviour byte-for-byte (existing tests green). No bear call yet.
+- **Slice 3:** the rename pass (table → `bull_put_spreads`, port/entity/repo/adapter/API/config/tests
+  per the mandate table) via Liquibase changeset + matching entities (validate-safe). Pure rename +
+  config reshape; no behaviour change. Deploy alone; confirm bull puts unaffected over a session.
+
+### Phase 1 — Bear call model & DB (2 days)
+`BearCallSpread : Spread` (sells **lower** strike, buys strike+width; `maxRisk = width − credit`,
+same formula; `+ exDividendDate`). Liquibase `bear_call_spreads` table (same shape + `ex_dividend_date`),
+`BearCallSpreadEntity`/repo/adapter/port. Register `BearCallStrategy` (selector wired in Phase 2).
+
+### Phase 2 — Bear call scanner (2–3 days)
+`BearCallCandidateSelector : SpreadCandidateSelector`: filter `OptionType.CALL`; sell delta-target
+(lower strike), buy `strike + width`; credit/maxRisk math unchanged (real market quotes already
+reflect call skew). `entryBlocked()` = ex-dividend within `ex-dividend-entry-buffer-hours` (US only).
+**No skew-adjustment multiplier** — express any higher bar as `bear-call.min-credit-per-share` on the
+real credit.
+
+### Phase 3 — Dividend assignment protection (3–4 days) — US / American-style only
+> **Enablement gate:** bear call stays `enabled: false` until the ex-dividend data pipeline is live;
+> the smart exit is inert with null data, so it is NOT shipped as dead code behind a deferred ticket.
+
+Pipeline (MVP): `universe.ex_dividend_date` + `next_dividend_amount`; scheduled `reqFundamentalData`
+refresh of US instruments. `BearCallStrategy.strategyExitSignal` force-closes (via the existing
+`forceCloseSpread` path, new `SpreadStatus.CLOSED_DIVIDEND_RISK`) when **all three**: ex-div within
+24–48h, short call ITM (`spot > strike`), short-call extrinsic < dividend. European-style (EUREX)
+names early-return — no early assignment. Fallback: if extrinsic can't be evaluated but the first two
+hold, exit anyway.
+
+### Phase 4 — Shared portfolio cap (2 days)
+Route `TradeExecutionService:98`, `ScannerService:46`, `PreTradeValidator:31` through
+`SpreadQueryFacade.activeSpreadCount()` / `activePortfolioRisk()` (sum over registry). Test: open 5
+mixed spreads → 6th rejected at every gate.
+
+### Phase 5 — API & UI (sized separately)
+`/bull-put-spreads` (renamed), `/bear-call-spreads`, `/bear-call-spreads/dividend-risk`; aggregate
+`/spreads` + `/account/all-positions` via the facade. UI tabs `[Bull Puts] [Bear Calls] [Dashboard]`.
+**Combined-Greeks dashboard deferred** — no live-Greeks source on the trading path (BS removed).
+
+---
+
+## Risks
 
 | Risk | Impact | Mitigation |
 |------|--------|-----------|
-| **Generalization regresses bull puts** | Live strategy breaks | Phase 0 keeps bull-put tests green byte-for-byte; deploy Phase 0 alone to paper first |
-| **`positionMatchesLeg` put hard-code** | Bear-call close/verify silently fails | Fixed in Phase 0 + regression test |
-| **Cap not summed at all 3 sites** | Up to 10 open spreads | Facade + 6th-entry rejection test |
-| **Dividend data missing** | Smart exit is dead code | Pipeline is MVP-gating, not deferred; `enabled:false` until live |
-| **EU early-assignment logic misapplied** | Needless force-closes | Dividend service early-returns for EU/European-style names |
-| **ITM call slippage near ex-div** | Larger realized loss on exit | Log realized vs. theoretical; tune window |
+| Framework extraction regresses bull puts | Live strategy breaks | Slices 2–3 keep tests green byte-for-byte; deploy each slice alone to paper |
+| `ddl-auto: validate` rejects schema | Engine won't boot | Every table/column change is a Liquibase changeset matched to entities; test against :5433 |
+| Cap not summed at all 3 sites | Up to 10 open spreads | Facade + 6th-entry rejection test |
+| Dividend data missing | Smart exit is dead code | Pipeline is MVP-gating; `enabled:false` until live |
+| EU early-assignment logic misapplied | Needless force-closes | Strategy seam early-returns for European-style names |
+| Over-abstraction / premature generality | Maintenance drag | Registry seam only; resist generalizing beyond 2 real strategies until #3 lands |
 
 ---
 
-## Decision Checkpoints — LOCKED (rev. 2, 2026-06-26)
+## Decision Checkpoints — LOCKED (rev. 3)
 
-- [x] Separate strategy models behind a shared `Spread` abstraction (Phase 0 gating).
-- [x] Port strategy: two concrete ports + `SpreadQueryFacade` (option B).
-- [x] **Skew-adjustment removed**; use a separate `bear-call.min-credit-per-share` instead.
-- [x] Dividend protection is **US / American-style only**; EU names exempt.
-- [x] Dividend-data pipeline is **MVP-gating**, not a future ticket; bear calls stay
-      `enabled:false` until it populates.
-- [x] Shared cap enforced at all **three** existing gate sites via the facade.
-- [x] **Clean rename** `spread_positions → bull_put_spreads` (acceptable in build phase).
-- [x] Combined-Greeks dashboard deferred (no live-Greeks source on trading path).
-- [x] UI: separate `[Bull Puts] [Bear Calls] [Dashboard]` tabs.
+- [x] Build a **multi-strategy framework** (registry + `Spread` + `SpreadStrategy<T>` seam); bull put
+      is strategy #1, bear call #2; strategy #3 needs no core edits.
+- [x] **Name bull-put-specific code `BullPut`** (classes, table `bull_put_spreads`, config, endpoints,
+      tests); keep genuinely-generic types neutral.
+- [x] **Clean over expedient** — shared behaviour in the core, divergence behind the strategy seam; no
+      `if (spread is BearCall)` branches in core.
+- [x] Two concrete ports + `SpreadQueryFacade`; cap enforced at all three gate sites.
+- [x] **No skew-adjustment**; use `bear-call.min-credit-per-share` on real credit.
+- [x] Dividend protection **US/American-style only**; pipeline is MVP-gating, not deferred.
+- [x] Liquibase rigor under live Postgres `ddl-auto: validate`.
+- [x] Combined-Greeks dashboard deferred.
 
 ---
 
-## Validation
+## Validation (deploy-per-delivery, paper `DU7875979`)
 
-Per the deploy-to-RPi policy, each coherent delivery ships on its own to the paper account
-(`DU7875979`) after a green `./gradlew build`:
-
-1. **Phase 0** — deploy generalization alone; confirm bull puts behave identically (no
-   behavioural diff in trade logs over one session).
-2. **Phases 1-2** — bear-call scanner on paper with `enabled:true` *temporarily* on a US name
-   with no near-term ex-div; confirm entries build the correct legs (sell lower call / buy
-   higher call), BAG fills for US.
-3. **Phase 3** — verify the dividend refresh job populates dates, and that smart-exit fires
-   on a real ITM-near-ex-div case (or a forced fixture).
-4. **Phase 4** — open 5 mixed spreads on paper, confirm the 6th is rejected.
-5. Run until operator is confident before any consideration of a live account.
+Each slice/phase ships alone after a green `./gradlew build`:
+- Slice 2 (framework extraction) — bull puts behave identically (no trade-log diff over a session).
+- Slice 3 (rename pass) — engine boots clean against renamed `bull_put_spreads`; bull puts unaffected.
+- Phases 1–2 — bear-call scanner builds correct legs (sell lower call / buy higher call), BAG fills for US.
+3. Dividend refresh populates dates; smart-exit fires on an ITM-near-ex-div fixture.
+4. 5 mixed spreads → 6th rejected.
+Run until operator is confident before any live-account consideration.
 
 ---
 
 ## Future Tickets
-
-- [ ] Volatility-skew analytics dashboard (observe, don't haircut).
-- [ ] Combined/blended Greeks (requires a live-Greeks feed first).
-- [ ] Hedged portfolio analysis (bull + bear simultaneously).
-- [ ] BAG combo support for EU bear calls (shares the bull-put EUREX work).
+- [ ] Correct CLAUDE.md's stale "Postgres not running in production" note.
+- [ ] Volatility-skew analytics (observe, don't haircut).
+- [ ] Combined/blended Greeks (needs a live-Greeks feed first).
+- [ ] Strategy #3 (iron condor / put-credit ladder) as the proof that the framework is truly additive.
 </content>
-</invoke>
