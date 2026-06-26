@@ -13,8 +13,14 @@ import cz.solvina.options.domain.features.scanner.ScannerConfig
 import cz.solvina.options.domain.features.spread.SpreadManagementService
 import cz.solvina.options.domain.features.spread.SpreadPort
 import cz.solvina.options.domain.features.spread.model.BullPutSpread
+import cz.solvina.options.domain.features.spread.model.Spread
 import cz.solvina.options.domain.features.spread.model.SpreadLeg
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
+import cz.solvina.options.domain.features.spread.model.StrategyId
+import cz.solvina.options.domain.features.spread.strategy.SpreadStrategy
+import cz.solvina.options.domain.features.spread.strategy.SpreadStrategyRegistry
+import cz.solvina.options.domain.features.spread.strategy.StrategyExit
+import cz.solvina.options.domain.features.spread.strategy.bullput.BullPutStrategy
 import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.features.volatility.VolatilityPort
 import cz.solvina.options.domain.models.IvRank
@@ -71,6 +77,10 @@ class SpreadManagementServiceTest {
 
     private val config = ScannerConfig(watchlist = listOf("SPY"))
 
+    // Real registry with the bull put strategy — exercises the actual seam dispatch (bull put adds
+    // no strategy-specific exit, so generic TP/SL/DTE behaviour is unchanged).
+    private val strategyRegistry = SpreadStrategyRegistry(listOf(BullPutStrategy()))
+
     // Shared universe mock — configured in setUp() so each test can override if needed.
     private val universePort = mockk<UniversePort>(relaxed = true)
 
@@ -119,6 +129,7 @@ class SpreadManagementServiceTest {
         config = config,
         clock = clock,
         quoteHealthService = mockk(relaxed = true),
+        strategyRegistry = strategyRegistry,
         positionsPort = positionsPort,
     )
 
@@ -185,6 +196,7 @@ class SpreadManagementServiceTest {
                 config = config,
                 clock = clockAtEntry,
                 quoteHealthService = mockk(relaxed = true),
+                strategyRegistry = strategyRegistry,
             ).softClose(spread.id!!)
 
             val sellBackPrice = slot<Money>()
@@ -235,6 +247,7 @@ class SpreadManagementServiceTest {
                 config = config,
                 clock = clockAtEntry,
                 quoteHealthService = mockk(relaxed = true),
+                strategyRegistry = strategyRegistry,
             ).checkExits()
 
             assertEquals(SpreadStatus.CLOSED_STOP, updated.captured.status)
@@ -360,10 +373,59 @@ class SpreadManagementServiceTest {
                 config = config,
                 clock = clockAtEntry,
                 quoteHealthService = mockk(relaxed = true),
+                strategyRegistry = strategyRegistry,
             ).checkExits()
 
             coVerify(exactly = 0) { orderPort.placeAndAwaitFill(any(), any(), any(), any()) }
             coVerify(exactly = 1) { spreadPort.update(match { it.status == SpreadStatus.OPEN }) }
+        }
+
+    // -------------------------------------------------------------------------
+    // Strategy seam
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `strategy-specific exit from the seam closes a spread the generic rules would hold`() =
+        runTest {
+            // Generic hold zone (value $0.60 between TP $0.50 and SL $1.50, DTE well above time-exit),
+            // but the owning strategy returns an exit — the spread must close on the strategy's signal.
+            // This is the path bear-call dividend protection will use; bull put returns null here.
+            val spreadPort = mockk<SpreadPort>()
+            val marketDataPort = mockk<MarketDataPort>()
+            val orderPort = mockk<OrderPort>(relaxed = true)
+
+            coEvery { spreadPort.findOpen() } returns listOf(buildOpenSpread())
+            coEvery { spreadPort.findByStatus(SpreadStatus.CLOSING) } returns emptyList()
+            coEvery { marketDataPort.getOptionMidLive(soldContract) } returns Money(BigDecimal("0.70"))
+            coEvery { marketDataPort.getOptionMidLive(boughtContract) } returns Money(BigDecimal("0.10"))
+            coEvery { marketDataPort.getUnderlyingPrice(any()) } returns Money(BigDecimal("500"))
+
+            val seamStrategy =
+                object : SpreadStrategy {
+                    override val id = StrategyId.BULL_PUT
+
+                    override suspend fun strategyExitSignal(spread: Spread) = StrategyExit(SpreadStatus.CLOSED_MANUAL, "SEAM_EXIT")
+                }
+
+            val updated = slot<BullPutSpread>()
+            coEvery { spreadPort.update(capture(updated)) } answers { firstArg() }
+
+            SpreadManagementService(
+                spreadPort = spreadPort,
+                marketDataPort = marketDataPort,
+                orderPort = orderPort,
+                universePort = universePort,
+                volatilityPort = mockk(relaxed = true),
+                executionPort = mockk(relaxed = true),
+                config = config,
+                clock = clockAtEntry,
+                quoteHealthService = mockk(relaxed = true),
+                strategyRegistry = SpreadStrategyRegistry(listOf(seamStrategy)),
+            ).checkExits()
+
+            coVerify { orderPort.placeMarketOrder(soldContract, LegAction.BUY, any()) }
+            assertEquals(SpreadStatus.CLOSED_MANUAL, updated.captured.status)
+            assertEquals("SEAM_EXIT", updated.captured.closeReason)
         }
 
     // -------------------------------------------------------------------------

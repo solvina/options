@@ -10,6 +10,7 @@ import cz.solvina.options.domain.features.scanner.ScannerConfig
 import cz.solvina.options.domain.features.spread.model.BullPutSpread
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
 import cz.solvina.options.domain.features.spread.service.QuoteHealthService
+import cz.solvina.options.domain.features.spread.strategy.SpreadStrategyRegistry
 import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.features.volatility.VolatilityPort
 import cz.solvina.options.domain.models.Money
@@ -40,6 +41,7 @@ class SpreadManagementService(
     private val config: ScannerConfig,
     private val clock: Clock,
     private val quoteHealthService: QuoteHealthService,
+    private val strategyRegistry: SpreadStrategyRegistry,
     private val positionsPort: cz.solvina.options.domain.features.account.PositionsPort? = null,
 ) {
     sealed interface ManualCloseResult {
@@ -359,7 +361,7 @@ class SpreadManagementService(
                 "TP≤\$${"%.4f".format(tpThreshold)} SL≥\$${"%.4f".format(slThreshold)} DTE=$dte quote=$quoteStatus"
         }
 
-        val exitSignal: Pair<SpreadStatus, String>? =
+        val genericExit: Pair<SpreadStatus, String>? =
             when {
                 currentSpreadValue != null && currentSpreadValue <= tpThreshold ->
                     SpreadStatus.CLOSED_PROFIT to "TP: spread value \$$currentSpreadValue ≤ \$$tpThreshold"
@@ -369,6 +371,16 @@ class SpreadManagementService(
                     SpreadStatus.CLOSED_TIME to "DTE: $dte ≤ $timeProfitDte"
                 else -> null
             }
+
+        // Strategy seam: after the shared TP/SL/DTE rules, let the owning strategy add its own exit
+        // (e.g. bear-call dividend-assignment protection). Bull put contributes none. The registry
+        // dispatches by spread.strategyId, so the core stays free of per-strategy branches.
+        val exitSignal: Pair<SpreadStatus, String>? =
+            genericExit
+                ?: strategyRegistry
+                    .forSpread(spread)
+                    ?.strategyExitSignal(spread)
+                    ?.let { it.status to it.reason }
 
         if (exitSignal == null) {
             if (currentSpreadValue != null) {

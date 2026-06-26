@@ -20,6 +20,8 @@ import cz.solvina.options.domain.features.spread.SpreadPort
 import cz.solvina.options.domain.features.spread.model.BullPutSpread
 import cz.solvina.options.domain.features.spread.model.SpreadLeg
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
+import cz.solvina.options.domain.features.spread.strategy.SpreadStrategyRegistry
+import cz.solvina.options.domain.features.spread.strategy.bullput.BullPutStrategy
 import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.features.volatility.VolatilityPort
 import cz.solvina.options.domain.models.IvRank
@@ -213,6 +215,7 @@ class PositionReversalIntegrationTest {
                     config = config,
                     clock = clock,
                     quoteHealthService = mockk(relaxed = true),
+                    strategyRegistry = SpreadStrategyRegistry(listOf(BullPutStrategy())),
                 )
 
             service.checkExits()
