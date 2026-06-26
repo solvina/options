@@ -1,5 +1,7 @@
 package cz.solvina.options.adapters.outbound.ibkr.registry
 
+import java.time.Instant
+
 data class MarketDataSnapshot(
     val bid: Double = Double.NaN,
     val ask: Double = Double.NaN,
@@ -10,4 +12,5 @@ data class MarketDataSnapshot(
     val gamma: Double = Double.NaN,
     val vega: Double = Double.NaN,
     val theta: Double = Double.NaN,
+    val asOf: Instant = Instant.now(),
 )

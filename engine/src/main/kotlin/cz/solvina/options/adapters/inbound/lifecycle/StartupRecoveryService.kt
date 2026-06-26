@@ -5,8 +5,11 @@ import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOpenOrdersAdapter
 import cz.solvina.options.adapters.outbound.ibkr.account.OpenOrder
 import cz.solvina.options.adapters.outbound.ibkr.order.OrderCancellationService
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
+import cz.solvina.options.domain.features.account.AccountPosition
+import cz.solvina.options.domain.features.account.PositionsPort
 import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.features.spread.SpreadPort
+import cz.solvina.options.domain.features.spread.model.BullPutSpread
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CompletableDeferred
@@ -26,6 +29,7 @@ class StartupRecoveryService(
     private val openOrdersAdapter: IbkrOpenOrdersAdapter,
     private val client: EClientSocket,
     private val orderCancellationService: OrderCancellationService,
+    private val positionsPort: PositionsPort,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -129,14 +133,55 @@ class StartupRecoveryService(
                     orderRegistry.pendingOrderStatus.remove(orderId)
                 }
             } else {
-                // Order not found in IBKR — filled or cancelled while engine was down
-                logger.warn {
-                    "Recovery: orderId=$orderId for ${spread.symbol} not in open orders — closing as recovery_unknown (check positions manually)"
+                // Order not found in IBKR — it filled or was cancelled while the engine was down.
+                // Do NOT blindly close: if BOTH legs are actually held at the broker the order
+                // filled, so adopt the spread as OPEN (else it becomes an unmanaged orphan).
+                val positions =
+                    runCatching { positionsPort.getPositions() }
+                        .onFailure { e -> logger.warn(e) { "Recovery: could not fetch positions for orderId=$orderId" } }
+                        .getOrDefault(emptyList())
+                if (bothLegsHeld(spread, positions)) {
+                    spreadPort.update(spread.copy(status = SpreadStatus.OPEN))
+                    logger.warn {
+                        "Recovery: orderId=$orderId for ${spread.symbol} vanished from open orders but BOTH legs are " +
+                            "held — adopting spread ${spread.id} as OPEN so it gets managed"
+                    }
+                } else {
+                    logger.warn {
+                        "Recovery: orderId=$orderId for ${spread.symbol} not in open orders and legs not both held — " +
+                            "closing as recovery_unknown (any stranded leg will be flagged by reconciliation)"
+                    }
+                    spreadPort.update(
+                        spread.copy(status = SpreadStatus.CLOSED_MANUAL, closeReason = "recovery_unknown", closedAt = Instant.now()),
+                    )
                 }
-                spreadPort.update(
-                    spread.copy(status = SpreadStatus.CLOSED_MANUAL, closeReason = "recovery_unknown", closedAt = Instant.now()),
-                )
             }
         }
+    }
+
+    /** True if both legs of [spread] are present at the broker with the expected signed quantities. */
+    private fun bothLegsHeld(
+        spread: BullPutSpread,
+        positions: List<AccountPosition>,
+    ): Boolean {
+        val shortHeld = positions.any { legMatches(it, spread, isShort = true) }
+        val longHeld = positions.any { legMatches(it, spread, isShort = false) }
+        return shortHeld && longHeld
+    }
+
+    private fun legMatches(
+        p: AccountPosition,
+        spread: BullPutSpread,
+        isShort: Boolean,
+    ): Boolean {
+        val leg = if (isShort) spread.soldLeg else spread.boughtLeg
+        val c = leg.contract
+        val expectedQty = if (isShort) -spread.quantity else spread.quantity
+        return p.secType == "OPT" &&
+            p.symbol == c.symbol.value &&
+            p.strike == c.strike &&
+            p.optionRight == c.type.ibkrCode &&
+            p.expiry == c.expiry &&
+            p.quantity.toInt() == expectedQty
     }
 }

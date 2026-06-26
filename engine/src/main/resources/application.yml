@@ -96,6 +96,25 @@ scanner:
   iv-cache-ttl-minutes: 60
   option-params-cache-ttl-hours: 1
 
+# Operational alerts (Telegram). Token/chat injected from env (same .env the bot uses).
+alerts:
+  telegram:
+    enabled: true
+    bot-token: ${TELEGRAM_BOT_TOKEN:}
+    chat-id: ${TELEGRAM_CHAT_ID:}
+
+# Position reconciliation: alert on IBKR positions not managed by any OPEN spread.
+reconciliation:
+  delay-ms: 300000          # run every 5 min
+  initial-delay-ms: 120000  # first run 2 min after boot (let positions populate)
+
+# Quote age monitoring: detect stale/blind market data during exit decisions (Phase 1 — observability only).
+quote-monitoring:
+  stale-seconds: 60         # age ≥ 60s → STALE
+  blind-seconds: 300        # age ≥ 300s → BLIND (5 min)
+  blind-cycles-before-exit: 2  # synthetic stops only after N consecutive BLIND cycles (hysteresis)
+  synthetic-risk-exit-enabled: false  # Phase 2: BS risk-only fallback (disabled for now, dry-run first)
+
 flag:
   # Watchlist is DB-driven via instrument_universe.flag_enabled (UniversePort.getFlagWatchlist).
   atr-period: 14

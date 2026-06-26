@@ -9,6 +9,8 @@ import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.features.scanner.ScannerConfig
 import cz.solvina.options.domain.features.spread.model.BullPutSpread
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
+import cz.solvina.options.domain.features.spread.service.QuoteHealth
+import cz.solvina.options.domain.features.spread.service.QuoteHealthService
 import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.features.volatility.VolatilityPort
 import cz.solvina.options.domain.models.Money
@@ -38,6 +40,7 @@ class SpreadManagementService(
     private val executionPort: TradeExecutionPort,
     private val config: ScannerConfig,
     private val clock: Clock,
+    private val quoteHealthService: QuoteHealthService,
     private val positionsPort: cz.solvina.options.domain.features.account.PositionsPort? = null,
 ) {
     sealed interface ManualCloseResult {
@@ -329,6 +332,16 @@ class SpreadManagementService(
                 null
             }
 
+        // Phase 1: Monitor quote freshness (missing quotes indicate potential staleness)
+        // TODO: enhance with actual timestamp tracking from IbkrMarketDataRegistry in Phase 2
+        val quoteStatus = if (soldMidLive != null && boughtMidLive != null) "LIVE" else "BLIND"
+        if (quoteStatus == "BLIND") {
+            logger.warn {
+                "[${spread.symbol}] Quote health BLIND — missing live quotes for exit evaluation " +
+                    "(soldLive=${soldMidLive != null} boughtLive=${boughtMidLive != null})"
+            }
+        }
+
         val inst = universePort.get(spread.symbol)
         val takeProfitPercent = inst?.takeProfitPercent ?: config.takeProfitPercent
         val stopLossPercent = inst?.stopLossPercent ?: config.stopLossPercent
@@ -339,7 +352,7 @@ class SpreadManagementService(
 
         logger.debug {
             "[${spread.symbol}] spread value=\$${currentSpreadValue ?: "n/a"} credit=\$${"%.4f".format(spread.creditPerShare)} " +
-                "TP≤\$${"%.4f".format(tpThreshold)} SL≥\$${"%.4f".format(slThreshold)} DTE=$dte"
+                "TP≤\$${"%.4f".format(tpThreshold)} SL≥\$${"%.4f".format(slThreshold)} DTE=$dte quote=$quoteStatus"
         }
 
         val exitSignal: Pair<SpreadStatus, String>? =

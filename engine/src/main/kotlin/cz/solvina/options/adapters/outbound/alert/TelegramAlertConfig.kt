@@ -1,0 +1,15 @@
+package cz.solvina.options.adapters.outbound.alert
+
+import org.springframework.boot.context.properties.ConfigurationProperties
+
+/**
+ * Telegram alert configuration. Token/chat are injected from the environment (the same
+ * `.env` the bot uses) — never committed. When disabled or unconfigured the adapter is a
+ * no-op, so the engine runs fine without alerting wired.
+ */
+@ConfigurationProperties("alerts.telegram")
+data class TelegramAlertConfig(
+    val enabled: Boolean = false,
+    val botToken: String = "",
+    val chatId: String = "",
+)

@@ -89,13 +89,14 @@ class IbkrMarketDataRegistry(
         field: Int,
         price: Double,
     ) {
+        val now = Instant.now()
         pendingMarketData[reqId]?.let { request ->
             request.snapshot =
                 when (field) {
-                    1 -> request.snapshot.copy(bid = price)
-                    2 -> request.snapshot.copy(ask = price)
-                    4 -> request.snapshot.copy(last = price)
-                    9 -> request.snapshot.copy(close = price)
+                    1 -> request.snapshot.copy(bid = price, asOf = now)
+                    2 -> request.snapshot.copy(ask = price, asOf = now)
+                    4 -> request.snapshot.copy(last = price, asOf = now)
+                    9 -> request.snapshot.copy(close = price, asOf = now)
                     else -> return@let
                 }
             completeIfReady(reqId)
@@ -103,10 +104,10 @@ class IbkrMarketDataRegistry(
         pendingContinuousMarketData[reqId]?.let { request ->
             val updated =
                 when (field) {
-                    1 -> request.snapshot.copy(bid = price)
-                    2 -> request.snapshot.copy(ask = price)
-                    4 -> request.snapshot.copy(last = price)
-                    9 -> request.snapshot.copy(close = price)
+                    1 -> request.snapshot.copy(bid = price, asOf = now)
+                    2 -> request.snapshot.copy(ask = price, asOf = now)
+                    4 -> request.snapshot.copy(last = price, asOf = now)
+                    9 -> request.snapshot.copy(close = price, asOf = now)
                     else -> return@let
                 }
             request.snapshot = updated
@@ -125,6 +126,7 @@ class IbkrMarketDataRegistry(
     ) {
         if (field !in 10..13) return
         val sentinel = Double.MAX_VALUE
+        val now = Instant.now()
 
         fun MarketDataSnapshot.withGreeks() =
             copy(
@@ -133,6 +135,7 @@ class IbkrMarketDataRegistry(
                 gamma = if (!gamma.isNaN() && gamma != sentinel) gamma else this.gamma,
                 vega = if (!vega.isNaN() && vega != sentinel) vega else this.vega,
                 theta = if (!theta.isNaN() && theta != sentinel) theta else this.theta,
+                asOf = now,
             )
 
         pendingMarketData[reqId]?.let { request ->
