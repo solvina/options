@@ -1,8 +1,14 @@
-# Bear Call Strategy Implementation Plan — 2026-06-26
+# Bear Call Strategy Implementation Plan — 2026-06-26 (rev. 2)
 
-**Status**: Pre-implementation analysis & design  
-**Target**: Phase after bull put validation (post US session)  
-**Effort**: 3-4 weeks (design, implementation, validation)
+**Status**: Pre-implementation design, reconciled against engine source
+**Target**: Phase after bull put validation (post US session)
+**Effort**: ~4 weeks engine + data; UI/Greeks dashboard tracked separately (see note)
+
+> **Rev. 2 note**: The first draft assumed the spread management / persistence / port
+> layer was already generic. It is not — it is hard-typed to `BullPutSpread`. This revision
+> scopes the generalization work explicitly, removes the (broken) skew-adjustment factor,
+> scopes dividend handling to US/American-style options only, and gates bear-call enablement
+> on the dividend-data pipeline being live (not deferred). Verified call sites are cited inline.
 
 ---
 
@@ -10,415 +16,237 @@
 
 ### Question: Reuse Bull Put Code or Separate Implementation?
 
-**Recommendation: SEPARATE features with SHARED infrastructure**
+**Recommendation: SEPARATE strategy models + a SHARED `Spread` abstraction.**
 
-#### Why NOT full reuse (despite identical parameters):
+This is *not* "reuse the existing services as-is" — most of them are concrete on `BullPutSpread`
+today and must be generalized first. See "Reality Check" below before estimating.
 
-1. **Different Risk Evolution** 
-   - Bull put: Risk is downside (spreads tighten as stock rises)
-   - Bear call: Risk is upside (spreads blow out as stock rises faster)
-   - Early assignment mechanism is COMPLETELY different (dividend trap vs theta decay)
-   - Code paths that manage risk will diverge significantly
+#### Why separate strategy models (despite identical entry parameters):
 
-2. **Volatility Skew Handling**
-   - Bull puts: "Skew-friendly" — OTM puts naturally trade higher IV
-   - Bear calls: "Skew-hostile" — OTM calls trade LOWER IV
-   - This affects entry selection logic, position sizing, and risk management
-   - Future optimization will likely differ per strategy
+1. **Different risk evolution** — bull put risk is downside (spreads tighten as the stock
+   rises); bear call risk is upside (spreads blow out as the stock rises). Early-assignment
+   mechanics differ entirely (dividend trap on short calls vs. theta on short puts).
+2. **Different assignment surface** — short calls carry ex-dividend early-assignment risk on
+   **American-style (US)** names. Short puts do not. This is the core reason the strategies
+   diverge operationally.
+3. **Future divergence is likely** — dividend calendars, hedged (call+put) portfolio analysis,
+   per-strategy risk limits. Keeping models separate is cheaper than un-merging later.
 
-3. **Future Divergence is Guaranteed**
-   - Early assignment risk management (dividend checks)
-   - Greeks behave differently (call gamma vs put gamma)
-   - Portfolio hedging strategies will likely differ (you might want calls + puts together for long strangles)
-   - Platform evolution: keeping separate models costs less refactoring than merging later
+#### Why we can share *most* infrastructure (after generalization):
 
-4. **Operational Reality**
-   - Different monitoring rules (dividend calendars for bear calls)
-   - Different alert thresholds
-   - Different backtest parameters
-   - Risk limits may need to diverge
-
-#### Why we CAN share infrastructure:
-
-- ✅ Generic order execution (leg-by-leg, BAG, laddering all work for both)
-- ✅ Generic monitoring scheduler (checkExits works on any 2-leg spread)
-- ✅ Generic position reconciliation (orphan detection works for both)
-- ✅ Generic quote health monitoring (LIVE/STALE/BLIND applies to both)
-- ✅ Same exit logic framework (TP%, SL%, DTE time)
+- ✅ Order execution (`TradeExecutionService`, BAG/leg-by-leg) — already keyed off
+  `TradeExecutionRequest`, which carries `soldContract`/`boughtContract` with their own
+  `OptionType`. **Genuinely reusable as-is.**
+- ✅ Position reconciliation — `PositionReconciliationService:158` matches on
+  `pos.optionRight == optionType.ibkrCode`, derived from the contract. **Already option-type
+  agnostic.**
+- ✅ Quote-health monitoring (LIVE/STALE/BLIND) — operates on contracts, not put-specific.
+- ⚠️ Exit framework (TP%/SL%/DTE) — logic is generic in spirit but lives in a class hard-typed
+  to `BullPutSpread`. Reusable **after** the model is abstracted.
 
 ---
 
-## Architecture Recommendation
+## Reality Check — What Is Actually Generic Today
+
+Audited against `engine/src/main` on 2026-06-26. This supersedes the first draft's
+"shared infrastructure (generic)" claims.
+
+| Component | File | Today | Action |
+|-----------|------|-------|--------|
+| `SpreadLeg`, `SpreadStatus` | `spread/model/` | Generic | Reuse |
+| `OptionType` | `models/OptionType.kt` | Has `PUT("P")`, `CALL("C")` | Reuse |
+| `TradeExecutionRequest` | `execution/model/` | Carries sold/bought `OptionContract` w/ type | Reuse |
+| `TradeExecutionService` | `execution/` | Order-centric, not put-specific | Reuse (see cap fix) |
+| `PositionReconciliationService` | `ibkr/order/` | Matches on `optionRight == ibkrCode` | Reuse |
+| `QuoteHealthService` | `spread/service/` | Contract-based | Reuse |
+| **`SpreadPort`** | `spread/SpreadPort.kt` | **Every method typed `BullPutSpread`** | **Generalize** |
+| **`SpreadManagementService`** | `spread/` | **Concrete `BullPutSpread` throughout** | **Generalize** |
+| **`PreTradeValidator`** | `execution/` | Counts bull puts only (`:31`) | **Make strategy-aware** |
+| **`ScannerService`** | `scanner/` | Counts bull puts only (`:46`) | **Make strategy-aware** |
+| **`TradeExecutionService` cap** | `execution/` | Counts bull puts only (`:98`) | **Make strategy-aware** |
+| **`SpreadManagementService.positionMatchesLeg`** | `spread/` | **Hard-codes `"Put"` (`:188`)** | **Bug — derive from contract** |
+| **`SpreadPositionEntity`** | `persistence/.../entity/` | `@Table("spread_positions")` | **Rename → `bull_put_spreads`** |
+| `ScanCandidateSelector` | `scanner/` | Filters `OptionType.PUT` (`:80`), sells higher strike | Fork for calls |
+
+---
+
+## Architecture (Revised)
 
 ```
-Shared Infrastructure (Generic)
-├── SpreadLeg, SpreadStatus, SpreadPort (already generic)
-├── TradeExecutionService (works for any 2-leg spread)
-├── SpreadManagementService (TP/SL/DTE exits are generic)
-├── PositionReconciliation (detects orphans for any spread type)
-├── QuoteHealthMonitoring (Phase 1 applies universally)
-└── Order execution (BAG, leg-by-leg, laddering all generic)
+Shared Abstraction (NEW — Phase 0)
+└── sealed interface Spread  (id, symbol, soldLeg, boughtLeg, credit, maxRisk,
+                              quantity, status, ivRankAtEntry, openedAt, closeReason, …)
+    ├── BullPutSpread  (existing data class → implements Spread)
+    └── BearCallSpread (new data class → implements Spread, + exDividendDate)
 
-Strategy-Specific Services (Separate Models)
-├── Bull Put Spreads
-│   ├── BullPutSpread model (EXISTING, specific class)
-│   ├── BullPutScanCandidateSelector (PUT-specific logic)
-│   ├── BullPutValidator (put-specific validation)
-│   └── BullPutScheduler (entry scheduling)
-│
-└── Bear Call Spreads (NEW)
-    ├── BearCallSpread model (NEW, specific class)
-    ├── BearCallScanCandidateSelector (CALL-specific logic)
-    ├── BearCallValidator (call-specific validation)
-    ├── BearCallDividendAwarenessService (NEW, unique to calls)
-    └── BearCallScheduler (entry scheduling)
+Shared Infrastructure (generalized to operate on Spread)
+├── SpreadPort<T : Spread> OR two concrete ports behind a SpreadQueryFacade
+├── SpreadManagementService (TP/SL/DTE exits; positionMatchesLeg fixed)
+├── TradeExecutionService    (already order-centric; only the cap counts both)
+├── PositionReconciliationService (already option-type agnostic)
+└── QuoteHealthService
+
+Strategy-Specific (separate)
+├── Bull Put: ScanCandidateSelector (existing, PUT path)
+└── Bear Call:
+    ├── BearCallScanCandidateSelector (CALL path: sell higher strike, buy strike+width)
+    ├── BearCallDividendService        (US American-style only; see Phase 3)
+    └── bear-call config namespace
 ```
+
+**Port strategy decision (pick one in Phase 0):**
+- **(A) Generic `SpreadPort<T>`** — one interface, two JPA adapters/tables. Cleaner long-term,
+  more upfront churn.
+- **(B) Two concrete ports** (`BullPutSpreadPort`, `BearCallSpreadPort`) + a thin
+  `SpreadQueryFacade` for cross-strategy reads (open counts, combined risk, dashboards).
+  Less churn to existing call sites.
+
+Recommend **(B)** — it isolates the new table without rewriting every existing
+`spreadPort.findOpen()` caller, and the facade is exactly where the shared-cap logic belongs.
 
 ---
 
 ## Implementation Phases
 
-### Phase 1: Data Model & Database (2-3 days)
+### Phase 0: `Spread` Abstraction & Generalization (3-4 days) — NEW, gating
 
-**Create new BearCallSpread model**:
+This did not exist in the first draft and gates everything else.
+
+1. Extract `sealed interface Spread` with the common fields; make `BullPutSpread` implement it.
+2. Introduce `BearCallSpread` (below) implementing `Spread`.
+3. **Fix `positionMatchesLeg`** (`SpreadManagementService:188`) to derive the right from
+   `leg.contract.type.ibkrCode` instead of the hard-coded `"Put"`. Add a regression test that
+   force-closes a bear-call position and asserts both legs verify closed.
+4. Decide port strategy (A vs. B above) and refactor `SpreadManagementService` /
+   `SpreadPort` to the chosen shape. Keep bull-put behaviour byte-for-byte identical
+   (existing tests stay green).
+
+### Phase 1: Bear Call Model & Database (2 days)
+
 ```kotlin
 data class BearCallSpread(
     val id: UUID?,
     val symbol: Symbol,
-    val soldLeg: SpreadLeg,      // SHORT call (higher strike)
-    val boughtLeg: SpreadLeg,    // LONG call (lower strike)
+    val soldLeg: SpreadLeg,    // SHORT call (LOWER strike)
+    val boughtLeg: SpreadLeg,  // LONG call (HIGHER strike)
     val creditPerShare: BigDecimal,
-    val maxRiskPerShare: BigDecimal,
+    val maxRiskPerShare: BigDecimal,   // = width − credit (same formula as bull put)
     val quantity: Int = 1,
     val status: SpreadStatus,
     val ivRankAtEntry: Double?,
     val underlyingPriceAtEntry: BigDecimal?,
-    val exDividendDate: LocalDate? = null,  // NEW: dividend risk tracking
-    // ... rest identical to BullPutSpread
-)
+    val openedAt: Instant,
+    val closedAt: Instant? = null,
+    val closeReason: String? = null,
+    val closePricePerShare: BigDecimal? = null,
+    val lastSpreadValue: BigDecimal? = null,
+    val underlyingPriceAtExit: BigDecimal? = null,
+    val ivRankAtExit: BigDecimal? = null,
+    val exDividendDate: LocalDate? = null,   // NEW: dividend risk tracking (US only)
+) : Spread
 ```
 
-**Database**:
-- Rename `spread_positions` table → `bull_put_spreads`
-- Create new `bear_call_spreads` table (identical schema)
-- Add `ex_dividend_date` column to both
-- Create new view/API `all_spreads` that unions both tables
+> **Strike direction**: a bear call sells the **lower** strike and buys **strike + width**
+> (the higher strike is the long protection). This is the mirror of the bull put, which sells
+> the higher strike. Get this right in both the model docs and the scanner.
 
-### Phase 2: Scanner & Entry Selection (3-4 days)
+**Database (build phase — clean rename is fine):**
+- Liquibase `vNN__bull_put_rename.yaml`: `RENAME TABLE spread_positions → bull_put_spreads`
+  (update `@Table` on the entity, the repository, and the v2 index names accordingly).
+- Liquibase `vNN__bear_call_spreads.yaml`: create `bear_call_spreads` (same columns as
+  `bull_put_spreads` + `ex_dividend_date`). `close_reason` stays `TEXT` (per project convention).
+- Cross-strategy reads go through the `SpreadQueryFacade` (option B), not a DB union view.
 
-**BearCallScanCandidateSelector**:
+### Phase 2: Bear Call Scanner (2-3 days)
+
+`BearCallScanCandidateSelector` — fork of `ScanCandidateSelector` with these differences only:
+
+1. Filter `chain.filter { it.contract.type == OptionType.CALL }` (vs. `PUT` at `:80`).
+2. Short = sell at delta target; long = buy strike **+ width** (`targetBoughtStrike =
+   soldStrike + spreadWidthUsd`, vs. `− width` for puts at `:98`).
+3. Credit/maxRisk math is **unchanged** — `midCredit = soldMid − boughtMid`,
+   `maxRisk = width − credit`. The scanner already prices off **real market quotes**, so the
+   actual call skew is *already reflected* in those quotes.
+4. **Entry filter (US only)**: skip if `universePort.get(symbol).exDividendDate` is within the
+   `ex-dividend-entry-buffer-hours` window. No-op when the date is null or the name is EU.
+
+**No skew-adjustment factor.** (Removed from the first draft.) Multiplying an already-real,
+achievable market credit by a constant haircut models nothing and discards valid trades. If
+bear calls should clear a higher bar, express that as a **separate, higher
+`bear-call.min-credit-per-share`**, applied to the real credit — not a multiplier.
+
+### Phase 3: Dividend Assignment Protection (3-4 days) — US / American-style only
+
+> **Gating rule**: bear-call entry stays `enabled: false` until the ex-dividend data pipeline
+> below is live and populating `bear_call_spreads.ex_dividend_date` /
+> `universe.next_dividend_amount`. The smart-exit logic is inert with null data, so shipping it
+> without the data source would mean the strategy's primary incremental risk control is dead
+> code. The pipeline is part of this MVP, **not** a deferred future ticket.
+
+**Scope**: American-style options only (US listings). EUREX equity options are typically
+European-style — no early assignment — so the dividend service must early-return for EU names
+(gate on exchange/style, not just on a null date).
+
+**Dividend data pipeline (MVP, not deferred):**
+- Add `universe.ex_dividend_date: LocalDate?` and `universe.next_dividend_amount: BigDecimal?`.
+- Scheduled refresh job using `reqFundamentalData` (IB Gateway), updating the N least-recently-
+  refreshed US instruments per cycle. (EU names skipped.)
+
+**`BearCallDividendService.checkSmartDividendExit()`** — runs inside the generalized
+`SpreadManagementService.checkExits` cycle, for bear calls on US names only. Force-close at
+market when **all three** hold:
+1. Ex-dividend within `dividend-check-window-hours` (24–48h).
+2. Short call is **ITM** (`spot > shortCall.strike`).
+3. Short-call extrinsic (live mid − intrinsic) **< estimated dividend amount**.
+
+Close via the same `forceCloseSpread(...)` path the existing exits use (not an invented
+`closeSpread(id, price, status)` signature), with a new `SpreadStatus.CLOSED_DIVIDEND_RISK`.
+Fallback: if extrinsic can't be evaluated (no live quote) and conditions 1–2 hold, exit anyway
+(assignment loss dominates slippage). Caveat to monitor: market-closing illiquid ITM calls near
+ex-div can realize meaningful slippage — log realized vs. theoretical for tuning.
+
+### Phase 4: Execution & Shared Portfolio Cap (2 days)
+
+Execution itself is reused (`TradeExecutionService`, BAG for US, leg-by-leg for EU). The real
+work is the **shared cap**, which today is enforced in **three** independent sites that each
+count bull puts only:
+
+- `TradeExecutionService:98` (`countByStatus(OPEN)+CLOSING+in-flight`)
+- `ScannerService:46` (`PENDING+OPEN+CLOSING` early-out)
+- `PreTradeValidator:31` (`findOpen()+findByStatus(CLOSING)`)
+
+All three must sum **both** strategies via the `SpreadQueryFacade`, or the cap silently becomes
+per-strategy (up to 10 open). Add a test: open 5 mixed bull-put/bear-call spreads, assert the
+6th entry is rejected at every gate.
+
 ```kotlin
-class BearCallScanCandidateSelector(
-    private val volatilityPort: VolatilityPort,
-    private val marketDataPort: MarketDataPort,
-    private val optionChainPort: OptionChainPort,
-    private val universePort: UniversePort,
-    private val config: ScannerConfig,
-    private val clock: Clock,
-) {
-    suspend fun select(symbol: Symbol, totalCapital: Money): TradeExecutionRequest? {
-        // Same as BullPutScanCandidateSelector BUT:
-        // 1. Filter for CALLS instead of PUTS (line 79 in existing code)
-        // 2. ENTRY FILTER: Skip if ex-dividend within next 48 hours (safety)
-        // 3. Account for skew: calls trade lower IV, adjust credit expectations
-        // 4. Short call = SELL at HIGHER strike, long call = BUY at LOWER strike
-        //    (opposite of puts, but structure is identical)
-        // 5. Apply skew-adjustment factor to expected credit (config: bear-call-skew-adjustment)
-    }
-}
+// SpreadQueryFacade
+suspend fun activeSpreadCount(): Int =
+    bullPutPort.countActive() + bearCallPort.countActive()   // OPEN + CLOSING + PENDING
+suspend fun activePortfolioRisk(): BigDecimal =
+    bullPutPort.openRisk() + bearCallPort.openRisk()
 ```
 
-**Entry Filter: Ex-Dividend Safety Check**
-```kotlin
-// Before submitting entry order:
-if (symbol.exDividendDate != null) {
-    val daysToExDiv = daysUntil(today(), symbol.exDividendDate)
-    if (daysToExDiv in 0..2) {  // Within 48 hours
-        logger.info("Skipping $symbol: ex-dividend in $daysToExDiv days (too close)")
-        return null
-    }
-}
-```
+### Phase 5: API & UI (sized separately — see note)
 
-**Skew Adjustment (Applied at Entry)**
-```
-// Bull puts: "normal" skew helps us (puts trade higher IV than calls)
-// Bear calls: skew hurts us (calls trade lower IV than puts at same delta)
-// Solution: Apply config parameter skew-adjustment factor to entry credit
-//
-// Example:
-// - Bull put: calc credit = $1.50 (baseline, no adjustment)
-// - Bear call: calc credit = $1.50 × (1 - 0.05) = $1.425
-//   (5% reduction due to skew, parameter-driven)
-//
-// If adjusted credit < min-credit-per-share, skip entry
-```
+- New endpoints: `GET /bear-call-spreads`, `/bear-call-spreads/{id}`,
+  `PUT /bear-call-spreads/{id}/close`, `GET /bear-call-spreads/dividend-risk`.
+- Rename `GET /spreads` → `/bull-put-spreads`; `GET /account/all-positions` and `/health`
+  report both via the facade.
+- Frontend: separate `[Bull Puts] [Bear Calls] [Dashboard]` tabs; bear-call tab adds a
+  dividend-watch panel.
 
-### Phase 3: Smart Dividend Exit Logic (2-3 days)
-
-**NEW: BearCallDividendAwarenessService**  
-Runs every 60 seconds (integrated into SpreadManagementService.checkExits)
-
-```kotlin
-@Component
-class BearCallDividendAwarenessService(
-    private val spreadPort: SpreadPort,
-    private val marketDataPort: MarketDataPort,
-    private val universePort: UniversePort,  // ex-dividend dates stored here
-    private val logger: Logger,
-) {
-    suspend fun checkSmartDividendExit(): List<UUID> {
-        val closedSpreads = mutableListOf<UUID>()
-        val openBearCalls = spreadPort.findOpenBearCalls()
-        
-        for (spread in openBearCalls) {
-            val universe = universePort.get(spread.symbol)
-            val exDividendDate = universe?.exDividendDate ?: continue
-            
-            val daysToExDiv = daysUntil(today(), exDividendDate)
-            
-            // Only check within risk window (24-48 hours)
-            if (daysToExDiv !in 0..2) continue
-            
-            val shortCall = spread.soldLeg
-            val spotPrice = marketDataPort.getSpotPrice(spread.symbol)
-            val isITM = spotPrice > shortCall.contract.strike
-            
-            if (!isITM) {
-                logger.debug("${spread.symbol} bear call: OTM, no dividend risk yet")
-                continue
-            }
-            
-            // Fetch extrinsic value (mid-price of short call)
-            val shortCallMid = marketDataPort.getOptionMidLive(shortCall.contract)
-            val estimatedDividendAmount = universe.nextDividendAmount ?: BigDecimal.ZERO
-            
-            // SMART EXIT: All three conditions must be true
-            if (daysToExDiv in 0..2 && isITM && shortCallMid < estimatedDividendAmount) {
-                logger.warn {
-                    "SMART EXIT TRIGGERED: ${spread.symbol} bear call " +
-                    "(short ${shortCall.contract.strike}C) is ITM with extrinsic $shortCallMid " +
-                    "< dividend $estimatedDividendAmount. Ex-dividend in $daysToExDiv days."
-                }
-                
-                // Force close at market
-                val closePrice = marketDataPort.requestLiveQuote(spread.soldLeg.contract)
-                spreadPort.closeSpread(spread.id, closePrice, SpreadStatus.CLOSED_DIVIDEND_RISK)
-                closedSpreads.add(spread.id)
-            } else {
-                logger.debug {
-                    "DIVIDEND WATCH: ${spread.symbol} ex-div in $daysToExDiv days. " +
-                    "ITM: $isITM, extrinsic: $shortCallMid vs dividend: $estimatedDividendAmount"
-                }
-            }
-        }
-        
-        return closedSpreads
-    }
-}
-```
-
-**Integration with SpreadManagementService.checkExits**
-```kotlin
-// Existing exit logic (TP/SL/DTE) runs first
-// Then, for bear calls only:
-if (spread is BearCallSpread) {
-    val closedByDividend = bearCallDividendService.checkSmartDividendExit()
-    if (spread.id in closedByDividend) {
-        // Already closed, skip to next spread
-        return@forEach
-    }
-}
-```
-
-**Database/Config Requirements**
-- `universe` table: Add columns
-  - `ex_dividend_date: LocalDate?` (nullable, populated by future refresh job)
-  - `next_dividend_amount: BigDecimal?` (nullable, e.g., $2.50)
-- `bear_call_spreads` table: Add column
-  - `close_reason: String` (enum: "TAKE_PROFIT", "STOP_LOSS", "TIME_EXIT", "DIVIDEND_RISK", etc.)
-
-**Future Work (Post-Phase 1)**
-- [ ] Integrate `reqFundamentalData` to fetch ex-dividend dates automatically
-- [ ] Scheduled task: Update `universe.ex_dividend_date` + `next_dividend_amount` daily (N-min interval, M records/cycle)
-- [ ] Dividend calendar UI panel in bear call tab (show upcoming ex-dates)
-
-### Phase 4: Execution & Monitoring (2-3 days)
-
-**Reuse existing infrastructure**:
-- `TradeExecutionService` — works for bear calls as-is (generic order execution)
-- `SpreadManagementService` — TP/SL/DTE exit logic is generic + dividend awareness (Phase 3)
-- `SpreadMonitorScheduler` — works for both spread types
-- `PositionReconciliationScheduler` — orphan detection works universally
-- `QuoteHealthService` — Phase 1 monitoring applies to both
-
-**Shared Portfolio Limits** (CRITICAL)
-```kotlin
-// Before submitting EITHER bull put OR bear call entry:
-suspend fun canEnterNewSpread(): Boolean {
-    val bullPutOpen = spreadPort.countOpenBullPuts()
-    val bearCallOpen = spreadPort.countOpenBearCalls()
-    val totalOpen = bullPutOpen + bearCallOpen
-    
-    if (totalOpen >= config.maxOpenSpreads) {  // e.g., 5
-        logger.info("Portfolio full: $bullPutOpen bull puts + $bearCallOpen bear calls = $totalOpen / ${config.maxOpenSpreads}")
-        return false
-    }
-    
-    // Also check combined risk
-    val bullPutRisk = spreadPort.calculateOpenBullPutRisk()
-    val bearCallRisk = spreadPort.calculateOpenBearCallRisk()
-    val totalRisk = bullPutRisk + bearCallRisk
-    
-    if (totalRisk >= config.maxPortfolioRisk) {
-        logger.info("Risk limit reached: $totalRisk / ${config.maxPortfolioRisk}")
-        return false
-    }
-    
-    return true
-}
-```
-
-**Exit Monitoring: Same for Both**
-- Exit monitoring: same thresholds (50% TP, 200% SL, 21 DTE)
-- Price laddering: same 5% drift, same direction (stepping price down to find buyers)
-- Order submission: same BAG (US) and leg-by-leg (EU) strategies
-- Reconciliation: Both strategies in same orphan detection
-
-### Phase 5: UI Design & Frontend (4-5 days)
-
-See detailed UI proposal below.
+> **Combined-Greeks dashboard is NOT in this MVP.** The engine deliberately removed
+> Black-Scholes/Greeks from the trading path (see CLAUDE.md), so there is no per-position live
+> Greeks source to aggregate. Treat "blended Greeks / combined risk heatmap" as a follow-up that
+> first needs a live-Greeks feed. The MVP dashboard shows P&L, open counts, and defined max-loss
+> (which we already have), not Greeks.
 
 ---
 
-## UI Strategy & Design
+## Configuration
 
-### Question: Separate Sections or Mixed View?
-
-**Recommendation: SEPARATE sections with UNIFIED analytics**
-
-#### Why separate sections (initially):
-1. **Clarity**: Users understand each strategy independently
-2. **Risk management**: Can enable/disable each strategy separately
-3. **Portfolio construction**: May want both running simultaneously (hedging)
-4. **Operational clarity**: Different rules (dividend calendar), different alerts
-
-#### But unified analytics layer:
-- Combined P&L charts
-- Combined position heatmap
-- Blended Greeks
-- Single risk dashboard
-
-### UI Layout Proposal
-
-```
-┌─────────────────────────────────────────────────────────┐
-│  TRADING SYSTEM  [Bull Puts] [Bear Calls] [Dashboard]  │
-├─────────────────────────────────────────────────────────┤
-│                                                           │
-│  TAB 1: BULL PUTS                                        │
-│  ├─ Strategy Status: 3/5 open spreads                   │
-│  ├─ Today's Entries: AAPL, MSFT (pending fills)         │
-│  ├─ Active Positions:                                    │
-│  │  ├─ AMD 420P/415P (sold 1.50, current 0.75) 50% TP  │
-│  │  ├─ NOW 80P/75P (sold 0.85, current 0.60)            │
-│  │  └─ ...                                                │
-│  ├─ Controls:                                            │
-│  │  ├─ [Enable/Disable] Entry Scanner                   │
-│  │  ├─ [View Config] Strategy Params                    │
-│  │  └─ [Close Position] Manual exit                     │
-│  └─ Stats: Win Rate 72%, Avg Credit $1.45, ...          │
-│                                                           │
-│  TAB 2: BEAR CALLS (NEW)                                 │
-│  ├─ Strategy Status: 0/5 open spreads                   │
-│  ├─ Today's Entries: None                               │
-│  ├─ Active Positions: (empty)                           │
-│  ├─ Dividend Calendar: No ex-dates this week            │
-│  ├─ Controls:                                            │
-│  │  ├─ [Enable/Disable] Entry Scanner (disabled)        │
-│  │  ├─ [View Config] Strategy Params                    │
-│  │  └─ [Close Position] Manual exit                     │
-│  └─ Stats: (TBD)                                         │
-│                                                           │
-│  TAB 3: DASHBOARD (UNIFIED)                              │
-│  ├─ Total P&L: Bull Puts +$2,340, Bear Calls +$0        │
-│  ├─ Combined Greeks: Delta -0.45, Gamma 0.12, Vega -0.8 │
-│  ├─ Portfolio Risk:                                      │
-│  │  ├─ Max Loss (bull puts): $17,500 (5 spreads × $3.5) │
-│  │  ├─ Max Loss (bear calls): $0 (0 spreads)             │
-│  │  └─ Total Max Loss: $17,500 (defined risk)            │
-│  ├─ Alerts:                                              │
-│  │  ├─ ASML: Quote health BLIND (>5 min)                 │
-│  │  ├─ AMD: Approaching stop-loss (87% of $3.00 limit)   │
-│  │  └─ None from Bear Calls (no positions)               │
-│  └─ Charts:                                              │
-│     ├─ P&L over time (both strategies)                   │
-│     ├─ Position heatmap (Greeks by underlying)           │
-│     └─ Entry/Exit history (all strategies)               │
-└─────────────────────────────────────────────────────────┘
-
-DETAILED VIEW (Click on position):
-┌─ AAPL 420P/415P (Bull Put)
-├─ Entry: 2026-06-26 15:33, Credit: $1.50
-├─ Current: $0.75 (50% profit → TP triggered)
-├─ Greeks: Delta -0.28, Gamma 0.015, Vega -0.30
-├─ Quote Health: LIVE (age 12 seconds)
-├─ Risk: $3.50 max loss, 50% utilized
-└─ Actions: [Hold] [Close Now] [Adjust]
-```
-
-### Frontend Component Structure
-
-```
-/components
-├── StrategyTabs/
-│   ├── BullPutStrategyTab.tsx (existing pattern)
-│   ├── BearCallStrategyTab.tsx (new, mirrors bull put)
-│   └── DividendAwarenessPanel.tsx (bear call exclusive)
-│
-├── Dashboard/
-│   ├── UnifiedPnLChart.tsx (both strategies)
-│   ├── CombinedGreeksPanel.tsx (aggregated Greeks)
-│   ├── PortfolioRiskSummary.tsx (max loss across strategies)
-│   └── AlertCenter.tsx (alerts from both)
-│
-├── Positions/
-│   ├── BullPutPositionCard.tsx (existing)
-│   ├── BearCallPositionCard.tsx (new)
-│   └── DetailedPosition.tsx (generic, works for both)
-│
-└── Controls/
-    ├── StrategyEnableToggle.tsx (per strategy)
-    ├── ManualPositionClose.tsx (generic)
-    └── StrategyConfig.tsx (per strategy)
-```
-
-### API Changes
-
-**New endpoints**:
-```
-GET /bear-call-spreads                    # List bear call spreads
-GET /bear-call-spreads/{id}               # Detail
-PUT /bear-call-spreads/{id}/close         # Manual close
-GET /bear-call-spreads/dividend-risk      # Alert on dividend risk
-GET /dashboard/unified-pnl                # Combined P&L
-GET /dashboard/combined-greeks            # Aggregated Greeks
-```
-
-**Updated endpoints**:
-```
-GET /spreads                              # Renamed to /bull-put-spreads
-GET /account/all-positions                # Now includes both spread types
-GET /health                               # Now reports on both strategies
-```
-
----
-
-## Configuration & Strategy Parameters
-
-### New Config Sections: application.yml
-
-**Bull Put Strategy** (EXISTING):
+**Bull Put** (existing, unchanged):
 ```yaml
 scanner:
   bull-put:
@@ -438,128 +266,89 @@ scanner:
     drift-protection-pct: 0.05
 ```
 
-**Bear Call Strategy** (NEW — SEPARATE namespace):
+**Bear Call** (new namespace; note: NO skew-adjustment):
 ```yaml
 scanner:
   bear-call:
-    enabled: false  # Start disabled, validate bull puts first
-    target-delta: 0.30  # Short call delta target (equivalent to 0.30 for puts)
+    enabled: false   # gated on dividend pipeline + paper validation
+    target-delta: 0.30
     delta-min: 0.25
     delta-max: 0.30
-    iv-rank-threshold: 45  # Same or higher (can adjust if needed)
+    iv-rank-threshold: 45
     min-dte: 30
     max-dte: 50
     preferred-dte: 45
-    spread-width-usd: 5.0  # Identical structure to bull put
-    min-credit-per-share: 0.35
+    spread-width-usd: 5.0
+    min-credit-per-share: 0.40        # higher bar than bull put if desired — applied to REAL credit
     take-profit-percent: 0.50
     stop-loss-percent: 2.00
     time-profit-dte: 21
     drift-protection-pct: 0.05
-    
-    # Bear call specific
-    skew-adjustment: 0.05  # Accept 5% lower IV due to skew (multiply credit × 0.95)
-    dividend-check-window-hours: 48  # Smart exit: check if ex-div within 48h
-    ex-dividend-entry-buffer-hours: 48  # Skip entry if ex-div within 48h
+    # Bear-call specific (US / American-style only)
+    dividend-check-window-hours: 48   # smart exit if ex-div within this window
+    ex-dividend-entry-buffer-hours: 48 # skip entry if ex-div within this window
 ```
 
-**Portfolio Limits** (SHARED across both strategies):
+**Portfolio limits** (SHARED across both strategies):
 ```yaml
 scanner:
   portfolio:
-    max-open-spreads: 5  # Total across BOTH strategies (not per-strategy)
-    max-portfolio-risk-usd: 17500  # $5 × $3.5 max risk × 5 spreads
-    max-risk-per-spread-usd: 3500  # $5 width - $1.5 credit
+    max-open-spreads: 5          # TOTAL across both strategies — enforced at all 3 gate sites
+    max-portfolio-risk-usd: 17500
 ```
 
 ---
 
-## Development Priorities & Risks
-
-### High Priority (Must-Have):
-1. ✅ Separate model classes (BearCallSpread)
-2. ✅ Dividend awareness service
-3. ✅ Scanner logic for calls
-4. ✅ Reuse execution infrastructure
-5. ✅ UI with clear separation
-
-### Medium Priority (Should-Have):
-1. ⚠️ Volatility skew tracking/adjustment
-2. ⚠️ Early assignment risk metrics
-3. ⚠️ Hedged portfolio analysis (bull + bear together)
-
-### Low Priority (Nice-to-Have):
-1. 🔲 Algorithmic strategy mixing (when to run both)
-2. 🔲 Greeks blending across strategies
-3. 🔲 Risk leveling between strategies
-
-### Known Risks:
+## Risks (Revised)
 
 | Risk | Impact | Mitigation |
 |------|--------|-----------|
-| **Early assignment on ex-dividend** | Loss of defined risk | Dividend calendar check (Phase 3) |
-| **Skew-driven worse entry quality** | Lower credit collected | Adjust IV threshold or accept lower wins |
-| **Portfolio imbalance** (bull puts only) | Portfolio skew | Run both simultaneously (future) |
-| **UI complexity** | User confusion | Clear separation + unified dashboard |
-| **Code divergence** | Maintenance burden | Lint rules to detect divergence |
+| **Generalization regresses bull puts** | Live strategy breaks | Phase 0 keeps bull-put tests green byte-for-byte; deploy Phase 0 alone to paper first |
+| **`positionMatchesLeg` put hard-code** | Bear-call close/verify silently fails | Fixed in Phase 0 + regression test |
+| **Cap not summed at all 3 sites** | Up to 10 open spreads | Facade + 6th-entry rejection test |
+| **Dividend data missing** | Smart exit is dead code | Pipeline is MVP-gating, not deferred; `enabled:false` until live |
+| **EU early-assignment logic misapplied** | Needless force-closes | Dividend service early-returns for EU/European-style names |
+| **ITM call slippage near ex-div** | Larger realized loss on exit | Log realized vs. theoretical; tune window |
 
 ---
 
-## Testing & Validation
+## Decision Checkpoints — LOCKED (rev. 2, 2026-06-26)
 
-### Unit Tests (by phase):
-- **Phase 1**: BearCallSpread model creation, serialization
-- **Phase 2**: Candidate selection logic (skew handling, dividend check)
-- **Phase 3**: Dividend awareness service alerts
-- **Phase 4**: Execution, exit management, reconciliation
-- **Phase 5**: UI component rendering
-
-### Integration Tests:
-- Full flow: entry → monitoring → dividend event → exit
-- Reconciliation with orphaned bear calls
-- Cross-strategy Greeks aggregation
-- UI filtering/sorting across strategies
-
-### Paper Trading Validation:
-- Run bear call scanner on paper account
-- Validate entries execute properly (BAG for US, leg-by-leg for EU)
-- Confirm dividend checks work correctly
-- Validate exit rules fire as expected
-- Monitor for false orphans
-
-### Timeline for Validation:
-- **Week 1**: Implement phases 1-3, start unit tests
-- **Week 2**: Implement phases 4-5, integration testing
-- **Week 3**: Paper trading validation
-- **Week 4**: Bug fixes, performance tuning, code review
+- [x] Separate strategy models behind a shared `Spread` abstraction (Phase 0 gating).
+- [x] Port strategy: two concrete ports + `SpreadQueryFacade` (option B).
+- [x] **Skew-adjustment removed**; use a separate `bear-call.min-credit-per-share` instead.
+- [x] Dividend protection is **US / American-style only**; EU names exempt.
+- [x] Dividend-data pipeline is **MVP-gating**, not a future ticket; bear calls stay
+      `enabled:false` until it populates.
+- [x] Shared cap enforced at all **three** existing gate sites via the facade.
+- [x] **Clean rename** `spread_positions → bull_put_spreads` (acceptable in build phase).
+- [x] Combined-Greeks dashboard deferred (no live-Greeks source on trading path).
+- [x] UI: separate `[Bull Puts] [Bear Calls] [Dashboard]` tabs.
 
 ---
 
-## Decision Checkpoints — LOCKED (2026-06-26)
+## Validation
 
-- [x] **Phase 1**: ✅ Separate model approach APPROVED | Data schema finalized
-- [x] **Phase 2**: ✅ Skew adjustment as config parameter | Separate bear-call-* namespace
-- [x] **Phase 3**: ✅ Smart dividend exit logic (24-48h + ITM + extrinsic value check) | Future: reqFundamentalData integration
-- [x] **Phase 4**: ✅ Reuse TradeExecutionService | Enforce shared portfolio limits (max 5 spreads total)
-- [x] **Phase 5**: ✅ UI: Separate tabs [Bull Puts] [Bear Calls] [Dashboard]
+Per the deploy-to-RPi policy, each coherent delivery ships on its own to the paper account
+(`DU7875979`) after a green `./gradlew build`:
 
----
-
-## Approved Answers
-
-1. **Dividend Data Source**: `reqFundamentalData` API (IB Gateway), refresh via daily scheduled task. Future ticket — not Phase 1.
-2. **Skew Tolerance**: Config parameter `bear-call-skew-adjustment` (e.g., 0.05 = 5% lower IV acceptable).
-3. **Early Assignment**: **Smart Force Exit Logic** — only close if ALL THREE:
-   - Ex-dividend within 24–48 hours
-   - Short call is ITM (strike < spot)
-   - Extrinsic value < dividend amount
-   Fallback: Always exit if logic impossible. Avoid entry near ex-dividend.
-4. **Portfolio Mixing**: Shared limits — max 5 spreads total (both strategies combined), not per-strategy.
-5. **UI Preference**: Separate tabs ✅ (with unified Dashboard tab)
-6. **Paper Validation**: Defer decision (run until operator confident)
+1. **Phase 0** — deploy generalization alone; confirm bull puts behave identically (no
+   behavioural diff in trade logs over one session).
+2. **Phases 1-2** — bear-call scanner on paper with `enabled:true` *temporarily* on a US name
+   with no near-term ex-div; confirm entries build the correct legs (sell lower call / buy
+   higher call), BAG fills for US.
+3. **Phase 3** — verify the dividend refresh job populates dates, and that smart-exit fires
+   on a real ITM-near-ex-div case (or a forced fixture).
+4. **Phase 4** — open 5 mixed spreads on paper, confirm the 6th is rejected.
+5. Run until operator is confident before any consideration of a live account.
 
 ---
 
-## Next Phase: Implementation
+## Future Tickets
 
-Ready to proceed with Phase 1 (data model). See detailed Phase 3 plan below for Smart Dividend Exit Logic.
+- [ ] Volatility-skew analytics dashboard (observe, don't haircut).
+- [ ] Combined/blended Greeks (requires a live-Greeks feed first).
+- [ ] Hedged portfolio analysis (bull + bear simultaneously).
+- [ ] BAG combo support for EU bear calls (shares the bull-put EUREX work).
+</content>
+</invoke>
