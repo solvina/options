@@ -6,6 +6,7 @@ import cz.solvina.options.domain.features.scanner.BullPutCandidateSelector
 import cz.solvina.options.domain.features.scanner.ScannerConfig
 import cz.solvina.options.domain.features.scanner.ScannerService
 import cz.solvina.options.domain.features.spread.SpreadManagementService
+import cz.solvina.options.domain.features.spread.SpreadQueryFacade
 import cz.solvina.options.domain.features.spread.service.QuoteHealthService
 import cz.solvina.options.domain.features.spread.strategy.SpreadStrategyRegistry
 import cz.solvina.options.domain.features.spread.strategy.bullput.BullPutSpreadEntryWriter
@@ -14,6 +15,7 @@ import cz.solvina.options.domain.features.universe.InstrumentConfig
 import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.features.volatility.IvRankService
 import cz.solvina.options.domain.models.Symbol
+import cz.solvina.options.testutil.InMemoryBearCallSpreadPort
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -118,15 +120,16 @@ class BacktestSmokeTest {
                 kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined),
             )
 
+        val spreadQuery = SpreadQueryFacade(spreadAdapter, InMemoryBearCallSpreadPort())
         val executionService =
             TradeExecutionService(
                 marketTickPort = marketTickAdapter,
                 orderExecutionPort = orderExecutionAdapter,
-                spreadPort = spreadAdapter,
+                spreadQuery = spreadQuery,
                 writerRegistry = SpreadEntryWriterRegistry(listOf(BullPutSpreadEntryWriter(spreadAdapter, clock))),
                 validator =
                     cz.solvina.options.domain.features.execution.PreTradeValidator(
-                        spreadPort = spreadAdapter,
+                        spreadQuery = spreadQuery,
                         orderExecutionPort = orderExecutionAdapter,
                         accountPort = accountAdapter,
                         config = config,
@@ -152,7 +155,7 @@ class BacktestSmokeTest {
                 candidateSelector = candidateSelector,
                 accountPort = accountAdapter,
                 executionPort = executionService,
-                spreadPort = spreadAdapter,
+                spreadQuery = spreadQuery,
                 config = config,
                 clock = clock,
             )

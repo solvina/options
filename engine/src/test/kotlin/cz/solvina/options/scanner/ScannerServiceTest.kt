@@ -11,6 +11,7 @@ import cz.solvina.options.domain.features.scanner.ScannerConfig
 import cz.solvina.options.domain.features.scanner.ScannerService
 import cz.solvina.options.domain.features.spread.BullPutSpreadPort
 import cz.solvina.options.domain.features.spread.SpreadPage
+import cz.solvina.options.domain.features.spread.SpreadQueryFacade
 import cz.solvina.options.domain.features.spread.model.BullPutSpread
 import cz.solvina.options.domain.features.spread.model.SpreadLeg
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
@@ -20,6 +21,7 @@ import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
 import cz.solvina.options.domain.models.OptionType
 import cz.solvina.options.domain.models.Symbol
+import cz.solvina.options.testutil.InMemoryBearCallSpreadPort
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -231,7 +233,7 @@ class ScannerServiceTest {
             candidateSelector = selector,
             accountPort = accountPort,
             executionPort = executionPort,
-            spreadPort = spreadPort,
+            spreadQuery = SpreadQueryFacade(spreadPort, InMemoryBearCallSpreadPort()),
             config = config,
             clock = Clock.systemUTC(),
             scope = scope,
@@ -281,12 +283,19 @@ class ScannerServiceTest {
 
         override suspend fun findByStatus(status: SpreadStatus) =
             when (status) {
+                SpreadStatus.OPEN -> openSpreads
                 SpreadStatus.CLOSING -> closingSpreads
                 SpreadStatus.PENDING -> pendingSpreads
                 else -> emptyList()
             }
 
-        override suspend fun countByStatus(status: SpreadStatus) = if (status == SpreadStatus.OPEN) derivedOpenCount else 0L
+        override suspend fun countByStatus(status: SpreadStatus) =
+            when (status) {
+                SpreadStatus.OPEN -> derivedOpenCount
+                SpreadStatus.CLOSING -> closingSpreads.size.toLong()
+                SpreadStatus.PENDING -> pendingSpreads.size.toLong()
+                else -> 0L
+            }
 
         override suspend fun save(spread: BullPutSpread) = spread
 

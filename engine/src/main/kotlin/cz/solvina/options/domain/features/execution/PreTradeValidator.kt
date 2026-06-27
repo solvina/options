@@ -5,8 +5,7 @@ import cz.solvina.options.domain.features.execution.model.ExecutionOutcome
 import cz.solvina.options.domain.features.execution.model.TradeExecutionRequest
 import cz.solvina.options.domain.features.order.OrderExecutionPort
 import cz.solvina.options.domain.features.scanner.ScannerConfig
-import cz.solvina.options.domain.features.spread.BullPutSpreadPort
-import cz.solvina.options.domain.features.spread.model.SpreadStatus
+import cz.solvina.options.domain.features.spread.SpreadQueryFacade
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.stereotype.Component
@@ -18,7 +17,7 @@ private val tradeLogger = KotlinLogging.logger("TRADES")
 
 @Component
 class PreTradeValidator(
-    private val spreadPort: BullPutSpreadPort,
+    private val spreadQuery: SpreadQueryFacade,
     private val orderExecutionPort: OrderExecutionPort,
     private val accountPort: AccountPort,
     private val config: ScannerConfig,
@@ -27,14 +26,14 @@ class PreTradeValidator(
         request: TradeExecutionRequest,
         inFlightSymbols: Set<Symbol>,
     ): ExecutionOutcome? {
-        // Exposure: open/closing spreads + in-flight (in-memory) + live IBKR open orders (survives restart)
-        val allSpreads = spreadPort.findOpen() + spreadPort.findByStatus(SpreadStatus.CLOSING)
-        val openSymbols = allSpreads.map { it.symbol }.toSet()
+        // Exposure: open/closing spreads (any strategy) + in-flight (in-memory) + live IBKR open
+        // orders (survives restart). Counts across strategies via the facade.
+        val openSymbols = spreadQuery.symbolsWithOpenOrClosingSpread()
 
         // CLOSING freeze: prevent new entries on a symbol while the close is in-flight.
         // Rationale: during the 1-60s window while close orders are being submitted/filled,
         // any new entry would interfere with position reconciliation. Freeze is temporary.
-        val closingSymbols = spreadPort.findByStatus(SpreadStatus.CLOSING).map { it.symbol }.toSet()
+        val closingSymbols = spreadQuery.symbolsWithClosingSpread()
         if (request.underlyingSymbol in closingSymbols) {
             logger.info { "[${request.underlyingSymbol}] CLOSING_FREEZE — symbol has in-flight close order, entry blocked" }
             tradeLogger.info {

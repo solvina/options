@@ -10,7 +10,7 @@ import cz.solvina.options.domain.features.order.OrderExecutionPort
 import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.features.order.StrandedLongLegException
 import cz.solvina.options.domain.features.scanner.ScannerConfig
-import cz.solvina.options.domain.features.spread.BullPutSpreadPort
+import cz.solvina.options.domain.features.spread.SpreadQueryFacade
 import cz.solvina.options.domain.features.spread.model.Spread
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
 import cz.solvina.options.domain.models.Money
@@ -45,9 +45,8 @@ private val tradeLogger = KotlinLogging.logger("TRADES")
 class TradeExecutionService(
     private val marketTickPort: MarketTickPort,
     private val orderExecutionPort: OrderExecutionPort,
-    // Bull-put port retained only for the active-spread cap count; Phase 4 replaces this with a
-    // cross-strategy SpreadQueryFacade so the cap sums bull puts + bear calls.
-    private val spreadPort: BullPutSpreadPort,
+    // Cross-strategy active-spread count for the shared cap (bull puts + bear calls).
+    private val spreadQuery: SpreadQueryFacade,
     private val writerRegistry: SpreadEntryWriterRegistry,
     private val validator: PreTradeValidator,
     private val config: ScannerConfig,
@@ -95,10 +94,7 @@ class TradeExecutionService(
                 if (inFlightSymbols.containsKey(request.underlyingSymbol)) {
                     ExecutionOutcome.EXPOSURE_REJECTED
                 } else {
-                    val active =
-                        spreadPort.countByStatus(SpreadStatus.OPEN) +
-                            spreadPort.countByStatus(SpreadStatus.CLOSING) +
-                            inFlightSymbols.size
+                    val active = spreadQuery.establishedSpreadCount() + inFlightSymbols.size
                     if (active >= config.maxOpenSpreads) {
                         ExecutionOutcome.CAP_REACHED
                     } else {

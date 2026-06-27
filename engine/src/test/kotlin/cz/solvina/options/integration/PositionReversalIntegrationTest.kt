@@ -17,6 +17,7 @@ import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.features.scanner.ScannerConfig
 import cz.solvina.options.domain.features.spread.BullPutSpreadPort
 import cz.solvina.options.domain.features.spread.SpreadManagementService
+import cz.solvina.options.domain.features.spread.SpreadQueryFacade
 import cz.solvina.options.domain.features.spread.model.BullPutSpread
 import cz.solvina.options.domain.features.spread.model.SpreadLeg
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
@@ -29,6 +30,7 @@ import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
 import cz.solvina.options.domain.models.OptionType
 import cz.solvina.options.domain.models.Symbol
+import cz.solvina.options.testutil.InMemoryBearCallSpreadPort
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -248,6 +250,7 @@ class PositionReversalIntegrationTest {
                 )
 
             coEvery { spreadPort.findOpen() } returns emptyList()
+            coEvery { spreadPort.findByStatus(SpreadStatus.OPEN) } returns emptyList()
             coEvery { spreadPort.findByStatus(SpreadStatus.CLOSING) } returns listOf(closingSpread)
 
             val orderExecutionPortMock = mockk<OrderExecutionPort>()
@@ -260,7 +263,7 @@ class PositionReversalIntegrationTest {
 
             val validator =
                 PreTradeValidator(
-                    spreadPort = spreadPort,
+                    spreadQuery = SpreadQueryFacade(spreadPort, InMemoryBearCallSpreadPort()),
                     orderExecutionPort = orderExecutionPortMock,
                     accountPort = accountPort,
                     config = config,

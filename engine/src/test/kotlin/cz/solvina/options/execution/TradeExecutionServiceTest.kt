@@ -15,6 +15,7 @@ import cz.solvina.options.domain.features.order.OrderExecutionPort
 import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.features.scanner.ScannerConfig
 import cz.solvina.options.domain.features.spread.BullPutSpreadPort
+import cz.solvina.options.domain.features.spread.SpreadQueryFacade
 import cz.solvina.options.domain.features.spread.model.BullPutSpread
 import cz.solvina.options.domain.features.spread.model.SpreadLeg
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
@@ -23,6 +24,7 @@ import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
 import cz.solvina.options.domain.models.OptionType
 import cz.solvina.options.domain.models.Symbol
+import cz.solvina.options.testutil.InMemoryBearCallSpreadPort
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -111,22 +113,25 @@ class TradeExecutionServiceTest {
         spreadPort: BullPutSpreadPort = InMemoryBullPutSpreadPort(),
         accountPort: AccountPort = buildAccountPort(),
         config: ScannerConfig = baseConfig,
-    ) = TradeExecutionService(
-        marketTickPort = marketTickPort,
-        orderExecutionPort = orderExecutionPort,
-        spreadPort = spreadPort,
-        writerRegistry = SpreadEntryWriterRegistry(listOf(BullPutSpreadEntryWriter(spreadPort, Clock.systemUTC()))),
-        validator =
-            PreTradeValidator(
-                spreadPort = spreadPort,
-                orderExecutionPort = orderExecutionPort,
-                accountPort = accountPort,
-                config = config,
-            ),
-        config = config,
-        clock = Clock.systemUTC(),
-        scope = backgroundScope,
-    )
+    ): TradeExecutionService {
+        val spreadQuery = SpreadQueryFacade(spreadPort, InMemoryBearCallSpreadPort())
+        return TradeExecutionService(
+            marketTickPort = marketTickPort,
+            orderExecutionPort = orderExecutionPort,
+            spreadQuery = spreadQuery,
+            writerRegistry = SpreadEntryWriterRegistry(listOf(BullPutSpreadEntryWriter(spreadPort, Clock.systemUTC()))),
+            validator =
+                PreTradeValidator(
+                    spreadQuery = spreadQuery,
+                    orderExecutionPort = orderExecutionPort,
+                    accountPort = accountPort,
+                    config = config,
+                ),
+            config = config,
+            clock = Clock.systemUTC(),
+            scope = backgroundScope,
+        )
+    }
 
     // -------------------------------------------------------------------------
     // Tests
@@ -411,7 +416,8 @@ class TradeExecutionServiceTest {
         runTest {
             val spreadPort =
                 object : InMemoryBullPutSpreadPort() {
-                    override suspend fun findOpen() = listOf(buildOpenSpread())
+                    override suspend fun findByStatus(status: SpreadStatus) =
+                        if (status == SpreadStatus.OPEN) listOf(buildOpenSpread()) else emptyList()
                 }
 
             val service =

@@ -2,8 +2,7 @@ package cz.solvina.options.domain.features.scanner
 
 import cz.solvina.options.domain.features.account.AccountPort
 import cz.solvina.options.domain.features.execution.TradeExecutionPort
-import cz.solvina.options.domain.features.spread.BullPutSpreadPort
-import cz.solvina.options.domain.features.spread.model.SpreadStatus
+import cz.solvina.options.domain.features.spread.SpreadQueryFacade
 import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.Symbol
@@ -25,7 +24,7 @@ class ScannerService(
     private val candidateSelector: BullPutCandidateSelector,
     private val accountPort: AccountPort,
     private val executionPort: TradeExecutionPort,
-    private val spreadPort: BullPutSpreadPort,
+    private val spreadQuery: SpreadQueryFacade,
     private val config: ScannerConfig,
     private val clock: Clock,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
@@ -42,10 +41,7 @@ class ScannerService(
         // both still consume risk budget; counting OPEN alone let concurrent in-flight entries
         // blow past maxOpenSpreads before any of them flipped to OPEN. This is a coarse early-out;
         // the authoritative per-slot reservation happens atomically in TradeExecutionService.execute.
-        val activeCount =
-            spreadPort.countByStatus(SpreadStatus.PENDING) +
-                spreadPort.countByStatus(SpreadStatus.OPEN) +
-                spreadPort.countByStatus(SpreadStatus.CLOSING)
+        val activeCount = spreadQuery.activeSpreadCount()
         if (activeCount >= config.maxOpenSpreads) {
             logger.info { "Max active spreads reached ($activeCount/${config.maxOpenSpreads}), skipping scan" }
             return
@@ -61,11 +57,7 @@ class ScannerService(
                 logger.info { "Net liquidation not yet available, skipping scan" }
                 return
             }
-        val openSpreads =
-            spreadPort.findOpen() +
-                spreadPort.findByStatus(SpreadStatus.PENDING) +
-                spreadPort.findByStatus(SpreadStatus.CLOSING)
-        val symbolsWithOpenSpread = openSpreads.map { it.symbol }.toSet()
+        val symbolsWithOpenSpread = spreadQuery.symbolsWithActiveSpread()
 
         val watchlist = universePort.getActiveSymbols()
         for (symbol in watchlist) {
