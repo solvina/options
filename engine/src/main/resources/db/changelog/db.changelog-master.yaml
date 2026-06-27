@@ -29,3 +29,5 @@ databaseChangeLog:
       file: db/changelog/v19__flag_10_most_active.yaml
   - include:
       file: db/changelog/v20__rename_spread_positions_to_bull_put_spreads.yaml
+  - include:
+      file: db/changelog/v21__bear_call_spreads.yaml

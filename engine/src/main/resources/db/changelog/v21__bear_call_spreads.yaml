@@ -1,0 +1,111 @@
+databaseChangeLog:
+  - changeSet:
+      id: v21-bear-call-spreads
+      author: claude
+      comment: >-
+        Bear call strategy (strategy #2): create bear_call_spreads, mirroring the current
+        bull_put_spreads schema plus ex_dividend_date for US/American-style early-assignment
+        protection. Columns and types match BearCallSpreadEntity (ddl-auto=validate).
+      changes:
+        - createTable:
+            tableName: bear_call_spreads
+            columns:
+              - column:
+                  name: id
+                  type: UUID
+                  defaultValueComputed: gen_random_uuid()
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: symbol
+                  type: VARCHAR(10)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: status
+                  type: VARCHAR(30)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: sold_strike
+                  type: NUMERIC(10, 2)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: bought_strike
+                  type: NUMERIC(10, 2)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: expiry_date
+                  type: DATE
+                  constraints:
+                    nullable: false
+              - column:
+                  name: credit_per_share
+                  type: NUMERIC(10, 4)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: max_risk_per_share
+                  type: NUMERIC(10, 4)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: quantity
+                  type: INT
+                  defaultValueNumeric: 1
+                  constraints:
+                    nullable: false
+              - column:
+                  name: sold_order_id
+                  type: INT
+              - column:
+                  name: bought_order_id
+                  type: INT
+              - column:
+                  name: iv_rank_at_entry
+                  type: NUMERIC(5, 2)
+              - column:
+                  name: underlying_price_at_entry
+                  type: NUMERIC(10, 2)
+              - column:
+                  name: opened_at
+                  type: TIMESTAMP WITH TIME ZONE
+                  constraints:
+                    nullable: false
+              - column:
+                  name: closed_at
+                  type: TIMESTAMP WITH TIME ZONE
+              - column:
+                  name: close_reason
+                  type: TEXT
+              - column:
+                  name: close_price_per_share
+                  type: NUMERIC(10, 4)
+              - column:
+                  name: last_spread_value
+                  type: NUMERIC(10, 4)
+              - column:
+                  name: underlying_price_at_exit
+                  type: NUMERIC(10, 2)
+              - column:
+                  name: iv_rank_at_exit
+                  type: NUMERIC(5, 2)
+              - column:
+                  name: ex_dividend_date
+                  type: DATE
+        - createIndex:
+            indexName: idx_bear_call_spreads_status
+            tableName: bear_call_spreads
+            columns:
+              - column:
+                  name: status
+        - createIndex:
+            indexName: idx_bear_call_spreads_opened_at
+            tableName: bear_call_spreads
+            columns:
+              - column:
+                  name: opened_at
+                  descending: true
