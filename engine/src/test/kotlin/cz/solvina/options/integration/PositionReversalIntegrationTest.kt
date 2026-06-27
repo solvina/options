@@ -16,12 +16,15 @@ import cz.solvina.options.domain.features.order.OrderPort
 import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.features.scanner.ScannerConfig
 import cz.solvina.options.domain.features.spread.BullPutSpreadPort
+import cz.solvina.options.domain.features.spread.SpreadCloserRegistry
 import cz.solvina.options.domain.features.spread.SpreadManagementService
 import cz.solvina.options.domain.features.spread.SpreadQueryFacade
 import cz.solvina.options.domain.features.spread.model.BullPutSpread
 import cz.solvina.options.domain.features.spread.model.SpreadLeg
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
 import cz.solvina.options.domain.features.spread.strategy.SpreadStrategyRegistry
+import cz.solvina.options.domain.features.spread.strategy.bearcall.BearCallSpreadCloser
+import cz.solvina.options.domain.features.spread.strategy.bullput.BullPutSpreadCloser
 import cz.solvina.options.domain.features.spread.strategy.bullput.BullPutStrategy
 import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.features.volatility.VolatilityPort
@@ -205,7 +208,13 @@ class PositionReversalIntegrationTest {
 
             val service =
                 SpreadManagementService(
-                    spreadPort = spreadPort,
+                    closers =
+                        SpreadCloserRegistry(
+                            listOf(
+                                BullPutSpreadCloser(spreadPort, clock),
+                                BearCallSpreadCloser(mockk(relaxed = true), clock),
+                            ),
+                        ),
                     marketDataPort = marketDataPort,
                     orderPort = orderPort,
                     universePort = universePort,

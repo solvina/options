@@ -7,7 +7,7 @@ import cz.solvina.options.domain.features.order.LegAction
 import cz.solvina.options.domain.features.order.OrderPort
 import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.features.scanner.ScannerConfig
-import cz.solvina.options.domain.features.spread.model.BullPutSpread
+import cz.solvina.options.domain.features.spread.model.Spread
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
 import cz.solvina.options.domain.features.spread.service.QuoteHealthService
 import cz.solvina.options.domain.features.spread.strategy.SpreadStrategyRegistry
@@ -22,7 +22,6 @@ import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.Clock
 import java.time.Duration
-import java.time.Instant
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 import java.util.UUID
@@ -32,7 +31,7 @@ private val tradeLogger = KotlinLogging.logger("TRADES")
 
 @Service
 class SpreadManagementService(
-    private val spreadPort: BullPutSpreadPort,
+    private val closers: SpreadCloserRegistry,
     private val marketDataPort: MarketDataPort,
     private val orderPort: OrderPort,
     private val universePort: UniversePort,
@@ -46,13 +45,13 @@ class SpreadManagementService(
 ) {
     sealed interface ManualCloseResult {
         data class Closed(
-            val spread: BullPutSpread,
+            val spread: Spread,
         ) : ManualCloseResult
 
         data object NotFound : ManualCloseResult
 
         data class AlreadyClosed(
-            val spread: BullPutSpread,
+            val spread: Spread,
         ) : ManualCloseResult
     }
 
@@ -66,7 +65,7 @@ class SpreadManagementService(
         id: UUID,
         useMarket: Boolean,
     ): ManualCloseResult {
-        val spread = spreadPort.findById(id) ?: return ManualCloseResult.NotFound
+        val spread = closers.findById(id) ?: return ManualCloseResult.NotFound
         val allowedStatuses = if (useMarket) forceable else setOf(SpreadStatus.OPEN)
         if (spread.status !in allowedStatuses) return ManualCloseResult.AlreadyClosed(spread)
 
@@ -81,18 +80,18 @@ class SpreadManagementService(
             } else {
                 closeSpread(spread, SpreadStatus.CLOSED_MANUAL, soldMid, boughtMid, spreadValue, exitContext)
                 // Re-fetch so we return the actual persisted state (closeSpread updates the DB)
-                spreadPort.findById(id) ?: spread
+                closers.findById(id) ?: spread
             }
         return ManualCloseResult.Closed(closed)
     }
 
     private suspend fun forceCloseSpread(
-        spread: BullPutSpread,
+        spread: Spread,
         estimatedSpreadValue: BigDecimal,
         closeStatus: SpreadStatus = SpreadStatus.CLOSED_MANUAL,
         closeReason: String = "MANUAL_FORCE",
         exitContext: Pair<BigDecimal?, BigDecimal?> = Pair(null, null),
-    ): BullPutSpread {
+    ): Spread {
         logger.info { "[${spread.symbol}] Force-closing at market (reason=$closeReason)" }
 
         // Issue #7: Track order IDs for cancellation if verification fails
@@ -164,15 +163,14 @@ class SpreadManagementService(
         }
 
         val updated =
-            spread.copy(
+            closers.forSpread(spread).close(
+                spread = spread,
                 status = closeStatus,
-                closedAt = Instant.now(clock),
                 closeReason = closeReason,
-                closePricePerShare = estimatedSpreadValue,
-                underlyingPriceAtExit = exitContext.first,
-                ivRankAtExit = exitContext.second,
+                closePrice = estimatedSpreadValue,
+                underlyingAtExit = exitContext.first,
+                ivAtExit = exitContext.second,
             )
-        spreadPort.update(updated)
         logger.info { "[${spread.symbol}] Force-closed. status=$closeStatus value=\$$estimatedSpreadValue" }
         return updated
     }
@@ -199,7 +197,7 @@ class SpreadManagementService(
      * Snapshot which legs are still held in IBKR, as (soldHeld, boughtHeld). Returns null when
      * positions can't be queried, in which case the caller closes both legs (best-effort).
      */
-    private suspend fun legsStillHeld(spread: BullPutSpread): Pair<Boolean, Boolean>? {
+    private suspend fun legsStillHeld(spread: Spread): Pair<Boolean, Boolean>? {
         val port = positionsPort ?: return null
         val positions = runCatching { port.getPositions() }.getOrNull() ?: return null
         val soldHeld = positions.any { positionMatchesLeg(it, spread.symbol, spread.soldLeg.contract) }
@@ -212,7 +210,7 @@ class SpreadManagementService(
      * Polls position feed up to 10 times with 500ms delays (5s total timeout).
      * Returns true if both legs are verified closed, false otherwise.
      */
-    private suspend fun verifyPositionClosed(spread: BullPutSpread): Boolean {
+    private suspend fun verifyPositionClosed(spread: Spread): Boolean {
         val port = positionsPort
         if (port == null) {
             logger.debug { "[${spread.symbol}] Position verification skipped (PositionsPort not available)" }
@@ -244,8 +242,8 @@ class SpreadManagementService(
     }
 
     suspend fun checkExits() {
-        val openSpreads = spreadPort.findOpen()
-        val closingSpreads = spreadPort.findByStatus(SpreadStatus.CLOSING)
+        val openSpreads = closers.allOpen()
+        val closingSpreads = closers.allClosing()
 
         if (openSpreads.isEmpty() && closingSpreads.isEmpty()) {
             logger.debug { "No open spreads to monitor" }
@@ -276,7 +274,7 @@ class SpreadManagementService(
         }
     }
 
-    private suspend fun retryClose(spread: BullPutSpread) {
+    private suspend fun retryClose(spread: Spread) {
         // A stuck CLOSING spread must still be closed (it's already mid-exit), so we don't skip
         // when quotes are missing — we just don't re-evaluate TP/SL from synthetic prices (H3).
         val soldMidLive = marketDataPort.getOptionMidLive(spread.soldLeg.contract)
@@ -321,7 +319,7 @@ class SpreadManagementService(
         }
     }
 
-    private suspend fun checkSpreadExit(spread: BullPutSpread) {
+    private suspend fun checkSpreadExit(spread: Spread) {
         val today = LocalDate.now(clock)
         val expiry = spread.soldLeg.contract.expiry
         val dte = ChronoUnit.DAYS.between(today, expiry).toInt()
@@ -384,7 +382,7 @@ class SpreadManagementService(
 
         if (exitSignal == null) {
             if (currentSpreadValue != null) {
-                spreadPort.update(spread.copy(lastSpreadValue = currentSpreadValue))
+                closers.forSpread(spread).recordLastValue(spread, currentSpreadValue)
             } else {
                 logger.debug { "[${spread.symbol}] No live option quotes — skipping price-based exit checks this cycle (DTE=$dte)" }
             }
@@ -404,7 +402,7 @@ class SpreadManagementService(
         }
     }
 
-    private suspend fun captureExitContext(spread: BullPutSpread): Pair<BigDecimal?, BigDecimal?> {
+    private suspend fun captureExitContext(spread: Spread): Pair<BigDecimal?, BigDecimal?> {
         val underlyingPrice = runCatching { marketDataPort.getUnderlyingPrice(spread.symbol).amount }.getOrNull()
         val ivRank =
             runCatching {
@@ -424,7 +422,7 @@ class SpreadManagementService(
     }
 
     private suspend fun closeSpread(
-        spread: BullPutSpread,
+        spread: Spread,
         closeStatus: SpreadStatus,
         soldMid: Money,
         boughtMid: Money,
@@ -435,13 +433,8 @@ class SpreadManagementService(
         val roundedBoughtMid = Money(roundToTick(boughtMid.amount))
 
         // Mark CLOSING immediately so the scanner won't re-enter this symbol while orders are in flight
-        val closing =
-            spread.copy(
-                status = SpreadStatus.CLOSING,
-                closeReason = closeStatus.name,
-                closePricePerShare = currentSpreadValue,
-            )
-        spreadPort.update(closing)
+        val closer = closers.forSpread(spread)
+        val closing = closer.markClosing(spread, closeStatus, currentSpreadValue)
 
         // Sold leg is priced at zero — options are effectively worthless. Placing a buy limit at $0.00
         // will never fill. Skip the buy-back and close directly.
@@ -455,15 +448,7 @@ class SpreadManagementService(
                 }
                 return
             }
-            val closed =
-                closing.copy(
-                    status = closeStatus,
-                    closedAt = Instant.now(clock),
-                    closeReason = closeStatus.name,
-                    underlyingPriceAtExit = exitContext.first,
-                    ivRankAtExit = exitContext.second,
-                )
-            spreadPort.update(closed)
+            closer.close(closing, closeStatus, closeStatus.name, currentSpreadValue, exitContext.first, exitContext.second)
             logger.info { "[${spread.symbol}] Sold leg worthless — closed $closeStatus without buy-back" }
             tradeLogger.info {
                 "EXIT   ${spread.symbol}  ${spread.soldLeg.contract.strike}P/${spread.boughtLeg.contract.strike}P" +
@@ -540,20 +525,12 @@ class SpreadManagementService(
                 }
                 // Mark ROLLBACK_FAILED to prevent retry from placing a second close order on the same leg.
                 // This spread requires manual intervention — the monitor loop skips ROLLBACK_FAILED status.
-                spreadPort.update(closing.copy(status = SpreadStatus.ROLLBACK_FAILED))
+                closer.markRollbackFailed(closing)
             }
             return
         }
 
-        spreadPort.update(
-            closing.copy(
-                status = closeStatus,
-                closedAt = Instant.now(clock),
-                closeReason = closeStatus.name,
-                underlyingPriceAtExit = exitContext.first,
-                ivRankAtExit = exitContext.second,
-            ),
-        )
+        closer.close(closing, closeStatus, closeStatus.name, currentSpreadValue, exitContext.first, exitContext.second)
         logger.info { "[${spread.symbol}] Spread closed: $closeStatus at \$$currentSpreadValue" }
         tradeLogger.info {
             "EXIT   ${spread.symbol}  ${spread.soldLeg.contract.strike}P/${spread.boughtLeg.contract.strike}P" +

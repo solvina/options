@@ -10,7 +10,9 @@ import cz.solvina.options.domain.features.order.LegOrder
 import cz.solvina.options.domain.features.order.OrderPort
 import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.features.scanner.ScannerConfig
+import cz.solvina.options.domain.features.spread.BearCallSpreadPort
 import cz.solvina.options.domain.features.spread.BullPutSpreadPort
+import cz.solvina.options.domain.features.spread.SpreadCloserRegistry
 import cz.solvina.options.domain.features.spread.SpreadManagementService
 import cz.solvina.options.domain.features.spread.model.BullPutSpread
 import cz.solvina.options.domain.features.spread.model.Spread
@@ -20,6 +22,8 @@ import cz.solvina.options.domain.features.spread.model.StrategyId
 import cz.solvina.options.domain.features.spread.strategy.SpreadStrategy
 import cz.solvina.options.domain.features.spread.strategy.SpreadStrategyRegistry
 import cz.solvina.options.domain.features.spread.strategy.StrategyExit
+import cz.solvina.options.domain.features.spread.strategy.bearcall.BearCallSpreadCloser
+import cz.solvina.options.domain.features.spread.strategy.bullput.BullPutSpreadCloser
 import cz.solvina.options.domain.features.spread.strategy.bullput.BullPutStrategy
 import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.features.volatility.VolatilityPort
@@ -108,6 +112,18 @@ class SpreadManagementServiceTest {
             openedAt = Instant.now(),
         )
 
+    // The closer registry wraps the test's bull-put port plus an empty bear-call port. Persistence
+    // still flows through spreadPort.update, so existing update captures/verifications hold.
+    private fun buildClosers(
+        port: BullPutSpreadPort,
+        clock: Clock = clockAtEntry,
+    ) = SpreadCloserRegistry(
+        listOf(
+            BullPutSpreadCloser(port, clock),
+            BearCallSpreadCloser(mockk<BearCallSpreadPort>(relaxed = true), clock),
+        ),
+    )
+
     /** Wires a [SpreadManagementService] with the given ports; other deps default to benign stubs. */
     private fun buildService(
         spreadPort: BullPutSpreadPort,
@@ -117,7 +133,7 @@ class SpreadManagementServiceTest {
         clock: Clock = clockAtEntry,
         positionsPort: cz.solvina.options.domain.features.account.PositionsPort? = null,
     ) = SpreadManagementService(
-        spreadPort = spreadPort,
+        closers = buildClosers(spreadPort),
         marketDataPort = marketDataPort,
         orderPort = orderPort,
         universePort = universePort,
@@ -187,7 +203,7 @@ class SpreadManagementServiceTest {
             coEvery { orderPort.placeAndAwaitFill(any(), any(), any(), any()) } returns filledOrder
 
             SpreadManagementService(
-                spreadPort = spreadPort,
+                closers = buildClosers(spreadPort),
                 marketDataPort = marketDataPort,
                 orderPort = orderPort,
                 universePort = universePort,
@@ -238,7 +254,7 @@ class SpreadManagementServiceTest {
             coEvery { spreadPort.update(capture(updated)) } answers { firstArg() }
 
             SpreadManagementService(
-                spreadPort = spreadPort,
+                closers = buildClosers(spreadPort),
                 marketDataPort = marketDataPort,
                 orderPort = orderPort,
                 universePort = universePort,
@@ -364,7 +380,7 @@ class SpreadManagementServiceTest {
             coEvery { marketDataPort.getOptionMidLive(boughtContract) } returns Money(BigDecimal("0.10"))
 
             SpreadManagementService(
-                spreadPort = spreadPort,
+                closers = buildClosers(spreadPort),
                 marketDataPort = marketDataPort,
                 orderPort = orderPort,
                 universePort = universePort,
@@ -411,7 +427,7 @@ class SpreadManagementServiceTest {
             coEvery { spreadPort.update(capture(updated)) } answers { firstArg() }
 
             SpreadManagementService(
-                spreadPort = spreadPort,
+                closers = buildClosers(spreadPort),
                 marketDataPort = marketDataPort,
                 orderPort = orderPort,
                 universePort = universePort,

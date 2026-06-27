@@ -4,7 +4,7 @@ import cz.solvina.options.domain.features.market.MarketDataPort
 import cz.solvina.options.domain.features.spread.BullPutSpreadPort
 import cz.solvina.options.domain.features.spread.SpreadAnalyticsService
 import cz.solvina.options.domain.features.spread.SpreadManagementService
-import cz.solvina.options.domain.features.spread.model.BullPutSpread
+import cz.solvina.options.domain.features.spread.model.Spread
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
 import `cz.solvina.options.spreads`.api.SpreadsApi
 import `cz.solvina.options.spreads`.dto.AnalyticsSummaryDto
@@ -144,7 +144,7 @@ class SpreadsApiImpl(
             is SpreadManagementService.ManualCloseResult.AlreadyClosed -> ResponseEntity.status(HttpStatus.CONFLICT).build()
         }
 
-    private fun BullPutSpread.toDto(): SpreadDto {
+    private fun Spread.toDto(): SpreadDto {
         val (currentSpreadValue, currentPnl) =
             if (status == SpreadStatus.OPEN) {
                 val sv = lastSpreadValue

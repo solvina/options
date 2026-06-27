@@ -21,6 +21,14 @@ sealed interface Spread {
     val maxRiskPerShare: BigDecimal
     val quantity: Int
     val status: SpreadStatus
+    val ivRankAtEntry: Double?
+    val underlyingPriceAtEntry: BigDecimal?
     val openedAt: Instant
+    val closedAt: Instant?
+    val closeReason: String?
+    val closePricePerShare: BigDecimal?
+    val lastSpreadValue: BigDecimal?
+    val underlyingPriceAtExit: BigDecimal?
+    val ivRankAtExit: BigDecimal?
     val strategyId: StrategyId
 }

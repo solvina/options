@@ -7,10 +7,13 @@ import cz.solvina.options.domain.features.scanner.BearCallScannerConfig
 import cz.solvina.options.domain.features.scanner.BullPutCandidateSelector
 import cz.solvina.options.domain.features.scanner.ScannerConfig
 import cz.solvina.options.domain.features.scanner.ScannerService
+import cz.solvina.options.domain.features.spread.SpreadCloserRegistry
 import cz.solvina.options.domain.features.spread.SpreadManagementService
 import cz.solvina.options.domain.features.spread.SpreadQueryFacade
 import cz.solvina.options.domain.features.spread.service.QuoteHealthService
 import cz.solvina.options.domain.features.spread.strategy.SpreadStrategyRegistry
+import cz.solvina.options.domain.features.spread.strategy.bearcall.BearCallSpreadCloser
+import cz.solvina.options.domain.features.spread.strategy.bullput.BullPutSpreadCloser
 import cz.solvina.options.domain.features.spread.strategy.bullput.BullPutSpreadEntryWriter
 import cz.solvina.options.domain.features.spread.strategy.bullput.BullPutStrategy
 import cz.solvina.options.domain.features.universe.InstrumentConfig
@@ -176,7 +179,13 @@ class BacktestSmokeTest {
 
         val spreadManager =
             SpreadManagementService(
-                spreadPort = spreadAdapter,
+                closers =
+                    SpreadCloserRegistry(
+                        listOf(
+                            BullPutSpreadCloser(spreadAdapter, clock),
+                            BearCallSpreadCloser(InMemoryBearCallSpreadPort(), clock),
+                        ),
+                    ),
                 marketDataPort = marketAdapter,
                 orderPort = orderAdapter,
                 universePort = universePort,
