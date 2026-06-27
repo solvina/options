@@ -1,5 +1,6 @@
 package cz.solvina.options.backtest
 
+import cz.solvina.options.domain.features.execution.SpreadEntryWriterRegistry
 import cz.solvina.options.domain.features.execution.TradeExecutionService
 import cz.solvina.options.domain.features.scanner.BullPutCandidateSelector
 import cz.solvina.options.domain.features.scanner.ScannerConfig
@@ -7,6 +8,7 @@ import cz.solvina.options.domain.features.scanner.ScannerService
 import cz.solvina.options.domain.features.spread.SpreadManagementService
 import cz.solvina.options.domain.features.spread.service.QuoteHealthService
 import cz.solvina.options.domain.features.spread.strategy.SpreadStrategyRegistry
+import cz.solvina.options.domain.features.spread.strategy.bullput.BullPutSpreadEntryWriter
 import cz.solvina.options.domain.features.spread.strategy.bullput.BullPutStrategy
 import cz.solvina.options.domain.features.universe.InstrumentConfig
 import cz.solvina.options.domain.features.universe.UniversePort
@@ -121,6 +123,7 @@ class BacktestSmokeTest {
                 marketTickPort = marketTickAdapter,
                 orderExecutionPort = orderExecutionAdapter,
                 spreadPort = spreadAdapter,
+                writerRegistry = SpreadEntryWriterRegistry(listOf(BullPutSpreadEntryWriter(spreadAdapter, clock))),
                 validator =
                     cz.solvina.options.domain.features.execution.PreTradeValidator(
                         spreadPort = spreadAdapter,

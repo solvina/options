@@ -5,15 +5,13 @@ import cz.solvina.options.domain.features.execution.model.TradeExecutionRequest
 import cz.solvina.options.domain.features.execution.model.TradeExecutionResult
 import cz.solvina.options.domain.features.market.MarketTickPort
 import cz.solvina.options.domain.features.market.SpreadCreditTick
-import cz.solvina.options.domain.features.order.LegAction
 import cz.solvina.options.domain.features.order.LegQuotes
 import cz.solvina.options.domain.features.order.OrderExecutionPort
 import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.features.order.StrandedLongLegException
 import cz.solvina.options.domain.features.scanner.ScannerConfig
 import cz.solvina.options.domain.features.spread.BullPutSpreadPort
-import cz.solvina.options.domain.features.spread.model.BullPutSpread
-import cz.solvina.options.domain.features.spread.model.SpreadLeg
+import cz.solvina.options.domain.features.spread.model.Spread
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.Symbol
@@ -47,7 +45,10 @@ private val tradeLogger = KotlinLogging.logger("TRADES")
 class TradeExecutionService(
     private val marketTickPort: MarketTickPort,
     private val orderExecutionPort: OrderExecutionPort,
+    // Bull-put port retained only for the active-spread cap count; Phase 4 replaces this with a
+    // cross-strategy SpreadQueryFacade so the cap sums bull puts + bear calls.
     private val spreadPort: BullPutSpreadPort,
+    private val writerRegistry: SpreadEntryWriterRegistry,
     private val validator: PreTradeValidator,
     private val config: ScannerConfig,
     private val clock: Clock,
@@ -149,19 +150,17 @@ class TradeExecutionService(
                 "soldBid/ask=\$${request.soldBid}/\$${request.soldAsk} " +
                 "boughtBid/ask=\$${request.boughtBid}/\$${request.boughtAsk}"
         }
+        // Strategy-specific persistence (build + status writes) behind the SpreadEntryWriter seam,
+        // resolved by request.strategyId — the execution loop itself stays strategy-agnostic.
+        val writer = writerRegistry.forStrategy(request.strategyId)
         // Persist PENDING before submitting — survives engine restarts so fill can be recovered
-        var pendingSpread = spreadPort.save(buildSpread(request, orderId = 0, credit = request.targetCredit, status = SpreadStatus.PENDING))
+        var pendingSpread: Spread = writer.persistPending(request, request.targetCredit)
 
         // Fetch fresh quotes immediately before submission and recalculate net credit
         val (freshCredit, stalePriceResult, freshTick) = calculateFreshCredit(request)
         if (stalePriceResult != null) {
             logger.info { "[${request.underlyingSymbol}] ${stalePriceResult.message}" }
-            spreadPort.update(
-                pendingSpread.copy(
-                    status = SpreadStatus.CLOSED_TIMEOUT,
-                    closeReason = stalePriceResult.outcome.name.lowercase(),
-                ),
-            )
+            writer.markStatus(pendingSpread, SpreadStatus.CLOSED_TIMEOUT, stalePriceResult.outcome.name.lowercase())
             return TradeExecutionResult(stalePriceResult.outcome)
         }
 
@@ -196,13 +195,7 @@ class TradeExecutionService(
                         "[${request.underlyingSymbol}] STRANDED LONG (longOrderId=${e.longOrderId}) — protective " +
                             "long filled, short did not; recording BROKEN_LONG_ONLY for manual handling"
                     }
-                    spreadPort.update(
-                        pendingSpread.copy(
-                            boughtLeg = pendingSpread.boughtLeg.copy(orderId = e.longOrderId),
-                            status = SpreadStatus.BROKEN_LONG_ONLY,
-                            closeReason = "broken_long_only: ${e.message}",
-                        ),
-                    )
+                    writer.markBrokenLongOnly(pendingSpread, e.longOrderId, "broken_long_only: ${e.message}")
                     tradeLogger.warn {
                         "BROKEN_LONG_ONLY ${request.underlyingSymbol}  ${request.boughtContract.strike}P" +
                             "  long_order=${e.longOrderId}  reason=${e.message}"
@@ -210,18 +203,11 @@ class TradeExecutionService(
                     return TradeExecutionResult(ExecutionOutcome.BROKEN_LONG_ONLY, comboOrderId = e.longOrderId)
                 }
                 logger.error(e) { "[${request.underlyingSymbol}] Failed to submit order" }
-                spreadPort.update(pendingSpread.copy(status = SpreadStatus.CLOSED_REJECTED, closeReason = "order_rejected: ${e.message}"))
+                writer.markStatus(pendingSpread, SpreadStatus.CLOSED_REJECTED, "order_rejected: ${e.message}")
                 return TradeExecutionResult(ExecutionOutcome.ORDER_REJECTED)
             }
         // Stamp the real orderId now that we have it
-        pendingSpread =
-            spreadPort.update(
-                pendingSpread.copy(
-                    soldLeg = pendingSpread.soldLeg.copy(orderId = currentOrderId),
-                    boughtLeg = pendingSpread.boughtLeg.copy(orderId = currentOrderId),
-                    creditPerShare = freshCredit, // Update to actual submitted price
-                ),
-            )
+        pendingSpread = writer.stampOrderIds(pendingSpread, currentOrderId, freshCredit)
         var currentCredit = freshCredit
         var ticksSinceAdjust = 0
         var outcome = ExecutionOutcome.TIMED_OUT
@@ -383,14 +369,7 @@ class TradeExecutionService(
                     .multiply(BigDecimal("2"))
                     .divide(config.contractMultiplier, 6, RoundingMode.HALF_UP)
             val netCredit = currentCredit.subtract(feePerShare).setScale(4, RoundingMode.HALF_UP)
-            spreadPort.update(
-                pendingSpread.copy(
-                    soldLeg = pendingSpread.soldLeg.copy(orderId = currentOrderId),
-                    boughtLeg = pendingSpread.boughtLeg.copy(orderId = currentOrderId),
-                    creditPerShare = netCredit,
-                    status = SpreadStatus.OPEN,
-                ),
-            )
+            writer.markFilled(pendingSpread, currentOrderId, netCredit)
             logger.info {
                 "[${request.underlyingSymbol}] FILLED — " +
                     "gross=\$$currentCredit fees=\$$feePerShare net=\$$netCredit orderId=$currentOrderId spread saved"
@@ -407,7 +386,7 @@ class TradeExecutionService(
             "ABORTED ${request.underlyingSymbol}  ${request.soldContract.strike}P/${request.boughtContract.strike}P  reason=${outcome.name}"
         }
         val abortStatus = if (outcome == ExecutionOutcome.ORDER_REJECTED) SpreadStatus.CLOSED_REJECTED else SpreadStatus.CLOSED_TIMEOUT
-        spreadPort.update(pendingSpread.copy(status = abortStatus, closeReason = outcome.name.lowercase()))
+        writer.markStatus(pendingSpread, abortStatus, outcome.name.lowercase())
         val cooldownExpiry = Instant.now(clock).plusSeconds(config.entryCooldownMinutes * 60)
         cooldownUntil[request.underlyingSymbol] = cooldownExpiry
         logger.info {
@@ -445,34 +424,6 @@ class TradeExecutionService(
     }
 
     private fun minTickFor(price: BigDecimal): BigDecimal = if (price < BigDecimal("3.00")) BigDecimal("0.01") else BigDecimal("0.05")
-
-    private fun buildSpread(
-        request: TradeExecutionRequest,
-        orderId: Int,
-        credit: BigDecimal,
-        status: SpreadStatus = SpreadStatus.OPEN,
-    ): BullPutSpread {
-        val soldPremium = credit.add(request.boughtMid).setScale(4, RoundingMode.HALF_UP)
-        return BullPutSpread(
-            id = null,
-            symbol = request.underlyingSymbol,
-            soldLeg = SpreadLeg(contract = request.soldContract, action = LegAction.SELL, premium = Money(soldPremium), orderId = orderId),
-            boughtLeg =
-                SpreadLeg(
-                    contract = request.boughtContract,
-                    action = LegAction.BUY,
-                    premium = Money(request.boughtMid),
-                    orderId = orderId,
-                ),
-            creditPerShare = credit,
-            maxRiskPerShare = request.maxRiskPerShare,
-            quantity = request.quantity,
-            status = status,
-            ivRankAtEntry = request.ivRankAtEntry,
-            underlyingPriceAtEntry = request.underlyingPriceAtEntry,
-            openedAt = Instant.now(clock),
-        )
-    }
 
     private suspend fun calculateFreshCredit(request: TradeExecutionRequest): Triple<BigDecimal, QuoteFreshnessResult?, SpreadCreditTick?> {
         val startNanos = System.nanoTime()

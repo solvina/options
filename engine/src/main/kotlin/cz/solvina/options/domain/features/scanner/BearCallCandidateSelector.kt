@@ -3,6 +3,7 @@ package cz.solvina.options.domain.features.scanner
 import cz.solvina.options.domain.features.execution.model.TradeExecutionRequest
 import cz.solvina.options.domain.features.market.MarketDataPort
 import cz.solvina.options.domain.features.market.OptionChainPort
+import cz.solvina.options.domain.features.spread.model.StrategyId
 import cz.solvina.options.domain.features.volatility.VolatilityPort
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionType
@@ -161,6 +162,7 @@ class BearCallCandidateSelector(
             soldContract = soldQuote.contract,
             boughtContract = boughtQuote.contract,
             underlyingSymbol = symbol,
+            strategyId = StrategyId.BEAR_CALL,
             targetCredit = midCredit,
             floorCredit = floorCredit,
             maxRiskPerShare = maxRiskPerShare,

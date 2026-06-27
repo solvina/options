@@ -3,6 +3,7 @@ package cz.solvina.options.execution
 import cz.solvina.options.domain.features.account.AccountDetail
 import cz.solvina.options.domain.features.account.AccountPort
 import cz.solvina.options.domain.features.execution.PreTradeValidator
+import cz.solvina.options.domain.features.execution.SpreadEntryWriterRegistry
 import cz.solvina.options.domain.features.execution.TradeExecutionService
 import cz.solvina.options.domain.features.execution.model.ExecutionOutcome
 import cz.solvina.options.domain.features.execution.model.TradeExecutionRequest
@@ -17,6 +18,7 @@ import cz.solvina.options.domain.features.spread.BullPutSpreadPort
 import cz.solvina.options.domain.features.spread.model.BullPutSpread
 import cz.solvina.options.domain.features.spread.model.SpreadLeg
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
+import cz.solvina.options.domain.features.spread.strategy.bullput.BullPutSpreadEntryWriter
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
 import cz.solvina.options.domain.models.OptionType
@@ -113,6 +115,7 @@ class TradeExecutionServiceTest {
         marketTickPort = marketTickPort,
         orderExecutionPort = orderExecutionPort,
         spreadPort = spreadPort,
+        writerRegistry = SpreadEntryWriterRegistry(listOf(BullPutSpreadEntryWriter(spreadPort, Clock.systemUTC()))),
         validator =
             PreTradeValidator(
                 spreadPort = spreadPort,

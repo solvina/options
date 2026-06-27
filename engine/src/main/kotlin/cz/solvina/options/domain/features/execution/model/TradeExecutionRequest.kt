@@ -1,5 +1,6 @@
 package cz.solvina.options.domain.features.execution.model
 
+import cz.solvina.options.domain.features.spread.model.StrategyId
 import cz.solvina.options.domain.models.OptionContract
 import cz.solvina.options.domain.models.Symbol
 import java.math.BigDecimal
@@ -8,6 +9,8 @@ data class TradeExecutionRequest(
     val soldContract: OptionContract,
     val boughtContract: OptionContract,
     val underlyingSymbol: Symbol,
+    /** Which strategy produced this request — routes execution persistence to the right writer. */
+    val strategyId: StrategyId = StrategyId.BULL_PUT,
     /** Initial net credit limit price — scanner's (soldMid − boughtMid). */
     val targetCredit: BigDecimal,
     /** Never submit a combo order below this net credit. */
