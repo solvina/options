@@ -160,6 +160,7 @@ class BacktestSmokeTest {
                 volatilityPort = ivRankService,
                 marketDataPort = marketAdapter,
                 optionChainPort = optionChainAdapter,
+                universePort = universePort,
                 config = bearCallConfig,
                 clock = clock,
             )

@@ -2,6 +2,7 @@ package cz.solvina.options.domain.features.universe
 
 import cz.solvina.options.domain.models.Symbol
 import java.math.BigDecimal
+import java.time.LocalDate
 
 data class InstrumentConfig(
     val symbol: Symbol,
@@ -23,5 +24,9 @@ data class InstrumentConfig(
     val takeProfitPercent: Double? = null,
     val stopLossPercent: Double? = null,
     val timeProfitDte: Int? = null,
+    // Dividend assignment protection (bear call, US/American-style). Populated by the dividend-data
+    // refresh job (future); null until then — ex-dividend date and the upcoming per-share amount.
+    val exDividendDate: LocalDate? = null,
+    val nextDividendAmount: BigDecimal? = null,
     val notes: String? = null,
 )

@@ -5,6 +5,9 @@ import cz.solvina.options.domain.features.market.OptionChainPort
 import cz.solvina.options.domain.features.market.model.OptionQuote
 import cz.solvina.options.domain.features.scanner.BearCallCandidateSelector
 import cz.solvina.options.domain.features.scanner.BearCallScannerConfig
+import cz.solvina.options.domain.features.universe.InstrumentConfig
+import cz.solvina.options.domain.features.universe.MarketSchedule
+import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.features.volatility.VolatilityPort
 import cz.solvina.options.domain.models.IvRank
 import cz.solvina.options.domain.models.Money
@@ -12,12 +15,17 @@ import cz.solvina.options.domain.models.OptionContract
 import cz.solvina.options.domain.models.OptionGreeks
 import cz.solvina.options.domain.models.OptionType
 import cz.solvina.options.domain.models.Symbol
+import io.mockk.coEvery
+import io.mockk.every
+import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import java.math.BigDecimal
 import java.time.Clock
 import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalTime
+import java.time.ZoneId
 import java.time.ZoneOffset
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -109,11 +117,28 @@ class BearCallCandidateSelectorTest {
             assertEquals(0, BigDecimal("4.2000").compareTo(result.maxRiskPerShare))
         }
 
+    @Test
+    fun `no candidate when ex-dividend is within the entry buffer for a US name`() =
+        runTest {
+            // ex-div tomorrow (buffer = 48h → 2 days), US session → entry blocked.
+            val universePort =
+                mockk<UniversePort>(relaxed = true) {
+                    coEvery { get(symbol) } returns InstrumentConfig(symbol = symbol, exDividendDate = today.plusDays(1))
+                    every { getMarketSchedule(symbol) } returns
+                        MarketSchedule(ZoneId.of("America/New_York"), LocalTime.of(9, 30), LocalTime.of(16, 0), "US")
+                }
+
+            val result = buildSelector(universePort = universePort).select(symbol, capitalOf50k)
+
+            assertNull(result, "Imminent ex-dividend must block bear-call entry")
+        }
+
     private fun buildSelector(
         ivRank: Double = 50.0,
         expirations: Set<LocalDate> = setOf(expiry38d),
         chain: List<OptionQuote> = validChain,
         config: BearCallScannerConfig = BearCallScannerConfig(),
+        universePort: UniversePort = mockk(relaxed = true),
     ) = BearCallCandidateSelector(
         volatilityPort =
             object : VolatilityPort {
@@ -135,6 +160,7 @@ class BearCallCandidateSelectorTest {
                     underlyingPrice: Money,
                 ) = chain.filter { it.contract.expiry == expiry }
             },
+        universePort = universePort,
         config = config,
         clock = clock,
     )

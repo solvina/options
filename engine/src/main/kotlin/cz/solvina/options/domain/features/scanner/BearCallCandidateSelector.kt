@@ -4,6 +4,7 @@ import cz.solvina.options.domain.features.execution.model.TradeExecutionRequest
 import cz.solvina.options.domain.features.market.MarketDataPort
 import cz.solvina.options.domain.features.market.OptionChainPort
 import cz.solvina.options.domain.features.spread.model.StrategyId
+import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.features.volatility.VolatilityPort
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionType
@@ -35,6 +36,7 @@ class BearCallCandidateSelector(
     private val volatilityPort: VolatilityPort,
     private val marketDataPort: MarketDataPort,
     private val optionChainPort: OptionChainPort,
+    private val universePort: UniversePort,
     private val config: BearCallScannerConfig,
     private val clock: Clock,
 ) {
@@ -42,6 +44,18 @@ class BearCallCandidateSelector(
         symbol: Symbol,
         totalCapital: Money,
     ): TradeExecutionRequest? {
+        // 0. Ex-dividend entry buffer — don't open a short call right before an ex-dividend date
+        // (US/American-style early-assignment risk). Inert until the dividend-data pipeline runs.
+        val exDiv = universePort.get(symbol)?.exDividendDate
+        if (exDiv != null && universePort.getMarketSchedule(symbol).session == "US") {
+            val daysToExDiv = ChronoUnit.DAYS.between(LocalDate.now(clock), exDiv)
+            val bufferDays = config.exDividendEntryBufferHours / 24
+            if (daysToExDiv in 0..bufferDays) {
+                logger.info { "[$symbol] (bear-call) Skipping entry — ex-dividend in ${daysToExDiv}d (within ${bufferDays}d buffer)" }
+                return null
+            }
+        }
+
         // 1. IV Rank filter
         val ivRank = volatilityPort.getIvRank(symbol)
         if (ivRank.rank < config.ivRankThreshold) {
