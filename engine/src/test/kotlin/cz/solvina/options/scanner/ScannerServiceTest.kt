@@ -6,11 +6,11 @@ import cz.solvina.options.domain.features.execution.TradeExecutionPort
 import cz.solvina.options.domain.features.execution.model.ExecutionOutcome
 import cz.solvina.options.domain.features.execution.model.TradeExecutionRequest
 import cz.solvina.options.domain.features.execution.model.TradeExecutionResult
-import cz.solvina.options.domain.features.scanner.ScanCandidateSelector
+import cz.solvina.options.domain.features.scanner.BullPutCandidateSelector
 import cz.solvina.options.domain.features.scanner.ScannerConfig
 import cz.solvina.options.domain.features.scanner.ScannerService
+import cz.solvina.options.domain.features.spread.BullPutSpreadPort
 import cz.solvina.options.domain.features.spread.SpreadPage
-import cz.solvina.options.domain.features.spread.SpreadPort
 import cz.solvina.options.domain.features.spread.model.BullPutSpread
 import cz.solvina.options.domain.features.spread.model.SpreadLeg
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
@@ -54,8 +54,8 @@ class ScannerServiceTest {
     private val config = ScannerConfig(watchlist = listOf("SPY", "QQQ"), maxOpenSpreads = 2)
 
     // Candidate selector is mocked because its own filter pipeline is tested separately
-    // (see ScanCandidateSelectorTest). Here we only need to control whether it returns a result.
-    private val selector = mockk<ScanCandidateSelector>()
+    // (see BullPutCandidateSelectorTest). Here we only need to control whether it returns a result.
+    private val selector = mockk<BullPutCandidateSelector>()
 
     private val dummyRequest =
         TradeExecutionRequest(
@@ -83,7 +83,7 @@ class ScannerServiceTest {
         runTest {
             // With 2 spreads open and maxOpenSpreads=2 there is no room for another trade.
             // The selector must not be called at all — no point evaluating candidates.
-            val spreadPort = SpreadPortStub(openCount = 2)
+            val spreadPort = BullPutSpreadPortStub(openCount = 2)
 
             buildScanner(spreadPort = spreadPort).scan()
 
@@ -97,7 +97,7 @@ class ScannerServiceTest {
     @Test
     fun `symbol is skipped when it already has an open spread`() =
         runTest {
-            val spreadPort = SpreadPortStub(openSpreads = listOf(openSpread(spy)))
+            val spreadPort = BullPutSpreadPortStub(openSpreads = listOf(openSpread(spy)))
 
             buildScanner(spreadPort = spreadPort, watchlist = listOf(spy)).scan()
 
@@ -108,7 +108,7 @@ class ScannerServiceTest {
     fun `symbol is skipped when it has a spread in CLOSING state`() =
         runTest {
             // A CLOSING spread means an exit order is in flight. Entering again would duplicate.
-            val spreadPort = SpreadPortStub(closingSpreads = listOf(openSpread(spy, status = SpreadStatus.CLOSING)))
+            val spreadPort = BullPutSpreadPortStub(closingSpreads = listOf(openSpread(spy, status = SpreadStatus.CLOSING)))
 
             buildScanner(spreadPort = spreadPort, watchlist = listOf(spy)).scan()
 
@@ -118,7 +118,7 @@ class ScannerServiceTest {
     @Test
     fun `symbol is skipped when it has a PENDING spread waiting for entry fill`() =
         runTest {
-            val spreadPort = SpreadPortStub(pendingSpreads = listOf(openSpread(spy, status = SpreadStatus.PENDING)))
+            val spreadPort = BullPutSpreadPortStub(pendingSpreads = listOf(openSpread(spy, status = SpreadStatus.PENDING)))
 
             buildScanner(spreadPort = spreadPort, watchlist = listOf(spy)).scan()
 
@@ -180,7 +180,7 @@ class ScannerServiceTest {
     // -------------------------------------------------------------------------
 
     private fun buildScanner(
-        spreadPort: SpreadPort = SpreadPortStub(),
+        spreadPort: BullPutSpreadPort = BullPutSpreadPortStub(),
         executionPort: TradeExecutionPort = FakeExecutionPort(),
         watchlist: List<Symbol> = listOf(spy, qqq),
         scope: CoroutineScope = CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO),
@@ -269,12 +269,12 @@ class ScannerServiceTest {
     /**
      * In-memory spread store. Only the methods used by [ScannerService.scan] are implemented.
      */
-    private class SpreadPortStub(
+    private class BullPutSpreadPortStub(
         private val openSpreads: List<BullPutSpread> = emptyList(),
         private val closingSpreads: List<BullPutSpread> = emptyList(),
         private val pendingSpreads: List<BullPutSpread> = emptyList(),
         openCount: Int = -1,
-    ) : SpreadPort {
+    ) : BullPutSpreadPort {
         private val derivedOpenCount = if (openCount >= 0) openCount.toLong() else openSpreads.size.toLong()
 
         override suspend fun findOpen() = openSpreads

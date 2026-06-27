@@ -5,7 +5,7 @@ import cz.solvina.options.domain.features.account.PositionsPort
 import cz.solvina.options.domain.features.alert.AlertLevel
 import cz.solvina.options.domain.features.alert.AlertPort
 import cz.solvina.options.domain.features.connection.status.ConnectionStatusPort
-import cz.solvina.options.domain.features.spread.SpreadPort
+import cz.solvina.options.domain.features.spread.BullPutSpreadPort
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -29,7 +29,7 @@ private val logger = KotlinLogging.logger {}
  */
 @Component
 class PositionReconciliationScheduler(
-    private val spreadPort: SpreadPort,
+    private val spreadPort: BullPutSpreadPort,
     private val positionsPort: PositionsPort,
     private val detector: OrphanPositionDetector,
     private val alertPort: AlertPort,

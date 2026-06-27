@@ -1,7 +1,7 @@
 package cz.solvina.options.backtest
 
 import cz.solvina.options.domain.features.execution.TradeExecutionService
-import cz.solvina.options.domain.features.scanner.ScanCandidateSelector
+import cz.solvina.options.domain.features.scanner.BullPutCandidateSelector
 import cz.solvina.options.domain.features.scanner.ScannerConfig
 import cz.solvina.options.domain.features.scanner.ScannerService
 import cz.solvina.options.domain.features.spread.SpreadManagementService
@@ -134,7 +134,7 @@ class BacktestSmokeTest {
             )
 
         val candidateSelector =
-            ScanCandidateSelector(
+            BullPutCandidateSelector(
                 volatilityPort = ivRankService,
                 marketDataPort = marketAdapter,
                 optionChainPort = optionChainAdapter,

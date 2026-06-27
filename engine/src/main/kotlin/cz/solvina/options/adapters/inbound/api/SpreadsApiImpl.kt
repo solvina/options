@@ -1,9 +1,9 @@
 package cz.solvina.options.adapters.inbound.api
 
 import cz.solvina.options.domain.features.market.MarketDataPort
+import cz.solvina.options.domain.features.spread.BullPutSpreadPort
 import cz.solvina.options.domain.features.spread.SpreadAnalyticsService
 import cz.solvina.options.domain.features.spread.SpreadManagementService
-import cz.solvina.options.domain.features.spread.SpreadPort
 import cz.solvina.options.domain.features.spread.model.BullPutSpread
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
 import `cz.solvina.options.spreads`.api.SpreadsApi
@@ -28,7 +28,7 @@ private val logger = KotlinLogging.logger {}
 @RestController
 @RequestMapping
 class SpreadsApiImpl(
-    private val spreadPort: SpreadPort,
+    private val spreadPort: BullPutSpreadPort,
     private val spreadManagementService: SpreadManagementService,
     private val spreadAnalyticsService: SpreadAnalyticsService,
     private val marketDataPort: MarketDataPort,

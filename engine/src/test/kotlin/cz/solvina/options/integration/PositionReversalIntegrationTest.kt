@@ -15,8 +15,8 @@ import cz.solvina.options.domain.features.order.OrderExecutionPort
 import cz.solvina.options.domain.features.order.OrderPort
 import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.features.scanner.ScannerConfig
+import cz.solvina.options.domain.features.spread.BullPutSpreadPort
 import cz.solvina.options.domain.features.spread.SpreadManagementService
-import cz.solvina.options.domain.features.spread.SpreadPort
 import cz.solvina.options.domain.features.spread.model.BullPutSpread
 import cz.solvina.options.domain.features.spread.model.SpreadLeg
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
@@ -76,7 +76,7 @@ class PositionReversalIntegrationTest {
 
     private val config = ScannerConfig(watchlist = listOf("AMD"))
 
-    private val spreadPort = mockk<SpreadPort>()
+    private val spreadPort = mockk<BullPutSpreadPort>()
     private val openOrdersAdapter = mockk<IbkrOpenOrdersAdapter>()
     private val marketDataPort = mockk<MarketDataPort>()
     private val orderPort = mockk<OrderPort>()

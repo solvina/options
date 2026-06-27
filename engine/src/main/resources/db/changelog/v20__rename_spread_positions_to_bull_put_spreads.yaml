@@ -1,0 +1,16 @@
+databaseChangeLog:
+  - changeSet:
+      id: v20-rename-spread-positions-to-bull-put-spreads
+      author: claude
+      comment: >-
+        Multi-strategy naming mandate: bull-put-specific persistence is named explicitly.
+        Renames spread_positions -> bull_put_spreads to match BullPutSpreadEntity. Indexes and
+        constraints follow the table automatically on rename; no data change.
+      changes:
+        - renameTable:
+            oldTableName: spread_positions
+            newTableName: bull_put_spreads
+      rollback:
+        - renameTable:
+            oldTableName: bull_put_spreads
+            newTableName: spread_positions

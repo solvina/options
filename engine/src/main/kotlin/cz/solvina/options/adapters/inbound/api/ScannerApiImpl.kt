@@ -3,7 +3,7 @@ package cz.solvina.options.adapters.inbound.api
 import cz.solvina.options.domain.features.scanner.ScannerPort
 import cz.solvina.options.domain.features.scanner.ScannerService
 import cz.solvina.options.domain.features.scanner.TradingKillSwitch
-import cz.solvina.options.domain.features.spread.SpreadPort
+import cz.solvina.options.domain.features.spread.BullPutSpreadPort
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
 import `cz.solvina.options.spreads`.api.MonitorApi
 import `cz.solvina.options.spreads`.api.ScannerApi
@@ -24,7 +24,7 @@ private val logger = KotlinLogging.logger {}
 class ScannerApiImpl(
     private val scannerPort: ScannerPort,
     private val scannerService: ScannerService,
-    private val spreadPort: SpreadPort,
+    private val spreadPort: BullPutSpreadPort,
     private val killSwitch: TradingKillSwitch,
 ) : ScannerApi,
     MonitorApi {

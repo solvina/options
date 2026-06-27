@@ -3,7 +3,7 @@ package cz.solvina.options.scanner
 import cz.solvina.options.domain.features.market.MarketDataPort
 import cz.solvina.options.domain.features.market.OptionChainPort
 import cz.solvina.options.domain.features.market.model.OptionQuote
-import cz.solvina.options.domain.features.scanner.ScanCandidateSelector
+import cz.solvina.options.domain.features.scanner.BullPutCandidateSelector
 import cz.solvina.options.domain.features.scanner.ScannerConfig
 import cz.solvina.options.domain.features.universe.InstrumentConfig
 import cz.solvina.options.domain.features.universe.UniversePort
@@ -37,7 +37,7 @@ import kotlin.test.assertNull
  *   6. maxRiskPerShare = spreadWidth − credit  must be positive (sanity check)
  *   7. maxRiskPerContract ≤ totalCapital × maxRiskPercent  (money management)
  */
-class ScanCandidateSelectorTest {
+class BullPutCandidateSelectorTest {
     // -------------------------------------------------------------------------
     // Shared fixtures
     // -------------------------------------------------------------------------
@@ -252,7 +252,7 @@ class ScanCandidateSelectorTest {
     // -------------------------------------------------------------------------
 
     /**
-     * Builds a [ScanCandidateSelector] with controllable fake ports.
+     * Builds a [BullPutCandidateSelector] with controllable fake ports.
      * All parameters default to a scenario where a valid candidate is found.
      */
     private fun buildSelector(
@@ -261,7 +261,7 @@ class ScanCandidateSelectorTest {
         chain: List<OptionQuote> = validChain,
         instrumentConfig: InstrumentConfig? = null,
         config: ScannerConfig = defaultConfig,
-    ) = ScanCandidateSelector(
+    ) = BullPutCandidateSelector(
         volatilityPort =
             object : VolatilityPort {
                 override suspend fun getIvRank(symbol: Symbol) = IvRank(rank = ivRank, currentIv = 0.25, calculatedAt = Instant.now())

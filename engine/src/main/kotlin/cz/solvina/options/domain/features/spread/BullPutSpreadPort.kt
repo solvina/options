@@ -5,7 +5,7 @@ import cz.solvina.options.domain.features.spread.model.SpreadStatus
 import cz.solvina.options.domain.models.Symbol
 import java.util.UUID
 
-interface SpreadPort {
+interface BullPutSpreadPort {
     suspend fun save(spread: BullPutSpread): BullPutSpread
 
     suspend fun update(spread: BullPutSpread): BullPutSpread

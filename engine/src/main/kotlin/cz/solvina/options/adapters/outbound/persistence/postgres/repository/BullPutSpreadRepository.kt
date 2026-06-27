@@ -1,6 +1,6 @@
 package cz.solvina.options.adapters.outbound.persistence.postgres.repository
 
-import cz.solvina.options.adapters.outbound.persistence.postgres.entity.SpreadPositionEntity
+import cz.solvina.options.adapters.outbound.persistence.postgres.entity.BullPutSpreadEntity
 import jakarta.persistence.LockModeType
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
@@ -11,23 +11,23 @@ import org.springframework.data.repository.query.Param
 import org.springframework.lang.NonNull
 import java.util.UUID
 
-interface SpreadPositionRepository : JpaRepository<SpreadPositionEntity, UUID> {
-    fun findByStatusOrderByOpenedAtDesc(status: String): List<SpreadPositionEntity>
+interface BullPutSpreadRepository : JpaRepository<BullPutSpreadEntity, UUID> {
+    fun findByStatusOrderByOpenedAtDesc(status: String): List<BullPutSpreadEntity>
 
-    fun findAllByOrderByOpenedAtDesc(): List<SpreadPositionEntity>
+    fun findAllByOrderByOpenedAtDesc(): List<BullPutSpreadEntity>
 
     fun findByStatus(
         status: String,
         pageable: Pageable,
-    ): Page<SpreadPositionEntity>
+    ): Page<BullPutSpreadEntity>
 
-    fun findAllBy(pageable: Pageable): Page<SpreadPositionEntity>
+    fun findAllBy(pageable: Pageable): Page<BullPutSpreadEntity>
 
     fun countByStatus(status: String): Long
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("SELECT s FROM SpreadPositionEntity s WHERE s.symbol = :symbol")
+    @Query("SELECT s FROM BullPutSpreadEntity s WHERE s.symbol = :symbol")
     fun findBySymbolWithLock(
         @Param("symbol") @NonNull symbol: String,
-    ): List<SpreadPositionEntity>
+    ): List<BullPutSpreadEntity>
 }

@@ -21,7 +21,7 @@ private val logger = KotlinLogging.logger {}
 private val tradeLogger = KotlinLogging.logger("TRADES")
 
 @Component
-class ScanCandidateSelector(
+class BullPutCandidateSelector(
     private val volatilityPort: VolatilityPort,
     private val marketDataPort: MarketDataPort,
     private val optionChainPort: OptionChainPort,

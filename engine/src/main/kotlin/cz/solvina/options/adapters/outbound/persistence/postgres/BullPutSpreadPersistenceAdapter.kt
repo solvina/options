@@ -1,10 +1,10 @@
 package cz.solvina.options.adapters.outbound.persistence.postgres
 
-import cz.solvina.options.adapters.outbound.persistence.postgres.entity.SpreadPositionEntity
-import cz.solvina.options.adapters.outbound.persistence.postgres.repository.SpreadPositionRepository
+import cz.solvina.options.adapters.outbound.persistence.postgres.entity.BullPutSpreadEntity
+import cz.solvina.options.adapters.outbound.persistence.postgres.repository.BullPutSpreadRepository
 import cz.solvina.options.domain.features.order.LegAction
+import cz.solvina.options.domain.features.spread.BullPutSpreadPort
 import cz.solvina.options.domain.features.spread.SpreadPage
-import cz.solvina.options.domain.features.spread.SpreadPort
 import cz.solvina.options.domain.features.spread.model.BullPutSpread
 import cz.solvina.options.domain.features.spread.model.SpreadLeg
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
@@ -20,9 +20,9 @@ import org.springframework.stereotype.Component
 import java.math.BigDecimal
 
 @Component
-class SpreadPersistenceAdapter(
-    private val repository: SpreadPositionRepository,
-) : SpreadPort {
+class BullPutSpreadPersistenceAdapter(
+    private val repository: BullPutSpreadRepository,
+) : BullPutSpreadPort {
     override suspend fun save(spread: BullPutSpread): BullPutSpread =
         withContext(Dispatchers.IO) {
             repository.save(spread.toEntity()).toDomain()
@@ -87,8 +87,8 @@ class SpreadPersistenceAdapter(
             repository.findBySymbolWithLock(symbol.value).map { it.toDomain() }
         }
 
-    private fun BullPutSpread.toEntity(): SpreadPositionEntity =
-        SpreadPositionEntity(
+    private fun BullPutSpread.toEntity(): BullPutSpreadEntity =
+        BullPutSpreadEntity(
             id = id,
             symbol = symbol.value,
             status = status.name,
@@ -111,7 +111,7 @@ class SpreadPersistenceAdapter(
             ivRankAtExit = ivRankAtExit,
         )
 
-    private fun SpreadPositionEntity.toDomain(): BullPutSpread {
+    private fun BullPutSpreadEntity.toDomain(): BullPutSpread {
         val sym = Symbol(symbol)
         val expiry = expiryDate
         val soldContract = OptionContract(sym, expiry, soldStrike, OptionType.PUT)

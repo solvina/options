@@ -11,7 +11,7 @@ import cz.solvina.options.domain.features.order.OrderExecutionPort
 import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.features.order.StrandedLongLegException
 import cz.solvina.options.domain.features.scanner.ScannerConfig
-import cz.solvina.options.domain.features.spread.SpreadPort
+import cz.solvina.options.domain.features.spread.BullPutSpreadPort
 import cz.solvina.options.domain.features.spread.model.BullPutSpread
 import cz.solvina.options.domain.features.spread.model.SpreadLeg
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
@@ -47,7 +47,7 @@ private val tradeLogger = KotlinLogging.logger("TRADES")
 class TradeExecutionService(
     private val marketTickPort: MarketTickPort,
     private val orderExecutionPort: OrderExecutionPort,
-    private val spreadPort: SpreadPort,
+    private val spreadPort: BullPutSpreadPort,
     private val validator: PreTradeValidator,
     private val config: ScannerConfig,
     private val clock: Clock,

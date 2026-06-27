@@ -5,7 +5,7 @@ import cz.solvina.options.domain.features.execution.model.ExecutionOutcome
 import cz.solvina.options.domain.features.execution.model.TradeExecutionRequest
 import cz.solvina.options.domain.features.order.OrderExecutionPort
 import cz.solvina.options.domain.features.scanner.ScannerConfig
-import cz.solvina.options.domain.features.spread.SpreadPort
+import cz.solvina.options.domain.features.spread.BullPutSpreadPort
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -18,7 +18,7 @@ private val tradeLogger = KotlinLogging.logger("TRADES")
 
 @Component
 class PreTradeValidator(
-    private val spreadPort: SpreadPort,
+    private val spreadPort: BullPutSpreadPort,
     private val orderExecutionPort: OrderExecutionPort,
     private val accountPort: AccountPort,
     private val config: ScannerConfig,

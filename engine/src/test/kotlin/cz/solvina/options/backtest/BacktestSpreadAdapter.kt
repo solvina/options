@@ -1,7 +1,7 @@
 package cz.solvina.options.backtest
 
+import cz.solvina.options.domain.features.spread.BullPutSpreadPort
 import cz.solvina.options.domain.features.spread.SpreadPage
-import cz.solvina.options.domain.features.spread.SpreadPort
 import cz.solvina.options.domain.features.spread.model.BullPutSpread
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
 import cz.solvina.options.domain.models.Symbol
@@ -15,7 +15,7 @@ import java.util.UUID
  * the production JPA adapter so [ScannerService] and [SpreadManagementService]
  * run unchanged.
  */
-class BacktestSpreadAdapter : SpreadPort {
+class BacktestSpreadAdapter : BullPutSpreadPort {
     private val store = mutableListOf<BullPutSpread>()
 
     override suspend fun save(spread: BullPutSpread): BullPutSpread {

@@ -12,8 +12,8 @@ import java.time.LocalDate
 import java.util.UUID
 
 @Entity
-@Table(name = "spread_positions")
-class SpreadPositionEntity(
+@Table(name = "bull_put_spreads")
+class BullPutSpreadEntity(
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     var id: UUID? = null,

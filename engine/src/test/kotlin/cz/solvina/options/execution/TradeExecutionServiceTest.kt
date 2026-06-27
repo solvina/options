@@ -13,7 +13,7 @@ import cz.solvina.options.domain.features.order.LegQuotes
 import cz.solvina.options.domain.features.order.OrderExecutionPort
 import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.features.scanner.ScannerConfig
-import cz.solvina.options.domain.features.spread.SpreadPort
+import cz.solvina.options.domain.features.spread.BullPutSpreadPort
 import cz.solvina.options.domain.features.spread.model.BullPutSpread
 import cz.solvina.options.domain.features.spread.model.SpreadLeg
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
@@ -106,7 +106,7 @@ class TradeExecutionServiceTest {
     private fun TestScope.buildService(
         marketTickPort: MarketTickPort,
         orderExecutionPort: OrderExecutionPort,
-        spreadPort: SpreadPort = InMemorySpreadPort(),
+        spreadPort: BullPutSpreadPort = InMemoryBullPutSpreadPort(),
         accountPort: AccountPort = buildAccountPort(),
         config: ScannerConfig = baseConfig,
     ) = TradeExecutionService(
@@ -190,7 +190,7 @@ class TradeExecutionServiceTest {
         runTest {
             // Seed maxOpenSpreads OPEN spreads on *other* symbols so the per-symbol exposure check
             // passes but the global cap is already full. A new SPY entry must be rejected (C1).
-            val spreadPort = InMemorySpreadPort()
+            val spreadPort = InMemoryBullPutSpreadPort()
             spreadPort.save(buildOpenSpread().copy(id = UUID.randomUUID(), symbol = Symbol("AAA")))
             spreadPort.save(buildOpenSpread().copy(id = UUID.randomUUID(), symbol = Symbol("BBB")))
 
@@ -407,7 +407,7 @@ class TradeExecutionServiceTest {
     fun `exposure_rejects_duplicate`() =
         runTest {
             val spreadPort =
-                object : InMemorySpreadPort() {
+                object : InMemoryBullPutSpreadPort() {
                     override suspend fun findOpen() = listOf(buildOpenSpread())
                 }
 
@@ -562,7 +562,7 @@ class TradeExecutionServiceTest {
         }
     }
 
-    private open inner class InMemorySpreadPort : SpreadPort {
+    private open inner class InMemoryBullPutSpreadPort : BullPutSpreadPort {
         private val store = mutableListOf<BullPutSpread>()
 
         override suspend fun save(spread: BullPutSpread): BullPutSpread {

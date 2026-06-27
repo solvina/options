@@ -11,7 +11,7 @@ import java.time.temporal.ChronoUnit
 
 @Service
 class SpreadAnalyticsService(
-    private val spreadPort: SpreadPort,
+    private val spreadPort: BullPutSpreadPort,
 ) {
     data class Analytics(
         val summary: Summary,

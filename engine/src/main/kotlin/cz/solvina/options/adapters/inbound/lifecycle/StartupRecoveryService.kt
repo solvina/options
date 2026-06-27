@@ -8,7 +8,7 @@ import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import cz.solvina.options.domain.features.account.AccountPosition
 import cz.solvina.options.domain.features.account.PositionsPort
 import cz.solvina.options.domain.features.order.OrderStatus
-import cz.solvina.options.domain.features.spread.SpreadPort
+import cz.solvina.options.domain.features.spread.BullPutSpreadPort
 import cz.solvina.options.domain.features.spread.model.BullPutSpread
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -24,7 +24,7 @@ private val logger = KotlinLogging.logger {}
 
 @Component
 class StartupRecoveryService(
-    private val spreadPort: SpreadPort,
+    private val spreadPort: BullPutSpreadPort,
     private val orderRegistry: IbkrOrderRegistry,
     private val openOrdersAdapter: IbkrOpenOrdersAdapter,
     private val client: EClientSocket,

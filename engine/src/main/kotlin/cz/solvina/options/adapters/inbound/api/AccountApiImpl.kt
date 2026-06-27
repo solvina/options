@@ -16,7 +16,7 @@ import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import cz.solvina.options.domain.features.account.AccountPort
 import cz.solvina.options.domain.features.account.AccountPosition
 import cz.solvina.options.domain.features.account.PositionsPort
-import cz.solvina.options.domain.features.spread.SpreadPort
+import cz.solvina.options.domain.features.spread.BullPutSpreadPort
 import cz.solvina.options.domain.features.spread.model.BullPutSpread
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.http.ResponseEntity
@@ -34,7 +34,7 @@ private val logger = KotlinLogging.logger {}
 @RequestMapping
 class AccountApiImpl(
     private val accountPort: AccountPort,
-    private val spreadPort: SpreadPort,
+    private val spreadPort: BullPutSpreadPort,
     private val positionsPort: PositionsPort,
     private val openOrdersAdapter: IbkrOpenOrdersAdapter,
     private val client: EClientSocket,

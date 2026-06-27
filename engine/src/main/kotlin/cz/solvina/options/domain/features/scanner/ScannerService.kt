@@ -2,7 +2,7 @@ package cz.solvina.options.domain.features.scanner
 
 import cz.solvina.options.domain.features.account.AccountPort
 import cz.solvina.options.domain.features.execution.TradeExecutionPort
-import cz.solvina.options.domain.features.spread.SpreadPort
+import cz.solvina.options.domain.features.spread.BullPutSpreadPort
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
 import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.models.Money
@@ -22,10 +22,10 @@ private val logger = KotlinLogging.logger {}
 @Service
 class ScannerService(
     private val universePort: UniversePort,
-    private val candidateSelector: ScanCandidateSelector,
+    private val candidateSelector: BullPutCandidateSelector,
     private val accountPort: AccountPort,
     private val executionPort: TradeExecutionPort,
-    private val spreadPort: SpreadPort,
+    private val spreadPort: BullPutSpreadPort,
     private val config: ScannerConfig,
     private val clock: Clock,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),

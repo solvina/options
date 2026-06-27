@@ -32,7 +32,7 @@ private val tradeLogger = KotlinLogging.logger("TRADES")
 
 @Service
 class SpreadManagementService(
-    private val spreadPort: SpreadPort,
+    private val spreadPort: BullPutSpreadPort,
     private val marketDataPort: MarketDataPort,
     private val orderPort: OrderPort,
     private val universePort: UniversePort,
