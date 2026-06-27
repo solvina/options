@@ -14,6 +14,7 @@ import cz.solvina.options.domain.features.spread.BearCallSpreadPort
 import cz.solvina.options.domain.features.spread.BullPutSpreadPort
 import cz.solvina.options.domain.features.spread.SpreadCloserRegistry
 import cz.solvina.options.domain.features.spread.SpreadManagementService
+import cz.solvina.options.domain.features.spread.model.BearCallSpread
 import cz.solvina.options.domain.features.spread.model.BullPutSpread
 import cz.solvina.options.domain.features.spread.model.Spread
 import cz.solvina.options.domain.features.spread.model.SpreadLeg
@@ -32,6 +33,7 @@ import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
 import cz.solvina.options.domain.models.OptionType
 import cz.solvina.options.domain.models.Symbol
+import cz.solvina.options.testutil.InMemoryBearCallSpreadPort
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -442,6 +444,64 @@ class SpreadManagementServiceTest {
             coVerify { orderPort.placeMarketOrder(soldContract, LegAction.BUY, any()) }
             assertEquals(SpreadStatus.CLOSED_MANUAL, updated.captured.status)
             assertEquals("SEAM_EXIT", updated.captured.closeReason)
+        }
+
+    // -------------------------------------------------------------------------
+    // Multi-strategy: bear call is loaded and closed via its own closer
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `bear call spread is managed and closed at take-profit via the bear-call closer`() =
+        runTest {
+            // A real bear-call position (CALL legs, short 520 / long 525) seeded in its own port —
+            // checkExits must load it via the closer registry and close it through BearCallSpreadCloser.
+            val bearPort = InMemoryBearCallSpreadPort()
+            val soldCall = OptionContract(symbol, expiry, BigDecimal("520"), OptionType.CALL)
+            val boughtCall = OptionContract(symbol, expiry, BigDecimal("525"), OptionType.CALL)
+            val bearSpread =
+                BearCallSpread(
+                    id = UUID.randomUUID(),
+                    symbol = symbol,
+                    soldLeg = SpreadLeg(soldCall, LegAction.SELL, Money(BigDecimal("1.50")), orderId = 1),
+                    boughtLeg = SpreadLeg(boughtCall, LegAction.BUY, Money(BigDecimal("0.50")), orderId = 2),
+                    creditPerShare = BigDecimal("1.00"),
+                    maxRiskPerShare = BigDecimal("4.00"),
+                    status = SpreadStatus.OPEN,
+                    ivRankAtEntry = 50.0,
+                    underlyingPriceAtEntry = BigDecimal("500"),
+                    openedAt = Instant.now(clockAtEntry),
+                )
+            bearPort.save(bearSpread)
+
+            val marketDataPort = mockk<MarketDataPort>()
+            // spread value = 0.40 − 0.05 = 0.35 ≤ TP threshold (credit $1.00 × 0.50 = 0.50) → take-profit.
+            coEvery { marketDataPort.getOptionMidLive(soldCall) } returns Money(BigDecimal("0.40"))
+            coEvery { marketDataPort.getOptionMidLive(boughtCall) } returns Money(BigDecimal("0.05"))
+            coEvery { marketDataPort.getUnderlyingPrice(any()) } returns Money(BigDecimal("500"))
+
+            val closers =
+                SpreadCloserRegistry(
+                    listOf(
+                        BullPutSpreadCloser(mockk<BullPutSpreadPort>(relaxed = true), clockAtEntry),
+                        BearCallSpreadCloser(bearPort, clockAtEntry),
+                    ),
+                )
+
+            SpreadManagementService(
+                closers = closers,
+                marketDataPort = marketDataPort,
+                orderPort = mockk(relaxed = true),
+                universePort = universePort,
+                volatilityPort = mockk(relaxed = true),
+                executionPort = mockk(relaxed = true),
+                config = config,
+                clock = clockAtEntry,
+                quoteHealthService = mockk(relaxed = true),
+                strategyRegistry = strategyRegistry,
+            ).checkExits()
+
+            // Persisted back through the bear-call port as a profit close.
+            assertEquals(SpreadStatus.CLOSED_PROFIT, bearPort.findById(bearSpread.id!!)?.status)
         }
 
     // -------------------------------------------------------------------------
