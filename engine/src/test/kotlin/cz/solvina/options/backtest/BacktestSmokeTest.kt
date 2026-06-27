@@ -2,6 +2,8 @@ package cz.solvina.options.backtest
 
 import cz.solvina.options.domain.features.execution.SpreadEntryWriterRegistry
 import cz.solvina.options.domain.features.execution.TradeExecutionService
+import cz.solvina.options.domain.features.scanner.BearCallCandidateSelector
+import cz.solvina.options.domain.features.scanner.BearCallScannerConfig
 import cz.solvina.options.domain.features.scanner.BullPutCandidateSelector
 import cz.solvina.options.domain.features.scanner.ScannerConfig
 import cz.solvina.options.domain.features.scanner.ScannerService
@@ -149,10 +151,22 @@ class BacktestSmokeTest {
                 clock = clock,
             )
 
+        val bearCallConfig = BearCallScannerConfig()
+        val bearCallSelector =
+            BearCallCandidateSelector(
+                volatilityPort = ivRankService,
+                marketDataPort = marketAdapter,
+                optionChainPort = optionChainAdapter,
+                config = bearCallConfig,
+                clock = clock,
+            )
+
         val scanner =
             ScannerService(
                 universePort = universePort,
-                candidateSelector = candidateSelector,
+                bullPutSelector = candidateSelector,
+                bearCallSelector = bearCallSelector,
+                bearCallConfig = bearCallConfig,
                 accountPort = accountAdapter,
                 executionPort = executionService,
                 spreadQuery = spreadQuery,

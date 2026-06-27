@@ -2,6 +2,7 @@ package cz.solvina.options.domain.features.scanner
 
 import cz.solvina.options.domain.features.account.AccountPort
 import cz.solvina.options.domain.features.execution.TradeExecutionPort
+import cz.solvina.options.domain.features.execution.model.TradeExecutionRequest
 import cz.solvina.options.domain.features.spread.SpreadQueryFacade
 import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.models.Money
@@ -21,7 +22,9 @@ private val logger = KotlinLogging.logger {}
 @Service
 class ScannerService(
     private val universePort: UniversePort,
-    private val candidateSelector: BullPutCandidateSelector,
+    private val bullPutSelector: BullPutCandidateSelector,
+    private val bearCallSelector: BearCallCandidateSelector,
+    private val bearCallConfig: BearCallScannerConfig,
     private val accountPort: AccountPort,
     private val executionPort: TradeExecutionPort,
     private val spreadQuery: SpreadQueryFacade,
@@ -80,7 +83,21 @@ class ScannerService(
         symbol: Symbol,
         totalCapital: Money,
     ) {
-        val request = candidateSelector.select(symbol, totalCapital) ?: return
+        // Bull put has priority; at most one entry per symbol per scan (the cross-strategy dedup in
+        // scan() already prevents a second entry on a symbol that holds any open/in-flight spread).
+        bullPutSelector.select(symbol, totalCapital)?.let {
+            launchEntry(symbol, it)
+            return
+        }
+        if (bearCallConfig.enabled) {
+            bearCallSelector.select(symbol, totalCapital)?.let { launchEntry(symbol, it) }
+        }
+    }
+
+    private fun launchEntry(
+        symbol: Symbol,
+        request: TradeExecutionRequest,
+    ) {
         ivRanksSnapshot[symbol.value] = request.ivRankAtEntry
         scope.launch { executionPort.execute(request) }
     }

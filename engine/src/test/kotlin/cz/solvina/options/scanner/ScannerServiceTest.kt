@@ -6,6 +6,8 @@ import cz.solvina.options.domain.features.execution.TradeExecutionPort
 import cz.solvina.options.domain.features.execution.model.ExecutionOutcome
 import cz.solvina.options.domain.features.execution.model.TradeExecutionRequest
 import cz.solvina.options.domain.features.execution.model.TradeExecutionResult
+import cz.solvina.options.domain.features.scanner.BearCallCandidateSelector
+import cz.solvina.options.domain.features.scanner.BearCallScannerConfig
 import cz.solvina.options.domain.features.scanner.BullPutCandidateSelector
 import cz.solvina.options.domain.features.scanner.ScannerConfig
 import cz.solvina.options.domain.features.scanner.ScannerService
@@ -178,6 +180,49 @@ class ScannerServiceTest {
         }
 
     // -------------------------------------------------------------------------
+    // Multi-strategy: bear call
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `bear call is scanned when enabled and bull put yields no candidate`() =
+        runTest {
+            val executionPort = FakeExecutionPort()
+            val bearSelector = mockk<BearCallCandidateSelector>()
+            val scanner =
+                buildScanner(
+                    executionPort = executionPort,
+                    watchlist = listOf(spy),
+                    bearCallSelector = bearSelector,
+                    bearCallConfig = BearCallScannerConfig(enabled = true),
+                )
+            coEvery { selector.select(spy, any()) } returns null
+            coEvery { bearSelector.select(spy, any()) } returns dummyRequest
+
+            scanner.scan()
+
+            coVerify(exactly = 1) { bearSelector.select(spy, any()) }
+            Thread.sleep(500)
+            assertEquals(1, executionPort.executions.size)
+        }
+
+    @Test
+    fun `bear call selector is not called when bear call is disabled`() =
+        runTest {
+            val bearSelector = mockk<BearCallCandidateSelector>(relaxed = true)
+            val scanner =
+                buildScanner(
+                    watchlist = listOf(spy),
+                    bearCallSelector = bearSelector,
+                    bearCallConfig = BearCallScannerConfig(enabled = false),
+                )
+            coEvery { selector.select(spy, any()) } returns null
+
+            scanner.scan()
+
+            coVerify(exactly = 0) { bearSelector.select(any(), any()) }
+        }
+
+    // -------------------------------------------------------------------------
     // Test infrastructure
     // -------------------------------------------------------------------------
 
@@ -185,6 +230,8 @@ class ScannerServiceTest {
         spreadPort: BullPutSpreadPort = BullPutSpreadPortStub(),
         executionPort: TradeExecutionPort = FakeExecutionPort(),
         watchlist: List<Symbol> = listOf(spy, qqq),
+        bearCallSelector: BearCallCandidateSelector = mockk(relaxed = true),
+        bearCallConfig: BearCallScannerConfig = BearCallScannerConfig(),
         scope: CoroutineScope = CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO),
     ): ScannerService {
         val universePort =
@@ -230,7 +277,9 @@ class ScannerServiceTest {
 
         return ScannerService(
             universePort = universePort,
-            candidateSelector = selector,
+            bullPutSelector = selector,
+            bearCallSelector = bearCallSelector,
+            bearCallConfig = bearCallConfig,
             accountPort = accountPort,
             executionPort = executionPort,
             spreadQuery = SpreadQueryFacade(spreadPort, InMemoryBearCallSpreadPort()),
