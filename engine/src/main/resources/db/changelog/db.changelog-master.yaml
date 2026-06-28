@@ -31,3 +31,5 @@ databaseChangeLog:
       file: db/changelog/v20__rename_spread_positions_to_bull_put_spreads.yaml
   - include:
       file: db/changelog/v21__bear_call_spreads.yaml
+  - include:
+      file: db/changelog/v22__instrument_dividend_data.yaml

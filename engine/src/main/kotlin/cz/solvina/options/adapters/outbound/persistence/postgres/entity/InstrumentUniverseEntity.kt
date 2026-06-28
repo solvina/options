@@ -5,6 +5,7 @@ import jakarta.persistence.Entity
 import jakarta.persistence.Id
 import jakarta.persistence.Table
 import java.math.BigDecimal
+import java.time.LocalDate
 
 @Entity
 @Table(name = "instrument_universe")
@@ -42,6 +43,10 @@ class InstrumentUniverseEntity(
     var stopLossPercent: BigDecimal? = null,
     @Column(name = "time_profit_dte")
     var timeProfitDte: Int? = null,
+    @Column(name = "ex_dividend_date")
+    var exDividendDate: LocalDate? = null,
+    @Column(name = "next_dividend_amount", precision = 12, scale = 4)
+    var nextDividendAmount: BigDecimal? = null,
     @Column(name = "notes", length = 500)
     var notes: String? = null,
 )

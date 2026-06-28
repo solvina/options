@@ -1,0 +1,18 @@
+databaseChangeLog:
+  - changeSet:
+      id: v22-instrument-dividend-data
+      author: claude
+      comment: >-
+        Bear-call dividend assignment protection: store ex-dividend date and the upcoming per-share
+        dividend amount on the universe so BearCallStrategy can read real data. Nullable; populated
+        by the dividend-data refresh job (future) or operator entry. Matches InstrumentUniverseEntity.
+      changes:
+        - addColumn:
+            tableName: instrument_universe
+            columns:
+              - column:
+                  name: ex_dividend_date
+                  type: DATE
+              - column:
+                  name: next_dividend_amount
+                  type: NUMERIC(12, 4)

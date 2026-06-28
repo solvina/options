@@ -102,6 +102,8 @@ class UniversePersistenceAdapter(
             takeProfitPercent = takeProfitPercent?.toDouble(),
             stopLossPercent = stopLossPercent?.toDouble(),
             timeProfitDte = timeProfitDte,
+            exDividendDate = exDividendDate,
+            nextDividendAmount = nextDividendAmount,
             notes = notes,
         )
 
@@ -123,6 +125,8 @@ class UniversePersistenceAdapter(
             takeProfitPercent = takeProfitPercent?.toBigDecimal(),
             stopLossPercent = stopLossPercent?.toBigDecimal(),
             timeProfitDte = timeProfitDte,
+            exDividendDate = exDividendDate,
+            nextDividendAmount = nextDividendAmount,
             notes = notes,
         )
 
