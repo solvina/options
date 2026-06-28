@@ -31,6 +31,7 @@ import cz.solvina.options.adapters.outbound.ibkr.account.IbkrPnlRegistry
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrPositionsRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrAccountRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrContractRegistry
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrFundamentalDataRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrHistoricalDataRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
@@ -99,6 +100,7 @@ class IbkrEWrapper(
     private val positionsRegistry: IbkrPositionsRegistry,
     private val openOrdersRegistry: IbkrOpenOrdersRegistry,
     private val pnlRegistry: IbkrPnlRegistry,
+    private val fundamentalRegistry: IbkrFundamentalDataRegistry,
 ) : EWrapper {
     override fun tickPrice(
         tickerId: Int,
@@ -489,7 +491,8 @@ class IbkrEWrapper(
         reqId: Int,
         data: String,
     ) {
-        logger.debug { "fundamentalData: reqId=$reqId" }
+        logger.debug { "fundamentalData: reqId=$reqId len=${data.length}" }
+        fundamentalRegistry.onFundamentalData(reqId, data)
     }
 
     override fun deltaNeutralValidation(
@@ -606,6 +609,7 @@ class IbkrEWrapper(
                 contractRegistry.onError(id, errorCode, errorMsg)
                 marketDataRegistry.onError(id, errorCode, errorMsg)
                 orderRegistry.onError(id, errorCode, errorMsg)
+                fundamentalRegistry.onError(id, errorCode, errorMsg)
             }
         }
     }
