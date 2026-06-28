@@ -39,7 +39,10 @@ class DividendDataProbe(
                     if (xml == null) {
                         logger.info { "[DIVIDEND PROBE] $symbol $reportType -> NO DATA (error/timeout; see warnings above)" }
                     } else {
-                        logger.info { "[DIVIDEND PROBE] $symbol $reportType -> len=${xml.length}\n${xml.take(1200)}" }
+                        // Log the dividend-relevant slice (the section we need), not just the head.
+                        val idx = xml.indexOf("Dividend", ignoreCase = true)
+                        val snippet = if (idx >= 0) xml.substring(idx, minOf(idx + 1800, xml.length)) else xml.take(600)
+                        logger.info { "[DIVIDEND PROBE] $symbol $reportType -> len=${xml.length} dividendSection:\n$snippet" }
                     }
                 }
             }
