@@ -26,11 +26,13 @@ import com.ib.client.SoftDollarTier
 import com.ib.client.TickAttrib
 import com.ib.client.TickAttribBidAsk
 import com.ib.client.TickAttribLast
+import com.ib.client.TickType
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOpenOrdersRegistry
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrPnlRegistry
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrPositionsRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrAccountRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrContractRegistry
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrDividendTickRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrFundamentalDataRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrHistoricalDataRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
@@ -101,6 +103,7 @@ class IbkrEWrapper(
     private val openOrdersRegistry: IbkrOpenOrdersRegistry,
     private val pnlRegistry: IbkrPnlRegistry,
     private val fundamentalRegistry: IbkrFundamentalDataRegistry,
+    private val dividendTickRegistry: IbkrDividendTickRegistry,
 ) : EWrapper {
     override fun tickPrice(
         tickerId: Int,
@@ -167,6 +170,9 @@ class IbkrEWrapper(
         value: String,
     ) {
         logger.trace { "tickString: tickerId=$tickerId, tickType=$tickType" }
+        if (tickType == TickType.IB_DIVIDENDS.index()) {
+            dividendTickRegistry.onDividendTick(tickerId, value)
+        }
     }
 
     override fun tickEFP(
@@ -610,6 +616,7 @@ class IbkrEWrapper(
                 marketDataRegistry.onError(id, errorCode, errorMsg)
                 orderRegistry.onError(id, errorCode, errorMsg)
                 fundamentalRegistry.onError(id, errorCode, errorMsg)
+                dividendTickRegistry.onError(id, errorCode, errorMsg)
             }
         }
     }

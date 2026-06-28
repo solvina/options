@@ -1,6 +1,6 @@
 package cz.solvina.options.adapters.inbound.jobs
 
-import cz.solvina.options.adapters.outbound.ibkr.market.IbkrFundamentalDataAdapter
+import cz.solvina.options.adapters.outbound.ibkr.market.IbkrDividendTickAdapter
 import cz.solvina.options.domain.features.universe.UniversePort
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.runBlocking
@@ -21,30 +21,23 @@ private val logger = KotlinLogging.logger {}
  */
 @Component
 class DividendDataProbe(
-    private val fundamentalDataAdapter: IbkrFundamentalDataAdapter,
+    private val dividendTickAdapter: IbkrDividendTickAdapter,
     private val universePort: UniversePort,
 ) {
     @Scheduled(initialDelay = 180_000, fixedDelay = Long.MAX_VALUE)
     fun probe() =
         runBlocking {
+            // Probe the IB_DIVIDENDS streaming tick (456): "trailing12m,forward12m,nextDate,nextAmount".
+            // This is the no-extra-entitlement path for the forward ex-dividend date + amount.
             val usSymbols =
                 universePort
                     .getWatchlist()
                     .filter { runCatching { universePort.getMarketSchedule(it).session == "US" }.getOrDefault(false) }
-                    .take(2)
-            logger.info { "[DIVIDEND PROBE] probing ${usSymbols.map { it.value }} for fundamental data" }
+                    .take(4)
+            logger.info { "[DIVIDEND PROBE] probing IB_DIVIDENDS tick(456) for ${usSymbols.map { it.value }}" }
             for (symbol in usSymbols) {
-                for (reportType in listOf("ReportSnapshot", "ReportsFinSummary", "CalendarReport")) {
-                    val xml = fundamentalDataAdapter.fetchFundamentalXml(symbol, reportType)
-                    if (xml == null) {
-                        logger.info { "[DIVIDEND PROBE] $symbol $reportType -> NO DATA (error/timeout; see warnings above)" }
-                    } else {
-                        // Log the dividend-relevant slice (the section we need), not just the head.
-                        val idx = xml.indexOf("Dividend", ignoreCase = true)
-                        val snippet = if (idx >= 0) xml.substring(idx, minOf(idx + 1800, xml.length)) else xml.take(600)
-                        logger.info { "[DIVIDEND PROBE] $symbol $reportType -> len=${xml.length} dividendSection:\n$snippet" }
-                    }
-                }
+                val tick = dividendTickAdapter.fetchDividendTick(symbol)
+                logger.info { "[DIVIDEND PROBE] $symbol IB_DIVIDENDS(456) -> ${tick ?: "NO DATA (error/timeout)"}" }
             }
         }
 }
