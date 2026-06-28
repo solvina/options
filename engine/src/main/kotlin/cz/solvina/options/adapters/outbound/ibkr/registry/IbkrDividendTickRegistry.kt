@@ -4,6 +4,11 @@ import kotlinx.coroutines.CompletableDeferred
 import org.springframework.stereotype.Component
 import java.util.concurrent.ConcurrentHashMap
 
+/** Thrown when IBKR rejects a dividend-tick market-data request. */
+class DividendTickException(
+    message: String,
+) : Exception(message)
+
 /**
  * Correlates `reqMktData(genericTickList="456")` requests with the IB_DIVIDENDS tickString response
  * (field 59), which carries "trailing-12m,forward-12m,nextDividendDate,nextAmount" — the forward
@@ -36,6 +41,6 @@ class IbkrDividendTickRegistry(
         code: Int,
         msg: String,
     ) {
-        pending.remove(reqId)?.completeExceptionally(FundamentalDataException("IBKR error [code=$code]: $msg"))
+        pending.remove(reqId)?.completeExceptionally(DividendTickException("IBKR error [code=$code]: $msg"))
     }
 }
