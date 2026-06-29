@@ -1,6 +1,14 @@
 # Multi-Strategy Spread Framework — Bear Call as Strategy #2 — 2026-06-26 (rev. 3)
 
-**Status**: Phase 0 (slice 1) shipped; remainder pre-implementation
+**Status (updated 2026-06-29)**: ✅ **BEAR-CALL BUILD COMPLETE** — Phases 0–4 incl. the full dividend
+subsystem are shipped & live on paper (`master` @ `57ec4bd`), all behind clean seams, bear call
+`enabled: false`. Lifecycle works end to end: scan (ex-div entry filter) → select → strategy-routed
+execution → strategy-aware management → dividend-aware exit; ex-dividend data auto-refreshed daily
+from the IBKR **IB_DIVIDENDS tick (genericTick 456)** — no extra subscription, works weekends
+(validated: 66/108 universe instruments populated with ex-date + amount).
+Remaining (choices, not blockers): **go-live** (spot-check IBKR "next dividend date" = ex vs payable,
+then flip `scanner.bear-call.enabled: true` and validate paper entries) · **Phase 5** (API/UI +
+deferred `/spreads`→`/bull-put-spreads` endpoint rename + `scanner.*`→`scanner.bull-put.*` config reshape).
 **Target**: After bull put validation; bear call is the first *new* strategy on a clean framework
 **Effort**: ~4–5 weeks engine + data; UI/Greeks dashboard tracked separately
 
@@ -16,17 +24,37 @@
 
 ---
 
-## Progress so far (rev. 3)
+## Progress so far (updated 2026-06-27)
 
-- ✅ **Phase 0, slice 1 — shipped & deployed (`97f14b6`, live on paper since 19:28 CEST 2026-06-26).**
-  Fixed the orphan-creating `positionMatchesLeg` put/`"P"` mismatch (now derives the right from the
-  leg's own `contract.type.ibkrCode`, correct for puts *and* calls) and **restored the engine test
-  suite to compiling/green** (it had not compiled since the Phase 1 monitoring commit `1d542d5`).
-  This was the prerequisite that makes the rest of Phase 0 safe to attempt.
+All shipped increments are committed, pushed, deployed to the paper account, and validated on a
+clean boot. Each was behaviour-preserving for the live bull-put strategy; bear call ships
+`enabled: false` throughout, so nothing bear-call runs in production yet.
+
+- ✅ **Phase 0·1 (`97f14b6`)** — fixed the orphan-creating `positionMatchesLeg` put/`"P"` mismatch
+  (derives the right from `contract.type.ibkrCode`); restored the test suite to green.
+- ✅ **Phase 0·2 (`0391432`)** — `Spread` sealed interface + `StrategyId` + `SpreadStrategy` /
+  `SpreadStrategyRegistry`; `BullPutStrategy` registered; `SpreadManagementService` consults the
+  strategy-exit seam (bull put returns null → unchanged).
+- ✅ **Phase 0·3 (`8607f93`)** — naming-mandate rename (`BullPutSpreadPort`,
+  `BullPutCandidateSelector`, `BullPutSpread{Entity,Repository}`, `BullPutSpreadPersistenceAdapter`);
+  table `spread_positions` → `bull_put_spreads` via Liquibase `v20`.
+- ✅ **Phase 1 (`b502dd7`)** — `BearCallSpread : Spread` + `bear_call_spreads` table (Liquibase
+  `v21`) + entity/repo/port/adapter (legs mapped as CALLs, `exDividendDate`).
+- ✅ **Phase 2·2a (`ed4037e`)** — `scanner.bear-call` config + `BearCallCandidateSelector`
+  (CALL filter, sell lower / buy higher, real-credit, no skew haircut).
+- ✅ **Phase 2·2b (`4e6dd50`)** — `SpreadEntryWriter` seam: `TradeExecutionService` routes
+  persistence by `request.strategyId` (bull-put + bear-call writers); execution loop is now
+  strategy-agnostic.
+- ✅ **Phase 4 (`773094b`)** — `SpreadQueryFacade`: the shared "max 5 total" cap + entry dedup now
+  count across bull puts + bear calls, wired at all three gate sites.
+
+**Remaining:** Phase 2·2c (wire `BearCallCandidateSelector` into `ScannerService` — small, the
+facade already handles cross-strategy dedup/cap) · Phase 3 (dividend subsystem) · Phase 5 (API/UI)
+· then flip `enabled: true` and validate on paper.
+
 - 📌 **Prod runs live PostgreSQL** (`options-db-1`, postgres:16 on :5433, `ddl-auto: validate`,
-  Liquibase, 18 changesets applied). CLAUDE.md's "not running in production" note is stale. Every
-  schema change below MUST be a Liquibase changeset that exactly matches the JPA entities, or the
-  engine fails to boot. See [[prod_postgres_is_live]].
+  Liquibase). CLAUDE.md's "not running in production" note is stale. Every schema change is a
+  Liquibase changeset matching the JPA entities, or the engine fails to boot. See [[prod_postgres_is_live]].
 
 ---
 
