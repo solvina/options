@@ -11,6 +11,11 @@ scanner:
   # Format: seconds minutes hours day-of-month month day-of-week
   cron: "0 */15 9-22 * * MON-FRI"
   option-params-cache-ttl-hours: 1
+  # Bear call strategy go-live (paper). Other params use BearCallScannerConfig defaults
+  # (target-delta 0.30, iv-rank 45, min-credit $0.40, $5 width, US-only dividend protection).
+  # Shares the portfolio cap (max 5 spreads total across bull put + bear call).
+  bear-call:
+    enabled: true
 
 ibkr:
   connection:
