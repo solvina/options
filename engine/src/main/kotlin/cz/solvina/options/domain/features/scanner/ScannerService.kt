@@ -3,7 +3,9 @@ package cz.solvina.options.domain.features.scanner
 import cz.solvina.options.domain.features.account.AccountPort
 import cz.solvina.options.domain.features.execution.TradeExecutionPort
 import cz.solvina.options.domain.features.execution.model.TradeExecutionRequest
+import cz.solvina.options.domain.features.regime.DirectionalBias
 import cz.solvina.options.domain.features.regime.TrendRegimeService
+import cz.solvina.options.domain.features.regime.alignment
 import cz.solvina.options.domain.features.spread.SpreadQueryFacade
 import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.models.Money
@@ -19,6 +21,7 @@ import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 
 private val logger = KotlinLogging.logger {}
+private val tradeLogger = KotlinLogging.logger("TRADES")
 
 @Service
 class ScannerService(
@@ -86,27 +89,33 @@ class ScannerService(
         symbol: Symbol,
         totalCapital: Money,
     ) {
-        // Observe-only market regime: logged off the trading path (fire-and-forget, fail-open) so it
-        // never slows or influences entry selection. Directional gating is a later phase.
-        regimeService?.let { rs ->
-            scope.launch {
-                runCatching {
-                    val r = rs.regimeFor(symbol)
-                    logger.info {
-                        "[$symbol] market regime=${r.regime} (close=${r.lastClose} smaFast=${r.smaFast} smaSlow=${r.smaSlow})"
-                    }
-                }
-            }
-        }
-
         // Bull put has priority; at most one entry per symbol per scan (the cross-strategy dedup in
         // scan() already prevents a second entry on a symbol that holds any open/in-flight spread).
         bullPutSelector.select(symbol, totalCapital)?.let {
+            logRegimeAtDecision(symbol, "BULL_PUT", DirectionalBias.BULLISH)
             launchEntry(symbol, it)
             return
         }
         if (bearCallConfig.enabled) {
-            bearCallSelector.select(symbol, totalCapital)?.let { launchEntry(symbol, it) }
+            bearCallSelector.select(symbol, totalCapital)?.let {
+                logRegimeAtDecision(symbol, "BEAR_CALL", DirectionalBias.BEARISH)
+                launchEntry(symbol, it)
+            }
+        }
+    }
+
+    /**
+     * Observe-only: logs the cached market regime alongside a trade decision, flagged aligned vs
+     * OPPOSITE to the strategy's directional bias. Cache read only — no fetch, no trading influence.
+     */
+    private fun logRegimeAtDecision(
+        symbol: Symbol,
+        strategy: String,
+        bias: DirectionalBias,
+    ) {
+        val rs = regimeService?.regimeFor(symbol) ?: return
+        tradeLogger.info {
+            "REGIME $symbol  $strategy candidate  market=${rs.regime} (${alignment(rs.regime, bias)})  close=${rs.lastClose}"
         }
     }
 

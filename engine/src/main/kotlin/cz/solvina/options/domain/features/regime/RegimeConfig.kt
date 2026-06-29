@@ -11,5 +11,4 @@ data class RegimeConfig(
     val lookbackDays: Int = 250,
     val smaFast: Int = 50,
     val smaSlow: Int = 200,
-    val cacheTtlHours: Long = 24,
 )

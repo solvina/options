@@ -6,47 +6,36 @@ import kotlinx.coroutines.flow.toList
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.math.RoundingMode
-import java.time.Clock
-import java.time.Duration
-import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 
 private val logger = KotlinLogging.logger {}
 
 /**
- * Classifies a symbol's trend regime from daily closes (SMA-fast vs SMA-slow alignment). Cached per
- * symbol (regime is slow-moving) and fail-open: any error / insufficient history → NEUTRAL, so it
- * never blocks. Observe-only today; a later phase uses it to gate entries by directional bias.
+ * Classifies a symbol's trend regime from daily closes (SMA-fast vs SMA-slow alignment).
+ *
+ * [regimeFor] is a cache read only — it never fetches, so it's safe on the trading/scan path.
+ * [refresh] does the (rate-limited) price-history fetch and is driven off-path by the scheduled
+ * warmup. Fail-open: any error / insufficient history → NEUTRAL. Observe-only today.
  */
 @Service
 class TrendRegimeService(
     private val priceHistoryPort: PriceHistoryPort,
     private val config: RegimeConfig,
-    private val clock: Clock,
 ) {
-    private data class Cached(
-        val signal: RegimeSignal,
-        val at: Instant,
-    )
+    private val cache = ConcurrentHashMap<String, RegimeSignal>()
 
-    private val cache = ConcurrentHashMap<String, Cached>()
+    /** Latest cached regime, or NEUTRAL/unknown if not warmed yet. No fetch — never blocks. */
+    fun regimeFor(symbol: Symbol): RegimeSignal = cache[symbol.value] ?: RegimeSignal(TrendRegime.NEUTRAL, null, null, null)
 
-    suspend fun regimeFor(symbol: Symbol): RegimeSignal {
-        val now = Instant.now(clock)
-        cache[symbol.value]?.let { if (Duration.between(it.at, now).toHours() < config.cacheTtlHours) return it.signal }
-        val signal = compute(symbol)
-        cache[symbol.value] = Cached(signal, now)
-        return signal
-    }
-
-    private suspend fun compute(symbol: Symbol): RegimeSignal =
+    /** Fetch price history, classify, and cache. Called by the scheduled warmup (off the scan path). */
+    suspend fun refresh(symbol: Symbol): RegimeSignal =
         runCatching {
             val closes = priceHistoryPort.fetchDailyPriceBars(symbol, config.lookbackDays).toList().map { it.close }
             classifyRegime(closes, config.smaFast, config.smaSlow)
         }.getOrElse {
             logger.warn { "[$symbol] regime computation failed (fail-open NEUTRAL): ${it.message}" }
             RegimeSignal(TrendRegime.NEUTRAL, null, null, null)
-        }
+        }.also { cache[symbol.value] = it }
 }
 
 /**
