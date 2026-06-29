@@ -3,6 +3,7 @@ package cz.solvina.options.domain.features.scanner
 import cz.solvina.options.domain.features.account.AccountPort
 import cz.solvina.options.domain.features.execution.TradeExecutionPort
 import cz.solvina.options.domain.features.execution.model.TradeExecutionRequest
+import cz.solvina.options.domain.features.regime.TrendRegimeService
 import cz.solvina.options.domain.features.spread.SpreadQueryFacade
 import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.models.Money
@@ -30,6 +31,8 @@ class ScannerService(
     private val spreadQuery: SpreadQueryFacade,
     private val config: ScannerConfig,
     private val clock: Clock,
+    // Observe-only: logs each symbol's trend regime alongside scan decisions; does NOT gate trading.
+    private val regimeService: TrendRegimeService? = null,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
 ) : ScannerPort {
     private val ivRanksSnapshot = ConcurrentHashMap<String, Double>()
@@ -83,6 +86,19 @@ class ScannerService(
         symbol: Symbol,
         totalCapital: Money,
     ) {
+        // Observe-only market regime: logged off the trading path (fire-and-forget, fail-open) so it
+        // never slows or influences entry selection. Directional gating is a later phase.
+        regimeService?.let { rs ->
+            scope.launch {
+                runCatching {
+                    val r = rs.regimeFor(symbol)
+                    logger.info {
+                        "[$symbol] market regime=${r.regime} (close=${r.lastClose} smaFast=${r.smaFast} smaSlow=${r.smaSlow})"
+                    }
+                }
+            }
+        }
+
         // Bull put has priority; at most one entry per symbol per scan (the cross-strategy dedup in
         // scan() already prevents a second entry on a symbol that holds any open/in-flight spread).
         bullPutSelector.select(symbol, totalCapital)?.let {

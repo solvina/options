@@ -5,6 +5,7 @@ import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.IbkrRateLimiter
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrHistoricalDataRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.PendingBarsRequest
+import cz.solvina.options.domain.features.regime.PriceHistoryPort
 import cz.solvina.options.domain.features.volatility.HistoricalDataPort
 import cz.solvina.options.domain.models.HistoricalBar
 import cz.solvina.options.domain.models.Symbol
@@ -24,13 +25,14 @@ class IbkrHistoricalDataAdapter(
     private val client: EClientSocket,
     private val contractFactory: IbkrContractFactory,
     private val rateLimiter: IbkrRateLimiter,
-) : HistoricalDataPort {
+) : HistoricalDataPort,
+    PriceHistoryPort {
     override fun fetchDailyBars(
         symbol: Symbol,
         days: Int,
     ): Flow<HistoricalBar> = fetchBars(symbol, days, "OPTION_IMPLIED_VOLATILITY")
 
-    fun fetchDailyPriceBars(
+    override fun fetchDailyPriceBars(
         symbol: Symbol,
         days: Int,
     ): Flow<HistoricalBar> = fetchBars(symbol, days, "TRADES")
