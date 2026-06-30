@@ -21,32 +21,32 @@ export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends 
 /**
  * List spread positions
  */
-export const listSpreads = <ThrowOnError extends boolean = false>(options?: Options<ListSpreadsData, ThrowOnError>) => (options?.client ?? client).get<ListSpreadsResponses, unknown, ThrowOnError>({ url: '/spreads', ...options });
+export const listSpreads = <ThrowOnError extends boolean = false>(options?: Options<ListSpreadsData, ThrowOnError>) => (options?.client ?? client).get<ListSpreadsResponses, unknown, ThrowOnError>({ url: '/bull-put-spreads', ...options });
 
 /**
  * Aggregate performance analytics across all spread trades
  */
-export const getSpreadAnalytics = <ThrowOnError extends boolean = false>(options?: Options<GetSpreadAnalyticsData, ThrowOnError>) => (options?.client ?? client).get<GetSpreadAnalyticsResponses, unknown, ThrowOnError>({ url: '/spreads/analytics', ...options });
+export const getSpreadAnalytics = <ThrowOnError extends boolean = false>(options?: Options<GetSpreadAnalyticsData, ThrowOnError>) => (options?.client ?? client).get<GetSpreadAnalyticsResponses, unknown, ThrowOnError>({ url: '/bull-put-spreads/analytics', ...options });
 
 /**
  * Get a spread position by ID
  */
-export const getSpreadById = <ThrowOnError extends boolean = false>(options: Options<GetSpreadByIdData, ThrowOnError>) => (options.client ?? client).get<GetSpreadByIdResponses, GetSpreadByIdErrors, ThrowOnError>({ url: '/spreads/{id}', ...options });
+export const getSpreadById = <ThrowOnError extends boolean = false>(options: Options<GetSpreadByIdData, ThrowOnError>) => (options.client ?? client).get<GetSpreadByIdResponses, GetSpreadByIdErrors, ThrowOnError>({ url: '/bull-put-spreads/{id}', ...options });
 
 /**
  * Soft-close a spread at mid price (limit orders)
  */
-export const softCloseSpread = <ThrowOnError extends boolean = false>(options: Options<SoftCloseSpreadData, ThrowOnError>) => (options.client ?? client).post<SoftCloseSpreadResponses, SoftCloseSpreadErrors, ThrowOnError>({ url: '/spreads/{id}/close', ...options });
+export const softCloseSpread = <ThrowOnError extends boolean = false>(options: Options<SoftCloseSpreadData, ThrowOnError>) => (options.client ?? client).post<SoftCloseSpreadResponses, SoftCloseSpreadErrors, ThrowOnError>({ url: '/bull-put-spreads/{id}/close', ...options });
 
 /**
  * Recompute and persist current P&L for a spread (ad-hoc, hits market data)
  */
-export const refreshSpreadPnl = <ThrowOnError extends boolean = false>(options: Options<RefreshSpreadPnlData, ThrowOnError>) => (options.client ?? client).post<RefreshSpreadPnlResponses, RefreshSpreadPnlErrors, ThrowOnError>({ url: '/spreads/{id}/refresh-pnl', ...options });
+export const refreshSpreadPnl = <ThrowOnError extends boolean = false>(options: Options<RefreshSpreadPnlData, ThrowOnError>) => (options.client ?? client).post<RefreshSpreadPnlResponses, RefreshSpreadPnlErrors, ThrowOnError>({ url: '/bull-put-spreads/{id}/refresh-pnl', ...options });
 
 /**
  * Force-close a spread at market price
  */
-export const forceCloseSpread = <ThrowOnError extends boolean = false>(options: Options<ForceCloseSpreadData, ThrowOnError>) => (options.client ?? client).post<ForceCloseSpreadResponses, ForceCloseSpreadErrors, ThrowOnError>({ url: '/spreads/{id}/close-force', ...options });
+export const forceCloseSpread = <ThrowOnError extends boolean = false>(options: Options<ForceCloseSpreadData, ThrowOnError>) => (options.client ?? client).post<ForceCloseSpreadResponses, ForceCloseSpreadErrors, ThrowOnError>({ url: '/bull-put-spreads/{id}/close-force', ...options });
 
 /**
  * Trigger a manual scanner run

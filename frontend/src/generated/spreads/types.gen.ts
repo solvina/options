@@ -96,11 +96,11 @@ export type ListSpreadsData = {
     body?: never;
     path?: never;
     query?: {
-        status?: 'OPEN' | 'CLOSING' | 'CLOSED_PROFIT' | 'CLOSED_STOP' | 'CLOSED_TIME' | 'CLOSED_MANUAL';
+        status?: 'OPEN' | 'CLOSING' | 'CLOSED_PROFIT' | 'CLOSED_STOP' | 'CLOSED_TIME' | 'CLOSED_MANUAL' | 'CLOSED_REJECTED' | 'CLOSED_TIMEOUT';
         page?: number;
         size?: number;
     };
-    url: '/spreads';
+    url: '/bull-put-spreads';
 };
 
 export type ListSpreadsResponses = {
@@ -116,7 +116,7 @@ export type GetSpreadAnalyticsData = {
     body?: never;
     path?: never;
     query?: never;
-    url: '/spreads/analytics';
+    url: '/bull-put-spreads/analytics';
 };
 
 export type GetSpreadAnalyticsResponses = {
@@ -134,7 +134,7 @@ export type GetSpreadByIdData = {
         id: string;
     };
     query?: never;
-    url: '/spreads/{id}';
+    url: '/bull-put-spreads/{id}';
 };
 
 export type GetSpreadByIdErrors = {
@@ -159,7 +159,7 @@ export type SoftCloseSpreadData = {
         id: string;
     };
     query?: never;
-    url: '/spreads/{id}/close';
+    url: '/bull-put-spreads/{id}/close';
 };
 
 export type SoftCloseSpreadErrors = {
@@ -188,7 +188,7 @@ export type RefreshSpreadPnlData = {
         id: string;
     };
     query?: never;
-    url: '/spreads/{id}/refresh-pnl';
+    url: '/bull-put-spreads/{id}/refresh-pnl';
 };
 
 export type RefreshSpreadPnlErrors = {
@@ -213,7 +213,7 @@ export type ForceCloseSpreadData = {
         id: string;
     };
     query?: never;
-    url: '/spreads/{id}/close-force';
+    url: '/bull-put-spreads/{id}/close-force';
 };
 
 export type ForceCloseSpreadErrors = {
