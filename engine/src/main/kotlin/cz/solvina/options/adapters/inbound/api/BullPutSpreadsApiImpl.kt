@@ -6,7 +6,7 @@ import cz.solvina.options.domain.features.spread.SpreadAnalyticsService
 import cz.solvina.options.domain.features.spread.SpreadManagementService
 import cz.solvina.options.domain.features.spread.model.Spread
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
-import `cz.solvina.options.spreads`.api.SpreadsApi
+import `cz.solvina.options.spreads`.api.BullPutSpreadsApi
 import `cz.solvina.options.spreads`.dto.AnalyticsSummaryDto
 import `cz.solvina.options.spreads`.dto.IvBucketBreakdownDto
 import `cz.solvina.options.spreads`.dto.PagedSpreadsDto
@@ -27,12 +27,12 @@ private val logger = KotlinLogging.logger {}
 
 @RestController
 @RequestMapping
-class SpreadsApiImpl(
+class BullPutSpreadsApiImpl(
     private val spreadPort: BullPutSpreadPort,
     private val spreadManagementService: SpreadManagementService,
     private val spreadAnalyticsService: SpreadAnalyticsService,
     private val marketDataPort: MarketDataPort,
-) : SpreadsApi {
+) : BullPutSpreadsApi {
     override suspend fun listSpreads(
         status: String?,
         page: Int,
