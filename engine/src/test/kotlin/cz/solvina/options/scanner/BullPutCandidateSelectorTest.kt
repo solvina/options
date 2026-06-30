@@ -5,6 +5,7 @@ import cz.solvina.options.domain.features.market.OptionChainPort
 import cz.solvina.options.domain.features.market.model.OptionQuote
 import cz.solvina.options.domain.features.scanner.BullPutCandidateSelector
 import cz.solvina.options.domain.features.scanner.ScannerConfig
+import cz.solvina.options.domain.features.spread.model.StrategyId
 import cz.solvina.options.domain.features.universe.InstrumentConfig
 import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.features.volatility.VolatilityPort
@@ -280,6 +281,7 @@ class BullPutCandidateSelectorTest {
                     symbol: Symbol,
                     expiry: LocalDate,
                     underlyingPrice: Money,
+                    strategyId: StrategyId,
                 ) = chain.filter { it.contract.expiry == expiry }
             },
         universePort =

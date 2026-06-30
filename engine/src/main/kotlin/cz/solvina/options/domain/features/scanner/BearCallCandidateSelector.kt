@@ -85,7 +85,7 @@ class BearCallCandidateSelector(
         logger.info { "[$symbol] (bear-call) Selected expiry $expiry ($dte DTE)" }
 
         // 3. Get option chain and find the best call to SELL (short leg, lower strike)
-        val chain = optionChainPort.getOptionChain(symbol, expiry, underlyingPrice)
+        val chain = optionChainPort.getOptionChain(symbol, expiry, underlyingPrice, StrategyId.BEAR_CALL)
         val calls = chain.filter { it.contract.type == OptionType.CALL }
 
         val soldQuote =

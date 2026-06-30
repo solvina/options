@@ -8,6 +8,7 @@ import cz.solvina.options.adapters.outbound.ibkr.market.IbkrHistoricalDataAdapte
 import cz.solvina.options.adapters.outbound.ibkr.market.IbkrMarketDataAdapter
 import cz.solvina.options.adapters.outbound.ibkr.market.IbkrOptionChainAdapter
 import cz.solvina.options.domain.features.scanner.ScannerConfig
+import cz.solvina.options.domain.features.spread.model.StrategyId
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.flow.filterNotNull
@@ -268,7 +269,7 @@ class FixtureFetchTest {
                 val dte = ChronoUnit.DAYS.between(today, expiry)
                 logger.info { "[$symbol] underlying=\$${underlying.amount}  expiry=$expiry ($dte DTE)" }
 
-                val chain = optionChainAdapter.getOptionChain(symbol, expiry, underlying)
+                val chain = optionChainAdapter.getOptionChain(symbol, expiry, underlying, StrategyId.BULL_PUT)
                 logger.info { "[$symbol] Got ${chain.size} quotes" }
 
                 val fixture =

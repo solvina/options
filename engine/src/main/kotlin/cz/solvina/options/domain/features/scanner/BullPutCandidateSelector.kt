@@ -3,6 +3,7 @@ package cz.solvina.options.domain.features.scanner
 import cz.solvina.options.domain.features.execution.model.TradeExecutionRequest
 import cz.solvina.options.domain.features.market.MarketDataPort
 import cz.solvina.options.domain.features.market.OptionChainPort
+import cz.solvina.options.domain.features.spread.model.StrategyId
 import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.features.volatility.VolatilityPort
 import cz.solvina.options.domain.models.Money
@@ -76,7 +77,7 @@ class BullPutCandidateSelector(
         logger.info { "[$symbol] Selected expiry $expiry ($dte DTE)" }
 
         // 3. Get option chain and find the best put
-        val chain = optionChainPort.getOptionChain(symbol, expiry, underlyingPrice)
+        val chain = optionChainPort.getOptionChain(symbol, expiry, underlyingPrice, StrategyId.BULL_PUT)
         val puts = chain.filter { it.contract.type == OptionType.PUT }
 
         val soldQuote =

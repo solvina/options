@@ -1,6 +1,7 @@
 package cz.solvina.options.domain.features.diagnostic
 
 import cz.solvina.options.domain.features.market.OptionChainPort
+import cz.solvina.options.domain.features.spread.model.StrategyId
 import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
@@ -148,7 +149,7 @@ class DiagnosticService(
     ): List<OptionContract> {
         val chain =
             runCatching {
-                optionChainPort.getOptionChain(symbol, expiry, Money(spot))
+                optionChainPort.getOptionChain(symbol, expiry, Money(spot), StrategyId.BULL_PUT)
             }.getOrNull() ?: return emptyList()
 
         val atm = chain.minByOrNull { (it.contract.strike - spot).abs() } ?: return emptyList()

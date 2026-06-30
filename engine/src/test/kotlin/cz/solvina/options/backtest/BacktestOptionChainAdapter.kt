@@ -4,6 +4,7 @@ import cz.solvina.options.domain.features.market.BlackScholes
 import cz.solvina.options.domain.features.market.OptionChainPort
 import cz.solvina.options.domain.features.market.model.OptionQuote
 import cz.solvina.options.domain.features.scanner.ScannerConfig
+import cz.solvina.options.domain.features.spread.model.StrategyId
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
 import cz.solvina.options.domain.models.OptionGreeks
@@ -60,6 +61,7 @@ class BacktestOptionChainAdapter(
         symbol: Symbol,
         expiry: LocalDate,
         underlyingPrice: Money,
+        strategyId: StrategyId,
     ): List<OptionQuote> {
         val today = clock.currentDate()
         val spot = underlyingPrice.amount.toDouble()

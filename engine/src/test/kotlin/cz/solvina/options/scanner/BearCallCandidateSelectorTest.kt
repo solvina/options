@@ -5,6 +5,7 @@ import cz.solvina.options.domain.features.market.OptionChainPort
 import cz.solvina.options.domain.features.market.model.OptionQuote
 import cz.solvina.options.domain.features.scanner.BearCallCandidateSelector
 import cz.solvina.options.domain.features.scanner.BearCallScannerConfig
+import cz.solvina.options.domain.features.spread.model.StrategyId
 import cz.solvina.options.domain.features.universe.InstrumentConfig
 import cz.solvina.options.domain.features.universe.MarketSchedule
 import cz.solvina.options.domain.features.universe.UniversePort
@@ -158,6 +159,7 @@ class BearCallCandidateSelectorTest {
                     symbol: Symbol,
                     expiry: LocalDate,
                     underlyingPrice: Money,
+                    strategyId: StrategyId,
                 ) = chain.filter { it.contract.expiry == expiry }
             },
         universePort = universePort,
