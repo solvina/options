@@ -1,6 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { Layout } from './components/layout/Layout'
 import { SpreadsPage } from './pages/SpreadsPage'
+import { BearCallsPage } from './pages/BearCallsPage'
 import { AccountPage } from './pages/AccountPage'
 import { ScannerPage } from './pages/ScannerPage'
 import { DiagnosticPage } from './pages/DiagnosticPage'
@@ -20,6 +21,8 @@ function App() {
           <Route path="/spreads" element={<Navigate to="/spreads/positions" replace />} />
           <Route path="/spreads/positions" element={<SpreadsPage />} />
           <Route path="/spreads/analytics" element={<AnalyticsPage />} />
+          <Route path="/bear-calls/positions" element={<BearCallsPage />} />
+          <Route path="/bear-calls" element={<Navigate to="/bear-calls/positions" replace />} />
           <Route path="/account" element={<AccountPage />} />
           <Route path="/scanner" element={<ScannerPage />} />
           <Route path="/universe" element={<UniversePage />} />
