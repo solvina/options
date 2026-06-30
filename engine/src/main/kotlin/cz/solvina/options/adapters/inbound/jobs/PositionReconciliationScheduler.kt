@@ -5,7 +5,8 @@ import cz.solvina.options.domain.features.account.PositionsPort
 import cz.solvina.options.domain.features.alert.AlertLevel
 import cz.solvina.options.domain.features.alert.AlertPort
 import cz.solvina.options.domain.features.connection.status.ConnectionStatusPort
-import cz.solvina.options.domain.features.spread.BullPutSpreadPort
+import cz.solvina.options.domain.features.flag.FlagPort
+import cz.solvina.options.domain.features.spread.SpreadCloserRegistry
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -29,7 +30,8 @@ private val logger = KotlinLogging.logger {}
  */
 @Component
 class PositionReconciliationScheduler(
-    private val spreadPort: BullPutSpreadPort,
+    private val spreadClosers: SpreadCloserRegistry,
+    private val flagPort: FlagPort,
     private val positionsPort: PositionsPort,
     private val detector: OrphanPositionDetector,
     private val alertPort: AlertPort,
@@ -70,9 +72,12 @@ class PositionReconciliationScheduler(
     }
 
     private suspend fun runReconcile() {
-        val openSpreads = spreadPort.findOpen()
+        // Everything the engine actively manages: open credit spreads (bull put + bear call) and
+        // open bull-flag stock positions. Anything held outside this set is a true orphan.
+        val openSpreads = spreadClosers.allOpen()
+        val openFlags = flagPort.findOpen()
         val positions = positionsPort.getPositions()
-        val orphans = detector.detect(openSpreads, positions)
+        val orphans = detector.detect(openSpreads, openFlags, positions)
 
         if (orphans.isEmpty()) {
             if (lastSignature != null) logger.info { "Reconciliation: orphans cleared" }

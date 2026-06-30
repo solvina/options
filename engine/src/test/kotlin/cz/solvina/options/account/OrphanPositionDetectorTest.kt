@@ -2,7 +2,10 @@ package cz.solvina.options.account
 
 import cz.solvina.options.domain.features.account.AccountPosition
 import cz.solvina.options.domain.features.account.OrphanPositionDetector
+import cz.solvina.options.domain.features.flag.model.FlagPosition
+import cz.solvina.options.domain.features.flag.model.FlagStatus
 import cz.solvina.options.domain.features.order.LegAction
+import cz.solvina.options.domain.features.spread.model.BearCallSpread
 import cz.solvina.options.domain.features.spread.model.BullPutSpread
 import cz.solvina.options.domain.features.spread.model.SpreadLeg
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
@@ -47,6 +50,46 @@ class OrphanPositionDetectorTest {
         openedAt = Instant.now(),
     )
 
+    private fun openBearCall(
+        sold: String,
+        bought: String,
+        qty: Int = 1,
+    ) = BearCallSpread(
+        id = UUID.randomUUID(),
+        symbol = symbol,
+        soldLeg = SpreadLeg(opt("AMD", sold, OptionType.CALL), LegAction.SELL, Money(BigDecimal("1.50")), orderId = 3),
+        boughtLeg = SpreadLeg(opt("AMD", bought, OptionType.CALL), LegAction.BUY, Money(BigDecimal("0.50")), orderId = 4),
+        creditPerShare = BigDecimal("1.00"),
+        maxRiskPerShare = BigDecimal("4.00"),
+        quantity = qty,
+        status = SpreadStatus.OPEN,
+        ivRankAtEntry = 50.0,
+        underlyingPriceAtEntry = BigDecimal("420"),
+        openedAt = Instant.now(),
+    )
+
+    private fun openFlag(
+        sym: String,
+        shares: Int,
+    ) = FlagPosition(
+        id = UUID.randomUUID(),
+        symbol = Symbol(sym),
+        status = FlagStatus.OPEN,
+        entryOrderId = 10,
+        stopLossOrderId = 11,
+        profitTargetOrderId = 12,
+        entryPrice = BigDecimal("100"),
+        stopLossPrice = BigDecimal("95"),
+        profitTargetPrice = BigDecimal("110"),
+        shares = shares,
+        riskAmount = BigDecimal("500"),
+        flagpoleHeight = null,
+        flagRetracement = null,
+        resistanceAtEntry = null,
+        patternStartedAt = null,
+        openedAt = Instant.now(),
+    )
+
     private fun pos(
         sym: String,
         secType: String,
@@ -75,22 +118,50 @@ class OrphanPositionDetectorTest {
                 pos("AMD", "OPT", qty = -1, strike = "420", right = "P"),
                 pos("AMD", "OPT", qty = 1, strike = "415", right = "P"),
             )
-        assertEquals(0, detector.detect(spreads, positions).size)
+        assertEquals(0, detector.detect(spreads, emptyList(), positions).size)
+    }
+
+    @Test
+    fun `a fully-matched bear call spread produces no orphans`() {
+        val spreads = listOf(openBearCall(sold = "430", bought = "435"))
+        val positions =
+            listOf(
+                pos("AMD", "OPT", qty = -1, strike = "430", right = "C"),
+                pos("AMD", "OPT", qty = 1, strike = "435", right = "C"),
+            )
+        assertEquals(0, detector.detect(spreads, emptyList(), positions).size)
     }
 
     @Test
     fun `naked short put with no managing spread is an orphan`() {
         val positions = listOf(pos("AMD", "OPT", qty = -18, strike = "420", right = "P"))
-        val orphans = detector.detect(emptyList(), positions)
+        val orphans = detector.detect(emptyList(), emptyList(), positions)
         assertEquals(1, orphans.size)
         assertTrue(orphans[0].reason.contains("no managing OPEN spread"))
     }
 
     @Test
-    fun `short stock is always an orphan`() {
-        val orphans = detector.detect(emptyList(), listOf(pos("NOW", "STK", qty = -147)))
+    fun `stock with no managing flag is an orphan`() {
+        val orphans = detector.detect(emptyList(), emptyList(), listOf(pos("NOW", "STK", qty = -147)))
         assertEquals(1, orphans.size)
         assertTrue(orphans[0].reason.contains("stock position"))
+    }
+
+    @Test
+    fun `long stock fully explained by an open bull flag produces no orphans`() {
+        val flags = listOf(openFlag("TSLA", shares = 58))
+        val positions = listOf(pos("TSLA", "STK", qty = 58))
+        assertEquals(0, detector.detect(emptyList(), flags, positions).size)
+    }
+
+    @Test
+    fun `stock quantity mismatch against a managed flag is flagged`() {
+        val flags = listOf(openFlag("TSLA", shares = 58))
+        // Held 100 shares but the flag only manages 58.
+        val positions = listOf(pos("TSLA", "STK", qty = 100))
+        val orphans = detector.detect(emptyList(), flags, positions)
+        assertEquals(1, orphans.size)
+        assertTrue(orphans[0].reason.contains("expected 58, held 100"))
     }
 
     @Test
@@ -102,7 +173,7 @@ class OrphanPositionDetectorTest {
                 pos("AMD", "OPT", qty = -18, strike = "420", right = "P"),
                 pos("AMD", "OPT", qty = 1, strike = "415", right = "P"),
             )
-        val orphans = detector.detect(spreads, positions)
+        val orphans = detector.detect(spreads, emptyList(), positions)
         assertEquals(1, orphans.size)
         assertEquals(-18, orphans[0].position.quantity.toInt())
         assertTrue(orphans[0].reason.contains("expected -1, held -18"))
@@ -110,7 +181,7 @@ class OrphanPositionDetectorTest {
 
     @Test
     fun `zero-quantity positions are ignored`() {
-        val orphans = detector.detect(emptyList(), listOf(pos("AMD", "OPT", qty = 0, strike = "420", right = "P")))
+        val orphans = detector.detect(emptyList(), emptyList(), listOf(pos("AMD", "OPT", qty = 0, strike = "420", right = "P")))
         assertEquals(0, orphans.size)
     }
 }
