@@ -1,5 +1,7 @@
 package cz.solvina.options.domain.features.scanner
 
+import cz.solvina.options.domain.features.spread.model.StrategyId
+import cz.solvina.options.domain.models.OptionType
 import org.springframework.boot.context.properties.ConfigurationProperties
 import java.math.BigDecimal
 
@@ -69,4 +71,28 @@ data class ScannerConfig(
     val warmupBatchSize: Int = 10,
     // Refresh every hour to catch underlying movement + strikes being descheduled
     val optionParamsCacheTtlHours: Long = 1,
-)
+) : StrategyParamsProvider {
+    // Bull put — the original strategy. These same fields back the StrategyParams seam so the
+    // strategy-agnostic core resolves them by StrategyId rather than injecting this config directly.
+    override fun strategyParams() =
+        StrategyParams(
+            strategyId = StrategyId.BULL_PUT,
+            optionType = OptionType.PUT,
+            ivRankThreshold = ivRankThreshold,
+            minDte = minDte,
+            maxDte = maxDte,
+            preferredDte = preferredDte,
+            targetDelta = targetDelta,
+            deltaMin = deltaMin,
+            deltaMax = deltaMax,
+            strikeBandPercent = strikeBandPercent,
+            candidateStrikeCount = candidateStrikeCount,
+            spreadWidthUsd = spreadWidthUsd,
+            minCreditPerShare = minCreditPerShare,
+            maxRiskPercent = maxRiskPercent,
+            takeProfitPercent = takeProfitPercent,
+            stopLossPercent = stopLossPercent,
+            timeProfitDte = timeProfitDte,
+            driftProtectionPct = driftProtectionPct,
+        )
+}
