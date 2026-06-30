@@ -5,6 +5,12 @@ import { cn } from '../../lib/utils'
 
 const navGroups = [
   {
+    label: 'Overview',
+    items: [
+      { to: '/dashboard', label: 'Dashboard' },
+    ],
+  },
+  {
     label: 'Bull Puts',
     items: [
       { to: '/spreads/positions', label: 'Positions' },
