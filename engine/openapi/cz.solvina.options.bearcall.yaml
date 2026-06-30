@@ -1,0 +1,216 @@
+openapi: 3.0.3
+info:
+  title: Options Engine - Bear Call API
+  description: Bear Call Spread positions (read + manual close)
+  version: 1.0.0
+
+paths:
+  /bear-call-spreads:
+    get:
+      tags:
+        - BearCall
+      summary: List bear call spread positions
+      operationId: listBearCallSpreads
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+        - name: size
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 25
+      responses:
+        '200':
+          description: Paginated bear call spread positions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PagedBearCallSpreadsDto'
+
+  /bear-call-spreads/dividend-risk:
+    get:
+      tags:
+        - BearCall
+      summary: Open bear call spreads with an ex-dividend date within the risk window
+      operationId: listBearCallDividendRisk
+      responses:
+        '200':
+          description: Bear call spreads currently exposed to ex-dividend assignment risk
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/BearCallSpreadDto'
+
+  /bear-call-spreads/{id}:
+    get:
+      tags:
+        - BearCall
+      summary: Get a bear call spread by ID
+      operationId: getBearCallSpreadById
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Bear call spread
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BearCallSpreadDto'
+        '404':
+          description: Not found
+
+  /bear-call-spreads/{id}/close:
+    post:
+      tags:
+        - BearCall
+      summary: Soft-close a bear call spread at mid price (limit orders)
+      operationId: softCloseBearCallSpread
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Spread closed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BearCallSpreadDto'
+        '404':
+          description: Not found
+        '409':
+          description: Spread is not open
+
+  /bear-call-spreads/{id}/close-force:
+    post:
+      tags:
+        - BearCall
+      summary: Force-close a bear call spread at market price
+      operationId: forceCloseBearCallSpread
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Spread closed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BearCallSpreadDto'
+        '404':
+          description: Not found
+        '409':
+          description: Spread is not open
+
+components:
+  schemas:
+    BearCallSpreadDto:
+      type: object
+      required:
+        - symbol
+        - status
+        - soldStrike
+        - boughtStrike
+        - expiryDate
+        - creditPerShare
+        - maxRiskPerShare
+        - quantity
+        - openedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        symbol:
+          type: string
+        status:
+          type: string
+        soldStrike:
+          type: number
+        boughtStrike:
+          type: number
+        expiryDate:
+          type: string
+          format: date
+        creditPerShare:
+          type: number
+        maxRiskPerShare:
+          type: number
+        quantity:
+          type: integer
+        ivRankAtEntry:
+          type: number
+          nullable: true
+        underlyingPriceAtEntry:
+          type: number
+          nullable: true
+        openedAt:
+          type: string
+          format: date-time
+        closedAt:
+          type: string
+          format: date-time
+          nullable: true
+        closeReason:
+          type: string
+          nullable: true
+        closePricePerShare:
+          type: number
+          nullable: true
+        currentSpreadValue:
+          type: number
+          nullable: true
+        currentPnl:
+          type: number
+          nullable: true
+        underlyingPriceAtExit:
+          type: number
+          nullable: true
+        ivRankAtExit:
+          type: number
+          nullable: true
+        exDividendDate:
+          type: string
+          format: date
+          nullable: true
+
+    PagedBearCallSpreadsDto:
+      type: object
+      required: [content, totalElements, totalPages, page, size]
+      properties:
+        content:
+          type: array
+          items:
+            $ref: '#/components/schemas/BearCallSpreadDto'
+        totalElements:
+          type: integer
+          format: int64
+        totalPages:
+          type: integer
+        page:
+          type: integer
+        size:
+          type: integer
