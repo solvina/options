@@ -3,6 +3,7 @@ package cz.solvina.options.adapters.outbound.ibkr.market
 import com.ib.client.EClientSocket
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
+import cz.solvina.options.domain.features.market.MarketDataHealthTracker
 import cz.solvina.options.domain.features.market.MarketDataPort
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
@@ -21,8 +22,19 @@ class IbkrMarketDataAdapter(
     private val client: EClientSocket,
     private val contractFactory: IbkrContractFactory,
     private val historicalDataAdapter: IbkrHistoricalDataAdapter,
+    private val healthTracker: MarketDataHealthTracker,
 ) : MarketDataPort {
-    override suspend fun getUnderlyingPrice(symbol: Symbol): Money {
+    // Every underlying-price fetch feeds the market-data flow signal (see MarketDataHealthTracker):
+    // success ⇒ data is live, the "No price data" failure ⇒ starved even if the socket is connected.
+    override suspend fun getUnderlyingPrice(symbol: Symbol): Money =
+        try {
+            resolveUnderlyingPrice(symbol).also { healthTracker.recordSuccess() }
+        } catch (e: Throwable) {
+            healthTracker.recordFailure("[$symbol] ${e.message}")
+            throw e
+        }
+
+    private suspend fun resolveUnderlyingPrice(symbol: Symbol): Money {
         val snapshot = reqMktDataSnapshot(registry, client, contractFactory.stockContract(symbol), "", SnapshotReady.STOCK_PRICE)
         val price = snapshot.last.takeIf { !it.isNaN() } ?: snapshot.close.takeIf { !it.isNaN() }
         if (price != null) return Money(BigDecimal(price).setScale(2, RoundingMode.HALF_UP))

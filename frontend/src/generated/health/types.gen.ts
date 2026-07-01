@@ -23,6 +23,29 @@ export type IbkrConnectionStatus = {
     connectionInitialized: boolean;
 };
 
+export type MarketDataHealth = {
+    /**
+     * A price fetch succeeded within the freshness window — data is live
+     */
+    flowing: boolean;
+    /**
+     * Seconds since the last successful price fetch, or null if none yet
+     */
+    lastSuccessAgeSeconds?: number | null;
+    /**
+     * Successful price fetches in the trailing 10-minute window
+     */
+    successes: number;
+    /**
+     * Failed price fetches in the trailing 10-minute window
+     */
+    failures: number;
+    /**
+     * Most recent failure reason (for display), or null when healthy
+     */
+    lastError?: string | null;
+};
+
 export type GetIbkrConnectionStatusData = {
     body?: never;
     path?: never;
@@ -38,3 +61,19 @@ export type GetIbkrConnectionStatusResponses = {
 };
 
 export type GetIbkrConnectionStatusResponse = GetIbkrConnectionStatusResponses[keyof GetIbkrConnectionStatusResponses];
+
+export type GetMarketDataHealthData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/health/market-data';
+};
+
+export type GetMarketDataHealthResponses = {
+    /**
+     * Market-data flow status
+     */
+    200: MarketDataHealth;
+};
+
+export type GetMarketDataHealthResponse = GetMarketDataHealthResponses[keyof GetMarketDataHealthResponses];

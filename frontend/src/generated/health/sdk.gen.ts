@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { GetIbkrConnectionStatusData, GetIbkrConnectionStatusResponses } from './types.gen';
+import type { GetIbkrConnectionStatusData, GetIbkrConnectionStatusResponses, GetMarketDataHealthData, GetMarketDataHealthResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean> = Options2<TData, ThrowOnError> & {
     /**
@@ -22,3 +22,11 @@ export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends 
  * Get IBKR connection status
  */
 export const getIbkrConnectionStatus = <ThrowOnError extends boolean = false>(options?: Options<GetIbkrConnectionStatusData, ThrowOnError>) => (options?.client ?? client).get<GetIbkrConnectionStatusResponses, unknown, ThrowOnError>({ url: '/health/ibkr', ...options });
+
+/**
+ * Get live market-data flow status
+ *
+ * Whether the engine is actually receiving market prices, independent of the socket connection. The IBKR socket can be connected while data is fully starved (e.g. a competing session), so this reflects real price-fetch success/failure.
+ *
+ */
+export const getMarketDataHealth = <ThrowOnError extends boolean = false>(options?: Options<GetMarketDataHealthData, ThrowOnError>) => (options?.client ?? client).get<GetMarketDataHealthResponses, unknown, ThrowOnError>({ url: '/health/market-data', ...options });

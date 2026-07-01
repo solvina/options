@@ -19,6 +19,24 @@ paths:
               schema:
                 $ref: '#/components/schemas/IbkrConnectionStatus'
 
+  /health/market-data:
+    get:
+      tags:
+        - Health
+      summary: Get live market-data flow status
+      description: >
+        Whether the engine is actually receiving market prices, independent of the socket
+        connection. The IBKR socket can be connected while data is fully starved (e.g. a
+        competing session), so this reflects real price-fetch success/failure.
+      operationId: getMarketDataHealth
+      responses:
+        '200':
+          description: Market-data flow status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MarketDataHealth'
+
 components:
   schemas:
     IbkrConnectionStatus:
@@ -41,3 +59,29 @@ components:
         connectionInitialized:
           type: boolean
           description: Whether the connection has been initialized at least once
+
+    MarketDataHealth:
+      type: object
+      required:
+        - flowing
+        - successes
+        - failures
+      properties:
+        flowing:
+          type: boolean
+          description: A price fetch succeeded within the freshness window — data is live
+        lastSuccessAgeSeconds:
+          type: integer
+          format: int64
+          nullable: true
+          description: Seconds since the last successful price fetch, or null if none yet
+        successes:
+          type: integer
+          description: Successful price fetches in the trailing 10-minute window
+        failures:
+          type: integer
+          description: Failed price fetches in the trailing 10-minute window
+        lastError:
+          type: string
+          nullable: true
+          description: Most recent failure reason (for display), or null when healthy

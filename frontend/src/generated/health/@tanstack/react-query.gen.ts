@@ -3,8 +3,8 @@
 import { type DefaultError, queryOptions } from '@tanstack/react-query';
 
 import { client } from '../client.gen';
-import { getIbkrConnectionStatus, type Options } from '../sdk.gen';
-import type { GetIbkrConnectionStatusData, GetIbkrConnectionStatusResponse } from '../types.gen';
+import { getIbkrConnectionStatus, getMarketDataHealth, type Options } from '../sdk.gen';
+import type { GetIbkrConnectionStatusData, GetIbkrConnectionStatusResponse, GetMarketDataHealthData, GetMarketDataHealthResponse } from '../types.gen';
 
 export type QueryKey<TOptions extends Options> = [
     Pick<TOptions, 'baseUrl' | 'body' | 'headers' | 'path' | 'query'> & {
@@ -55,4 +55,25 @@ export const getIbkrConnectionStatusOptions = (options?: Options<GetIbkrConnecti
         return data;
     },
     queryKey: getIbkrConnectionStatusQueryKey(options)
+});
+
+export const getMarketDataHealthQueryKey = (options?: Options<GetMarketDataHealthData>) => createQueryKey('getMarketDataHealth', options);
+
+/**
+ * Get live market-data flow status
+ *
+ * Whether the engine is actually receiving market prices, independent of the socket connection. The IBKR socket can be connected while data is fully starved (e.g. a competing session), so this reflects real price-fetch success/failure.
+ *
+ */
+export const getMarketDataHealthOptions = (options?: Options<GetMarketDataHealthData>) => queryOptions<GetMarketDataHealthResponse, DefaultError, GetMarketDataHealthResponse, ReturnType<typeof getMarketDataHealthQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await getMarketDataHealth({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: getMarketDataHealthQueryKey(options)
 });
