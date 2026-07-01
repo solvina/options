@@ -14,6 +14,7 @@ import cz.solvina.options.domain.features.order.LegQuotes
 import cz.solvina.options.domain.features.order.OrderExecutionPort
 import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.features.scanner.BearCallScannerConfig
+import cz.solvina.options.domain.features.scanner.BullPutScannerConfig
 import cz.solvina.options.domain.features.scanner.ScannerConfig
 import cz.solvina.options.domain.features.scanner.StrategyParamsRegistry
 import cz.solvina.options.domain.features.spread.BullPutSpreadPort
@@ -69,12 +70,14 @@ class TradeExecutionServiceTest {
     private val baseConfig =
         ScannerConfig(
             watchlist = listOf("SPY"),
-            driftProtectionPct = 0.02,
             executionTimeoutMinutes = 1,
             ticksBeforePriceAdjust = 3,
             maxLegBidAskSpreadPct = 0.30,
             feePerContract = java.math.BigDecimal.ZERO,
         )
+
+    // Bull-put drift default for the execution tests; the drift-abort test overrides it.
+    private val baseBullPut = BullPutScannerConfig(driftProtectionPct = 0.02)
 
     private fun buildRequest(
         targetCredit: BigDecimal = BigDecimal("1.00"),
@@ -115,6 +118,7 @@ class TradeExecutionServiceTest {
         spreadPort: BullPutSpreadPort = InMemoryBullPutSpreadPort(),
         accountPort: AccountPort = buildAccountPort(),
         config: ScannerConfig = baseConfig,
+        bullPutConfig: BullPutScannerConfig = baseBullPut,
     ): TradeExecutionService {
         val spreadQuery = SpreadQueryFacade(spreadPort, InMemoryBearCallSpreadPort())
         return TradeExecutionService(
@@ -130,7 +134,7 @@ class TradeExecutionServiceTest {
                     config = config,
                 ),
             config = config,
-            strategyParams = StrategyParamsRegistry(listOf(config, BearCallScannerConfig())),
+            strategyParams = StrategyParamsRegistry(listOf(bullPutConfig, BearCallScannerConfig())),
             clock = Clock.systemUTC(),
             scope = backgroundScope,
         )
@@ -357,7 +361,7 @@ class TradeExecutionServiceTest {
                             ): Flow<SpreadCreditTick> = tickFlowAtCredit(1.00)
                         },
                     orderExecutionPort = neverFillOrderPort(),
-                    config = baseConfig.copy(driftProtectionPct = 0.02),
+                    bullPutConfig = BullPutScannerConfig(driftProtectionPct = 0.02),
                 )
 
             val result = service.execute(buildRequest(underlyingPrice = BigDecimal("500")))

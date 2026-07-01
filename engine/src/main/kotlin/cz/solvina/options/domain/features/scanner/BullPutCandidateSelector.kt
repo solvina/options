@@ -27,7 +27,7 @@ class BullPutCandidateSelector(
     private val marketDataPort: MarketDataPort,
     private val optionChainPort: OptionChainPort,
     private val universePort: UniversePort,
-    private val config: ScannerConfig,
+    private val config: BullPutScannerConfig,
     private val clock: Clock,
 ) {
     suspend fun select(

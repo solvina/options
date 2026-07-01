@@ -62,24 +62,9 @@ ibkr:
     use-live-market-data: true     # paper account with live data subscription enabled in TWS
 
 scanner:
+  # ---- Shared across all strategies (bull put + bear call) ----
   trading-enabled: true            # paper trading active with live data subscription
-  iv-rank-threshold: 45
-  min-dte: 30
-  max-dte: 50
-  preferred-dte: 45
-  target-delta: 0.30               # short put ~30-delta (more premium); was 0.15
-  delta-min: 0.25                  # accept short-put delta band 0.25–0.30; was 0.10
-  delta-max: 0.30                  # was 0.20
-  strike-band-percent: 0.20
-  candidate-strike-count: 7
-  spread-width-usd: 5.0
-  min-credit-per-share: 0.35       # Conservative: 0.50 → 0.35 for better fill rates
-  max-risk-percent: 0.025
-  max-open-spreads: 5
-  take-profit-percent: 0.50
-  stop-loss-percent: 2.00          # exit when buyback ≥ 3× credit (loss = 200% of credit); was 1.00 — breathing room
-  time-profit-dte: 21              # manage/close at 21 DTE (tastytrade-style); was 14
-  drift-protection-pct: 0.05       # Conservative: 0.01 → 0.05 (allow 5% movement, not 1%)
+  max-open-spreads: 5              # portfolio cap across bull put + bear call combined
   execution-timeout-minutes: 15
   ticks-before-price-adjust: 5
   price-adjust-interval-seconds: 30
@@ -95,6 +80,24 @@ scanner:
   iv-history-days: 365
   iv-cache-ttl-minutes: 60
   option-params-cache-ttl-hours: 1
+  # ---- Bull put strategy params (scanner.bull-put.*) ----
+  bull-put:
+    iv-rank-threshold: 45
+    min-dte: 30
+    max-dte: 50
+    preferred-dte: 45
+    target-delta: 0.30             # short put ~30-delta (more premium); was 0.15
+    delta-min: 0.25                # accept short-put delta band 0.25–0.30; was 0.10
+    delta-max: 0.30                # was 0.20
+    strike-band-percent: 0.20
+    candidate-strike-count: 7
+    spread-width-usd: 5.0
+    min-credit-per-share: 0.35     # Conservative: 0.50 → 0.35 for better fill rates
+    max-risk-percent: 0.025
+    take-profit-percent: 0.50
+    stop-loss-percent: 2.00        # exit when buyback ≥ 3× credit (loss = 200% of credit); was 1.00
+    time-profit-dte: 21            # manage/close at 21 DTE (tastytrade-style); was 14
+    drift-protection-pct: 0.05     # Conservative: 0.01 → 0.05 (allow 5% movement, not 1%)
 
 # Operational alerts (Telegram). Token/chat injected from env (same .env the bot uses).
 alerts:

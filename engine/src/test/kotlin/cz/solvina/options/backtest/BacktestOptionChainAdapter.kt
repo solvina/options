@@ -3,7 +3,7 @@ package cz.solvina.options.backtest
 import cz.solvina.options.domain.features.market.BlackScholes
 import cz.solvina.options.domain.features.market.OptionChainPort
 import cz.solvina.options.domain.features.market.model.OptionQuote
-import cz.solvina.options.domain.features.scanner.ScannerConfig
+import cz.solvina.options.domain.features.scanner.BullPutScannerConfig
 import cz.solvina.options.domain.features.spread.model.StrategyId
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
@@ -43,7 +43,7 @@ import java.time.temporal.TemporalAdjusters
  */
 class BacktestOptionChainAdapter(
     private val clock: MutableClock,
-    private val config: ScannerConfig,
+    private val config: BullPutScannerConfig,
     private val strikeStep: Double = 5.0,
     private val riskFreeRate: Double = 0.05,
 ) : OptionChainPort {

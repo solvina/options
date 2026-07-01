@@ -4,7 +4,7 @@ import cz.solvina.options.domain.features.market.MarketDataPort
 import cz.solvina.options.domain.features.market.OptionChainPort
 import cz.solvina.options.domain.features.market.model.OptionQuote
 import cz.solvina.options.domain.features.scanner.BullPutCandidateSelector
-import cz.solvina.options.domain.features.scanner.ScannerConfig
+import cz.solvina.options.domain.features.scanner.BullPutScannerConfig
 import cz.solvina.options.domain.features.spread.model.StrategyId
 import cz.solvina.options.domain.features.universe.InstrumentConfig
 import cz.solvina.options.domain.features.universe.UniversePort
@@ -66,7 +66,7 @@ class BullPutCandidateSelectorTest {
 
     private val capitalOf50k = Money(BigDecimal("50000"))
 
-    private val defaultConfig = ScannerConfig(watchlist = listOf("SPY"))
+    private val defaultConfig = BullPutScannerConfig()
 
     // -------------------------------------------------------------------------
     // Filter 1: IV Rank
@@ -261,7 +261,7 @@ class BullPutCandidateSelectorTest {
         expirations: Set<LocalDate> = setOf(expiry38d),
         chain: List<OptionQuote> = validChain,
         instrumentConfig: InstrumentConfig? = null,
-        config: ScannerConfig = defaultConfig,
+        config: BullPutScannerConfig = defaultConfig,
     ) = BullPutCandidateSelector(
         volatilityPort =
             object : VolatilityPort {

@@ -10,6 +10,7 @@ import cz.solvina.options.domain.features.order.LegOrder
 import cz.solvina.options.domain.features.order.OrderPort
 import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.features.scanner.BearCallScannerConfig
+import cz.solvina.options.domain.features.scanner.BullPutScannerConfig
 import cz.solvina.options.domain.features.scanner.ScannerConfig
 import cz.solvina.options.domain.features.scanner.StrategyParamsRegistry
 import cz.solvina.options.domain.features.spread.BearCallSpreadPort
@@ -84,7 +85,7 @@ class SpreadManagementServiceTest {
         )
 
     private val config = ScannerConfig(watchlist = listOf("SPY"))
-    private val strategyParams = StrategyParamsRegistry(listOf(config, BearCallScannerConfig()))
+    private val strategyParams = StrategyParamsRegistry(listOf(BullPutScannerConfig(), BearCallScannerConfig()))
 
     // Real registry with the bull put strategy — exercises the actual seam dispatch (bull put adds
     // no strategy-specific exit, so generic TP/SL/DTE behaviour is unchanged).

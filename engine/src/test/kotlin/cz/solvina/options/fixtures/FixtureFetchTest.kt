@@ -7,6 +7,7 @@ import cz.solvina.options.adapters.outbound.ibkr.account.IbkrAccountAdapter
 import cz.solvina.options.adapters.outbound.ibkr.market.IbkrHistoricalDataAdapter
 import cz.solvina.options.adapters.outbound.ibkr.market.IbkrMarketDataAdapter
 import cz.solvina.options.adapters.outbound.ibkr.market.IbkrOptionChainAdapter
+import cz.solvina.options.domain.features.scanner.BullPutScannerConfig
 import cz.solvina.options.domain.features.scanner.ScannerConfig
 import cz.solvina.options.domain.features.spread.model.StrategyId
 import cz.solvina.options.domain.models.Symbol
@@ -127,6 +128,9 @@ class FixtureFetchTest {
 
     @Autowired
     private lateinit var scannerConfig: ScannerConfig
+
+    // Bull-put DTE window for fixture expiry selection (params split out of ScannerConfig).
+    private val bullPutConfig = BullPutScannerConfig()
 
     @Autowired
     private lateinit var mapper: ObjectMapper
@@ -253,14 +257,14 @@ class FixtureFetchTest {
                     expirations
                         .filter { exp ->
                             val dte = ChronoUnit.DAYS.between(today, exp)
-                            dte in scannerConfig.minDte..scannerConfig.maxDte
+                            dte in bullPutConfig.minDte..bullPutConfig.maxDte
                         }.minByOrNull { exp ->
-                            abs(ChronoUnit.DAYS.between(today, exp) - scannerConfig.preferredDte)
+                            abs(ChronoUnit.DAYS.between(today, exp) - bullPutConfig.preferredDte)
                         }
 
                 if (expiry == null) {
                     logger.warn {
-                        "[$symbol] No expiry in [${scannerConfig.minDte}, ${scannerConfig.maxDte}] DTE " +
+                        "[$symbol] No expiry in [${bullPutConfig.minDte}, ${bullPutConfig.maxDte}] DTE " +
                             "(available: ${expirations.take(5)}…). Skipping."
                     }
                     continue

@@ -5,6 +5,7 @@ import cz.solvina.options.domain.features.execution.TradeExecutionService
 import cz.solvina.options.domain.features.scanner.BearCallCandidateSelector
 import cz.solvina.options.domain.features.scanner.BearCallScannerConfig
 import cz.solvina.options.domain.features.scanner.BullPutCandidateSelector
+import cz.solvina.options.domain.features.scanner.BullPutScannerConfig
 import cz.solvina.options.domain.features.scanner.ScannerConfig
 import cz.solvina.options.domain.features.scanner.ScannerService
 import cz.solvina.options.domain.features.scanner.StrategyParamsRegistry
@@ -55,6 +56,10 @@ class BacktestSmokeTest {
         val config =
             ScannerConfig(
                 watchlist = listOf("SPY"),
+                maxOpenSpreads = 3,
+            )
+        val bullPutConfig =
+            BullPutScannerConfig(
                 ivRankThreshold = 20.0, // lower threshold so we get some entries in the test period
                 minDte = 30,
                 maxDte = 60,
@@ -65,7 +70,6 @@ class BacktestSmokeTest {
                 spreadWidthUsd = BigDecimal("5.0"),
                 minCreditPerShare = BigDecimal("0.10"),
                 maxRiskPercent = 0.10,
-                maxOpenSpreads = 3,
                 takeProfitPercent = 0.50,
                 stopLossPercent = 2.00,
                 timeProfitDte = 14,
@@ -74,7 +78,7 @@ class BacktestSmokeTest {
         val clock = MutableClock(startDate)
         val historicalAdapter = BacktestHistoricalDataAdapter(clock)
         val marketAdapter = BacktestMarketDataAdapter(clock)
-        val optionChainAdapter = BacktestOptionChainAdapter(clock, config)
+        val optionChainAdapter = BacktestOptionChainAdapter(clock, bullPutConfig)
         val accountAdapter = BacktestAccountAdapter(initialCapital)
         val orderAdapter = BacktestOrderAdapter()
         val spreadAdapter = BacktestSpreadAdapter()
@@ -127,7 +131,7 @@ class BacktestSmokeTest {
             )
 
         val spreadQuery = SpreadQueryFacade(spreadAdapter, InMemoryBearCallSpreadPort())
-        val strategyParams = StrategyParamsRegistry(listOf(config, BearCallScannerConfig()))
+        val strategyParams = StrategyParamsRegistry(listOf(bullPutConfig, BearCallScannerConfig()))
         val executionService =
             TradeExecutionService(
                 marketTickPort = marketTickAdapter,
@@ -153,7 +157,7 @@ class BacktestSmokeTest {
                 marketDataPort = marketAdapter,
                 optionChainPort = optionChainAdapter,
                 universePort = universePort,
-                config = config,
+                config = bullPutConfig,
                 clock = clock,
             )
 

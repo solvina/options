@@ -8,12 +8,13 @@ ibkr:
 
 scanner:
   watchlist: [SPY, QQQ, AAPL, MSFT, AMZN]
-  candidate-strike-count: 20  # wider than production to get richer fixture data
   iv-history-days: 365
-  min-dte: 30
-  max-dte: 50
-  preferred-dte: 45
-  target-delta: 0.15
-  delta-min: 0.10
-  delta-max: 0.20
-  strike-band-percent: 0.20
+  bull-put:
+    candidate-strike-count: 20  # wider than production to get richer fixture data
+    min-dte: 30
+    max-dte: 50
+    preferred-dte: 45
+    target-delta: 0.15
+    delta-min: 0.10
+    delta-max: 0.20
+    strike-band-percent: 0.20

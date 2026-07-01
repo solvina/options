@@ -15,6 +15,7 @@ import cz.solvina.options.domain.features.order.OrderExecutionPort
 import cz.solvina.options.domain.features.order.OrderPort
 import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.features.scanner.BearCallScannerConfig
+import cz.solvina.options.domain.features.scanner.BullPutScannerConfig
 import cz.solvina.options.domain.features.scanner.ScannerConfig
 import cz.solvina.options.domain.features.scanner.StrategyParamsRegistry
 import cz.solvina.options.domain.features.spread.BullPutSpreadPort
@@ -229,7 +230,7 @@ class PositionReversalIntegrationTest {
                     clock = clock,
                     quoteHealthService = mockk(relaxed = true),
                     strategyRegistry = SpreadStrategyRegistry(listOf(BullPutStrategy())),
-                    strategyParams = StrategyParamsRegistry(listOf(config, BearCallScannerConfig())),
+                    strategyParams = StrategyParamsRegistry(listOf(BullPutScannerConfig(), BearCallScannerConfig())),
                 )
 
             service.checkExits()

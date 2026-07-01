@@ -1,7 +1,7 @@
 package cz.solvina.options.scanner
 
 import cz.solvina.options.domain.features.scanner.BearCallScannerConfig
-import cz.solvina.options.domain.features.scanner.ScannerConfig
+import cz.solvina.options.domain.features.scanner.BullPutScannerConfig
 import cz.solvina.options.domain.features.scanner.StrategyParamsRegistry
 import cz.solvina.options.domain.features.spread.model.StrategyId
 import cz.solvina.options.domain.models.OptionType
@@ -10,7 +10,7 @@ import java.math.BigDecimal
 import kotlin.test.assertEquals
 
 class StrategyParamsRegistryTest {
-    private val registry = StrategyParamsRegistry(listOf(ScannerConfig(), BearCallScannerConfig()))
+    private val registry = StrategyParamsRegistry(listOf(BullPutScannerConfig(), BearCallScannerConfig()))
 
     @Test
     fun `bull put resolves PUT and its own exit and execution params`() {
