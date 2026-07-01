@@ -7,6 +7,7 @@ import cz.solvina.options.domain.features.scanner.BearCallScannerConfig
 import cz.solvina.options.domain.features.scanner.BullPutCandidateSelector
 import cz.solvina.options.domain.features.scanner.ScannerConfig
 import cz.solvina.options.domain.features.scanner.ScannerService
+import cz.solvina.options.domain.features.scanner.StrategyParamsRegistry
 import cz.solvina.options.domain.features.spread.SpreadCloserRegistry
 import cz.solvina.options.domain.features.spread.SpreadManagementService
 import cz.solvina.options.domain.features.spread.SpreadQueryFacade
@@ -126,6 +127,7 @@ class BacktestSmokeTest {
             )
 
         val spreadQuery = SpreadQueryFacade(spreadAdapter, InMemoryBearCallSpreadPort())
+        val strategyParams = StrategyParamsRegistry(listOf(config, BearCallScannerConfig()))
         val executionService =
             TradeExecutionService(
                 marketTickPort = marketTickAdapter,
@@ -140,6 +142,7 @@ class BacktestSmokeTest {
                         config = config,
                     ),
                 config = config,
+                strategyParams = strategyParams,
                 clock = clock,
                 scope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
             )
@@ -196,6 +199,7 @@ class BacktestSmokeTest {
                 clock = clock,
                 quoteHealthService = QuoteHealthService(60, 300, 2),
                 strategyRegistry = SpreadStrategyRegistry(listOf(BullPutStrategy())),
+                strategyParams = strategyParams,
             )
 
         val engine =

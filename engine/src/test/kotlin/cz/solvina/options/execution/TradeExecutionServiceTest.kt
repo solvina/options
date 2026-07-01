@@ -13,7 +13,9 @@ import cz.solvina.options.domain.features.order.LegAction
 import cz.solvina.options.domain.features.order.LegQuotes
 import cz.solvina.options.domain.features.order.OrderExecutionPort
 import cz.solvina.options.domain.features.order.OrderStatus
+import cz.solvina.options.domain.features.scanner.BearCallScannerConfig
 import cz.solvina.options.domain.features.scanner.ScannerConfig
+import cz.solvina.options.domain.features.scanner.StrategyParamsRegistry
 import cz.solvina.options.domain.features.spread.BullPutSpreadPort
 import cz.solvina.options.domain.features.spread.SpreadQueryFacade
 import cz.solvina.options.domain.features.spread.model.BullPutSpread
@@ -128,6 +130,7 @@ class TradeExecutionServiceTest {
                     config = config,
                 ),
             config = config,
+            strategyParams = StrategyParamsRegistry(listOf(config, BearCallScannerConfig())),
             clock = Clock.systemUTC(),
             scope = backgroundScope,
         )

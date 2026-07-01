@@ -7,6 +7,7 @@ import cz.solvina.options.domain.features.order.LegAction
 import cz.solvina.options.domain.features.order.OrderPort
 import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.features.scanner.ScannerConfig
+import cz.solvina.options.domain.features.scanner.StrategyParamsRegistry
 import cz.solvina.options.domain.features.spread.model.Spread
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
 import cz.solvina.options.domain.features.spread.service.QuoteHealthService
@@ -41,6 +42,7 @@ class SpreadManagementService(
     private val clock: Clock,
     private val quoteHealthService: QuoteHealthService,
     private val strategyRegistry: SpreadStrategyRegistry,
+    private val strategyParams: StrategyParamsRegistry,
     private val positionsPort: cz.solvina.options.domain.features.account.PositionsPort? = null,
 ) {
     sealed interface ManualCloseResult {
@@ -291,8 +293,9 @@ class SpreadManagementService(
         // market recovered should close as PROFIT, not STOP. Without a live quote, preserve the
         // originally intended close status instead of inventing one.
         val inst = universePort.get(spread.symbol)
-        val takeProfitPercent = inst?.takeProfitPercent ?: config.takeProfitPercent
-        val stopLossPercent = inst?.stopLossPercent ?: config.stopLossPercent
+        val strat = strategyParams.forStrategy(spread.strategyId)
+        val takeProfitPercent = inst?.takeProfitPercent ?: strat.takeProfitPercent
+        val stopLossPercent = inst?.stopLossPercent ?: strat.stopLossPercent
         val tpThreshold = spread.creditPerShare.multiply(BigDecimal.ONE.subtract(BigDecimal(takeProfitPercent)))
         val slThreshold = spread.creditPerShare.add(spread.creditPerShare.multiply(BigDecimal(stopLossPercent)))
 
@@ -347,9 +350,10 @@ class SpreadManagementService(
         }
 
         val inst = universePort.get(spread.symbol)
-        val takeProfitPercent = inst?.takeProfitPercent ?: config.takeProfitPercent
-        val stopLossPercent = inst?.stopLossPercent ?: config.stopLossPercent
-        val timeProfitDte = inst?.timeProfitDte ?: config.timeProfitDte
+        val strat = strategyParams.forStrategy(spread.strategyId)
+        val takeProfitPercent = inst?.takeProfitPercent ?: strat.takeProfitPercent
+        val stopLossPercent = inst?.stopLossPercent ?: strat.stopLossPercent
+        val timeProfitDte = inst?.timeProfitDte ?: strat.timeProfitDte
 
         val tpThreshold = spread.creditPerShare.multiply(BigDecimal.ONE.subtract(BigDecimal(takeProfitPercent)))
         val slThreshold = spread.creditPerShare.add(spread.creditPerShare.multiply(BigDecimal(stopLossPercent)))

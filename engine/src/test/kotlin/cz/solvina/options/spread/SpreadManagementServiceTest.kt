@@ -9,7 +9,9 @@ import cz.solvina.options.domain.features.order.LegAction
 import cz.solvina.options.domain.features.order.LegOrder
 import cz.solvina.options.domain.features.order.OrderPort
 import cz.solvina.options.domain.features.order.OrderStatus
+import cz.solvina.options.domain.features.scanner.BearCallScannerConfig
 import cz.solvina.options.domain.features.scanner.ScannerConfig
+import cz.solvina.options.domain.features.scanner.StrategyParamsRegistry
 import cz.solvina.options.domain.features.spread.BearCallSpreadPort
 import cz.solvina.options.domain.features.spread.BullPutSpreadPort
 import cz.solvina.options.domain.features.spread.SpreadCloserRegistry
@@ -82,6 +84,7 @@ class SpreadManagementServiceTest {
         )
 
     private val config = ScannerConfig(watchlist = listOf("SPY"))
+    private val strategyParams = StrategyParamsRegistry(listOf(config, BearCallScannerConfig()))
 
     // Real registry with the bull put strategy — exercises the actual seam dispatch (bull put adds
     // no strategy-specific exit, so generic TP/SL/DTE behaviour is unchanged).
@@ -148,6 +151,7 @@ class SpreadManagementServiceTest {
         clock = clock,
         quoteHealthService = mockk(relaxed = true),
         strategyRegistry = strategyRegistry,
+        strategyParams = strategyParams,
         positionsPort = positionsPort,
     )
 
@@ -215,6 +219,7 @@ class SpreadManagementServiceTest {
                 clock = clockAtEntry,
                 quoteHealthService = mockk(relaxed = true),
                 strategyRegistry = strategyRegistry,
+                strategyParams = strategyParams,
             ).softClose(spread.id!!)
 
             val sellBackPrice = slot<Money>()
@@ -266,6 +271,7 @@ class SpreadManagementServiceTest {
                 clock = clockAtEntry,
                 quoteHealthService = mockk(relaxed = true),
                 strategyRegistry = strategyRegistry,
+                strategyParams = strategyParams,
             ).checkExits()
 
             assertEquals(SpreadStatus.CLOSED_STOP, updated.captured.status)
@@ -392,6 +398,7 @@ class SpreadManagementServiceTest {
                 clock = clockAtEntry,
                 quoteHealthService = mockk(relaxed = true),
                 strategyRegistry = strategyRegistry,
+                strategyParams = strategyParams,
             ).checkExits()
 
             coVerify(exactly = 0) { orderPort.placeAndAwaitFill(any(), any(), any(), any()) }
@@ -439,6 +446,7 @@ class SpreadManagementServiceTest {
                 clock = clockAtEntry,
                 quoteHealthService = mockk(relaxed = true),
                 strategyRegistry = SpreadStrategyRegistry(listOf(seamStrategy)),
+                strategyParams = strategyParams,
             ).checkExits()
 
             coVerify { orderPort.placeMarketOrder(soldContract, LegAction.BUY, any()) }
@@ -498,6 +506,7 @@ class SpreadManagementServiceTest {
                 clock = clockAtEntry,
                 quoteHealthService = mockk(relaxed = true),
                 strategyRegistry = strategyRegistry,
+                strategyParams = strategyParams,
             ).checkExits()
 
             // Persisted back through the bear-call port as a profit close.

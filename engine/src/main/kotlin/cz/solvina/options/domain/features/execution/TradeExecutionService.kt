@@ -10,6 +10,7 @@ import cz.solvina.options.domain.features.order.OrderExecutionPort
 import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.features.order.StrandedLongLegException
 import cz.solvina.options.domain.features.scanner.ScannerConfig
+import cz.solvina.options.domain.features.scanner.StrategyParamsRegistry
 import cz.solvina.options.domain.features.spread.SpreadQueryFacade
 import cz.solvina.options.domain.features.spread.model.Spread
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
@@ -50,6 +51,7 @@ class TradeExecutionService(
     private val writerRegistry: SpreadEntryWriterRegistry,
     private val validator: PreTradeValidator,
     private val config: ScannerConfig,
+    private val strategyParams: StrategyParamsRegistry,
     private val clock: Clock,
     private val scope: CoroutineScope,
 ) : TradeExecutionPort {
@@ -301,10 +303,11 @@ class TradeExecutionService(
                         is ExecutionEvent.Underlying -> {
                             val entryPrice = request.underlyingPriceAtEntry.toDouble()
                             val drift = abs(event.price - entryPrice) / entryPrice
-                            if (drift > config.driftProtectionPct) {
+                            val driftThreshold = strategyParams.forStrategy(request.strategyId).driftProtectionPct
+                            if (drift > driftThreshold) {
                                 logger.info {
                                     "[${request.underlyingSymbol}] DRIFT_ABORTED — " +
-                                        "drift=${"%.2f".format(drift * 100)}% > threshold=${config.driftProtectionPct * 100}%"
+                                        "drift=${"%.2f".format(drift * 100)}% > threshold=${driftThreshold * 100}%"
                                 }
                                 orderExecutionPort.cancelAndAwait(currentOrderId)
                                 outcome = ExecutionOutcome.DRIFT_ABORTED
