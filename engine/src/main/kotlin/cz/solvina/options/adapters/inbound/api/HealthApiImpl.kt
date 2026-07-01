@@ -2,6 +2,7 @@ package cz.solvina.options.adapters.inbound.api
 
 import cz.solvina.options.domain.features.connection.status.ConnectionStatusPort
 import cz.solvina.options.domain.features.market.MarketDataHealthTracker
+import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.health.api.HealthApi
 import cz.solvina.options.health.dto.IbkrConnectionStatus
 import cz.solvina.options.health.dto.MarketDataHealth
@@ -14,6 +15,7 @@ import org.springframework.web.bind.annotation.RestController
 class HealthApiImpl(
     private val connectionStatusPort: ConnectionStatusPort,
     private val marketDataHealthTracker: MarketDataHealthTracker,
+    private val universePort: UniversePort,
 ) : HealthApi {
     override suspend fun getIbkrConnectionStatus(): ResponseEntity<IbkrConnectionStatus> {
         val status = connectionStatusPort.getConnectionStatus()
@@ -35,6 +37,7 @@ class HealthApiImpl(
                 successes = s.successes,
                 failures = s.failures,
                 competingSession = s.competingSession,
+                marketOpen = universePort.getActiveSymbols().isNotEmpty(),
                 lastSuccessAgeSeconds = s.lastSuccessAgeSeconds,
                 lastError = s.lastError,
             ),

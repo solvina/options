@@ -17,7 +17,7 @@ export function DataFlowBadge({ compact = false }: { compact?: boolean }) {
   let tooltip: string | undefined
 
   if (!isLoading && data) {
-    const { flowing, successes, failures, lastSuccessAgeSeconds, lastError, competingSession } = data
+    const { flowing, successes, failures, lastSuccessAgeSeconds, lastError, competingSession, marketOpen } = data
     const ageStr =
       lastSuccessAgeSeconds == null
         ? 'never'
@@ -30,10 +30,15 @@ export function DataFlowBadge({ compact = false }: { compact?: boolean }) {
       color = flowing ? 'bg-amber-400' : 'bg-red-500'
       text = 'Competing TWS session'
       tooltip = 'Another IBKR session (TWS desktop or mobile app) on this account is blocking the engine’s market data. Log out of it — even open charts hold the data.'
+    } else if (!flowing && !marketOpen) {
+      // After-hours: no data is expected, so this is benign — not an outage.
+      color = 'bg-muted-foreground/40'
+      text = 'Market Closed'
+      tooltip = `No market in session — the engine isn’t fetching prices. Last data ${ageStr}.`
     } else if (!flowing) {
       color = 'bg-red-500'
       text = 'Data Down'
-      tooltip = `No prices received (last success ${ageStr}). ${lastError ?? ''}`.trim()
+      tooltip = `Market open but no prices received (last success ${ageStr}). ${lastError ?? ''}`.trim()
     } else if (failures > 0) {
       color = 'bg-amber-400'
       text = 'Data Degraded'

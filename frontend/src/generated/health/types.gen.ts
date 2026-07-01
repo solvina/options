@@ -49,6 +49,11 @@ export type MarketDataHealth = {
      *
      */
     competingSession: boolean;
+    /**
+     * At least one watchlist market is currently in session. When false, no data is expected (after-hours) so "not flowing" is benign, not an outage
+     *
+     */
+    marketOpen: boolean;
 };
 
 export type GetIbkrConnectionStatusData = {

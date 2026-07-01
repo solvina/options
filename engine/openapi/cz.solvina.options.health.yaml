@@ -67,6 +67,7 @@ components:
         - successes
         - failures
         - competingSession
+        - marketOpen
       properties:
         flowing:
           type: boolean
@@ -91,3 +92,8 @@ components:
           description: >
             IBKR reported a competing session (a TWS/app on the same account from another IP)
             recently — the actionable "log out of TWS" cause behind a data outage
+        marketOpen:
+          type: boolean
+          description: >
+            At least one watchlist market is currently in session. When false, no data is expected
+            (after-hours) so "not flowing" is benign, not an outage
