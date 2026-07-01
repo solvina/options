@@ -89,24 +89,40 @@ class ScannerService(
         symbol: Symbol,
         totalCapital: Money,
     ) {
-        // Bull put has priority; at most one entry per symbol per scan (the cross-strategy dedup in
-        // scan() already prevents a second entry on a symbol that holds any open/in-flight spread).
-        bullPutSelector.select(symbol, totalCapital)?.let {
-            logRegimeAtDecision(symbol, "BULL_PUT", DirectionalBias.BULLISH)
-            launchEntry(symbol, it)
-            return
+        // Directional gate: when regime gating is on, the symbol's trend+RSI bias decides which
+        // strategy is eligible, so bull put and bear call each fire on their own signal instead of
+        // bull put always winning by position. BULLISH → bull put only; BEARISH → bear call only;
+        // NEUTRAL (or gating off / regime unavailable) → both eligible, bull-put-first fallback.
+        val gating = regimeService?.gatingEnabled() == true
+        val bias = if (gating) regimeService!!.biasFor(symbol) else null
+        val bullAllowed = bias == null || bias == DirectionalBias.BULLISH || bias == DirectionalBias.NEUTRAL
+        val bearAllowed = bias == null || bias == DirectionalBias.BEARISH || bias == DirectionalBias.NEUTRAL
+
+        // At most one entry per symbol per scan (the cross-strategy dedup in scan() already prevents a
+        // second entry on a symbol that holds any open/in-flight spread).
+        if (bullAllowed) {
+            bullPutSelector.select(symbol, totalCapital)?.let {
+                logRegimeAtDecision(symbol, "BULL_PUT", DirectionalBias.BULLISH)
+                launchEntry(symbol, it)
+                return
+            }
+        } else {
+            logGateSuppressed(symbol, "BULL_PUT", bias)
         }
-        if (bearCallConfig.enabled) {
+        if (bearAllowed && bearCallConfig.enabled) {
             bearCallSelector.select(symbol, totalCapital)?.let {
                 logRegimeAtDecision(symbol, "BEAR_CALL", DirectionalBias.BEARISH)
                 launchEntry(symbol, it)
+                return
             }
+        } else if (!bearAllowed && bearCallConfig.enabled) {
+            logGateSuppressed(symbol, "BEAR_CALL", bias)
         }
     }
 
     /**
-     * Observe-only: logs the cached market regime alongside a trade decision, flagged aligned vs
-     * OPPOSITE to the strategy's directional bias. Cache read only — no fetch, no trading influence.
+     * Logs the cached market regime alongside a trade decision, flagged aligned vs OPPOSITE to the
+     * strategy's directional bias, with the RSI and combined bias. Cache read only — no fetch.
      */
     private fun logRegimeAtDecision(
         symbol: Symbol,
@@ -115,8 +131,19 @@ class ScannerService(
     ) {
         val rs = regimeService?.regimeFor(symbol) ?: return
         tradeLogger.info {
-            "REGIME $symbol  $strategy candidate  market=${rs.regime} (${alignment(rs.regime, bias)})  close=${rs.lastClose}"
+            "REGIME $symbol  $strategy candidate  market=${rs.regime} (${alignment(rs.regime, bias)})  " +
+                "rsi=${rs.rsi}  bias=${rs.bias}  close=${rs.lastClose}"
         }
+    }
+
+    /** Logs a strategy the directional gate suppressed for this symbol (observability of the gate). */
+    private fun logGateSuppressed(
+        symbol: Symbol,
+        strategy: String,
+        bias: DirectionalBias?,
+    ) {
+        if (bias == null) return // gating off — nothing was suppressed
+        tradeLogger.info { "GATE   $symbol  $strategy suppressed by bias=$bias" }
     }
 
     private fun launchEntry(

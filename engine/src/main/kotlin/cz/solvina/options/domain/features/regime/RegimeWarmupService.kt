@@ -33,7 +33,10 @@ class RegimeWarmupService(
         for (symbol in symbols) {
             runCatching {
                 val r = regimeService.refresh(symbol)
-                logger.info { "[REGIME] $symbol = ${r.regime} (close=${r.lastClose} smaFast=${r.smaFast} smaSlow=${r.smaSlow})" }
+                logger.info {
+                    "[REGIME] $symbol = ${r.regime} bias=${r.bias} rsi=${r.rsi} " +
+                        "(close=${r.lastClose} smaFast=${r.smaFast} smaSlow=${r.smaSlow})"
+                }
             }.onFailure { e -> logger.warn { "[REGIME WARMUP] $symbol failed: ${e.message}" } }
         }
         logger.info { "[REGIME WARMUP] done" }

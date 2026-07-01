@@ -118,6 +118,18 @@ notifications:
     from: ${NOTIFY_EMAIL_FROM:}
     to: ${NOTIFY_EMAIL_TO:}
 
+# Market regime: trend (SMA-fast vs SMA-slow) + momentum (RSI) → directional bias that gates
+# strategy selection (bull put vs bear call) per symbol. gating-enabled=true makes the bias vote;
+# false = observe-only (logged, no gate). Warmed off-path daily 07:00 + at startup.
+regime:
+  lookback-days: 250
+  sma-fast: 50
+  sma-slow: 200
+  rsi-period: 14
+  rsi-overbought: 70.0
+  rsi-oversold: 30.0
+  gating-enabled: true      # directional gate ON (paper observation)
+
 # Position reconciliation: alert on IBKR positions not managed by any OPEN spread.
 reconciliation:
   delay-ms: 300000          # run every 5 min
