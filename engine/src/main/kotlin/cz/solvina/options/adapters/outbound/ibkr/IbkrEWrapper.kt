@@ -37,6 +37,7 @@ import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrHistoricalDataRegi
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.TickByTickBidAsk
+import cz.solvina.options.domain.features.market.MarketDataHealthTracker
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.stereotype.Component
 import java.time.Instant
@@ -102,6 +103,7 @@ class IbkrEWrapper(
     private val openOrdersRegistry: IbkrOpenOrdersRegistry,
     private val pnlRegistry: IbkrPnlRegistry,
     private val dividendTickRegistry: IbkrDividendTickRegistry,
+    private val marketDataHealthTracker: MarketDataHealthTracker,
 ) : EWrapper {
     override fun tickPrice(
         tickerId: Int,
@@ -603,6 +605,15 @@ class IbkrEWrapper(
         errorMsg: String,
         advancedOrderRejectJson: String?,
     ) {
+        // Competing-session detection: a TWS/app on the same account from another IP is contending for
+        // market data (IBKR message "connected from a different IP address" / competing live session).
+        // Surface it via the market-data health signal so the UI can say "log out of TWS".
+        if (errorMsg.contains("different IP address", ignoreCase = true) ||
+            errorMsg.contains("competing live session", ignoreCase = true)
+        ) {
+            marketDataHealthTracker.recordCompetingSession()
+        }
+
         if (errorCode in listOf(2104, 2106, 2108, 2119, 2158, 2161, 10090, 10167)) {
             logger.info { "IBKR info [id=$id, code=$errorCode]: $errorMsg" }
         } else {

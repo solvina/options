@@ -34,6 +34,7 @@ class HealthApiImpl(
                 flowing = s.flowing,
                 successes = s.successes,
                 failures = s.failures,
+                competingSession = s.competingSession,
                 lastSuccessAgeSeconds = s.lastSuccessAgeSeconds,
                 lastError = s.lastError,
             ),

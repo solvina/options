@@ -44,6 +44,11 @@ export type MarketDataHealth = {
      * Most recent failure reason (for display), or null when healthy
      */
     lastError?: string | null;
+    /**
+     * IBKR reported a competing session (a TWS/app on the same account from another IP) recently — the actionable "log out of TWS" cause behind a data outage
+     *
+     */
+    competingSession: boolean;
 };
 
 export type GetIbkrConnectionStatusData = {

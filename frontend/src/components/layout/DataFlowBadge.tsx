@@ -17,7 +17,7 @@ export function DataFlowBadge({ compact = false }: { compact?: boolean }) {
   let tooltip: string | undefined
 
   if (!isLoading && data) {
-    const { flowing, successes, failures, lastSuccessAgeSeconds, lastError } = data
+    const { flowing, successes, failures, lastSuccessAgeSeconds, lastError, competingSession } = data
     const ageStr =
       lastSuccessAgeSeconds == null
         ? 'never'
@@ -25,7 +25,12 @@ export function DataFlowBadge({ compact = false }: { compact?: boolean }) {
           ? `${lastSuccessAgeSeconds}s ago`
           : `${Math.round(lastSuccessAgeSeconds / 60)}m ago`
 
-    if (!flowing) {
+    if (competingSession) {
+      // Actionable root cause: a TWS/app on the same account (another IP) is holding the market data.
+      color = flowing ? 'bg-amber-400' : 'bg-red-500'
+      text = 'Competing TWS session'
+      tooltip = 'Another IBKR session (TWS desktop or mobile app) on this account is blocking the engine’s market data. Log out of it — even open charts hold the data.'
+    } else if (!flowing) {
       color = 'bg-red-500'
       text = 'Data Down'
       tooltip = `No prices received (last success ${ageStr}). ${lastError ?? ''}`.trim()
