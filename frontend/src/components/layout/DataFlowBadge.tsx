@@ -6,7 +6,7 @@ import { getMarketDataHealthOptions } from '../../generated/health/@tanstack/rea
  * be "connected" while data is fully starved (e.g. a competing session), so this reflects whether
  * the engine is actually receiving prices (backed by /health/market-data).
  */
-export function DataFlowBadge() {
+export function DataFlowBadge({ compact = false }: { compact?: boolean }) {
   const { data, isLoading } = useQuery({
     ...getMarketDataHealthOptions(),
     refetchInterval: 10_000,
@@ -41,9 +41,9 @@ export function DataFlowBadge() {
   }
 
   return (
-    <div className="flex items-center gap-2 text-sm" title={tooltip}>
+    <div className="flex items-center gap-2 text-sm" title={compact ? `${text} — ${tooltip ?? ''}`.trim() : tooltip}>
       <span className={`inline-block h-2 w-2 rounded-full ${color}`} />
-      <span className="text-muted-foreground">{text}</span>
+      {!compact && <span className="text-muted-foreground">{text}</span>}
     </div>
   )
 }

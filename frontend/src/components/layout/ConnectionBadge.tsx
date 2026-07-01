@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { getIbkrConnectionStatusOptions } from '../../generated/health/@tanstack/react-query.gen'
 import { getDataHealthOptions } from '../../generated/diagnostic/@tanstack/react-query.gen'
 
-export function ConnectionBadge() {
+export function ConnectionBadge({ compact = false }: { compact?: boolean }) {
   const { data: connectionData } = useQuery({
     ...getIbkrConnectionStatusOptions(),
     refetchInterval: 10_000,
@@ -74,9 +74,9 @@ export function ConnectionBadge() {
   const tooltip = getTooltip()
 
   return (
-    <div className="flex items-center gap-2 text-sm" title={tooltip}>
+    <div className="flex items-center gap-2 text-sm" title={compact ? `${statusText}${tooltip ? ` — ${tooltip}` : ''}` : tooltip}>
       <span className={`inline-block h-2 w-2 rounded-full ${statusColor}`} />
-      <span className="text-muted-foreground">{statusText}</span>
+      {!compact && <span className="text-muted-foreground">{statusText}</span>}
     </div>
   )
 }
