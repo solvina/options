@@ -18,9 +18,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
+import java.time.Clock
+import java.time.Duration
+import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Properties
+import java.util.concurrent.ConcurrentHashMap
 
 private val logger = KotlinLogging.logger {}
 
@@ -34,13 +38,22 @@ private val logger = KotlinLogging.logger {}
 @Component
 class SmtpOpportunityNotifier(
     private val config: EmailNotificationConfig,
+    private val clock: Clock,
 ) : OpportunityNotificationPort {
     private val tsFormat: DateTimeFormatter =
         DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss z").withZone(ZoneId.systemDefault())
 
+    /** Last time each opportunity key was emailed — powers the dedupe window. */
+    private val lastSentAt = ConcurrentHashMap<String, Instant>()
+
     override suspend fun notify(opportunity: SpreadOpportunity) {
         if (!config.enabled || config.username.isBlank() || config.password.isBlank() || config.to.isBlank()) {
             logger.debug { "Opportunity email suppressed (disabled/unconfigured): ${opportunity.symbol.value}" }
+            return
+        }
+
+        if (isDuplicate(opportunity)) {
+            logger.debug { "Opportunity email suppressed (already sent within ${config.dedupeMinutes}m): ${dedupeKey(opportunity)}" }
             return
         }
 
@@ -68,6 +81,35 @@ class SmtpOpportunityNotifier(
         } catch (e: Exception) {
             logger.warn { "Opportunity email '$subject' to ${config.to} failed: ${e.message}" }
         }
+    }
+
+    /** Stable identity of an opportunity — the same spread re-found on a later scan shares this key. */
+    private fun dedupeKey(o: SpreadOpportunity): String =
+        "${o.strategyId}:${o.symbol.value}:${o.shortLeg.contract.strike.stripTrailingZeros().toPlainString()}/" +
+            "${o.longLeg.contract.strike.stripTrailingZeros().toPlainString()}:${o.expiry}"
+
+    /**
+     * True if this opportunity was already emailed within the dedupe window. Atomic per key
+     * (ConcurrentHashMap.compute) so concurrent duplicate launches collapse to a single send.
+     */
+    private fun isDuplicate(o: SpreadOpportunity): Boolean {
+        if (config.dedupeMinutes <= 0) return false
+        val now = Instant.now(clock)
+        val window = Duration.ofMinutes(config.dedupeMinutes)
+        var duplicate = false
+        lastSentAt.compute(dedupeKey(o)) { _, previous ->
+            if (previous != null && Duration.between(previous, now) < window) {
+                duplicate = true
+                previous // keep the original send time; suppress this one
+            } else {
+                now // first send, or window elapsed — record and allow
+            }
+        }
+        // Opportunistic prune so the map can't grow unbounded across a long-running session.
+        if (lastSentAt.size > 256) {
+            lastSentAt.entries.removeIf { Duration.between(it.value, now) >= window }
+        }
+        return duplicate
     }
 
     private fun buildSession(): Session {

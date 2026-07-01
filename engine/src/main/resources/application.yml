@@ -117,6 +117,7 @@ notifications:
     password: ${NOTIFY_EMAIL_APP_PASSWORD:}
     from: ${NOTIFY_EMAIL_FROM:}
     to: ${NOTIFY_EMAIL_TO:}
+    dedupe-minutes: 720       # one email per opportunity (symbol+strikes+expiry) per 12h
 
 # Market regime: trend (SMA-fast vs SMA-slow) + momentum (RSI) → directional bias that gates
 # strategy selection (bull put vs bear call) per symbol. gating-enabled=true makes the bias vote;

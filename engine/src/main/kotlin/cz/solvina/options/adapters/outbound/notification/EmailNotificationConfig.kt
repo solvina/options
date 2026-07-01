@@ -18,4 +18,10 @@ data class EmailNotificationConfig(
     val password: String = "",
     val from: String = "",
     val to: String = "",
+    /**
+     * Suppress a repeat email for the same opportunity (symbol + strategy + strikes + expiry) within
+     * this many minutes. Collapses the re-discovery of an un-filled candidate every scan (and any
+     * concurrent duplicate launches) into a single email. Default 12h ≈ once per session.
+     */
+    val dedupeMinutes: Long = 720,
 )
