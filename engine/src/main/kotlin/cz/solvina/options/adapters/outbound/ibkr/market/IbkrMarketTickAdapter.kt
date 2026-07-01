@@ -210,11 +210,14 @@ class IbkrMarketTickAdapter(
     // NOTE: Adding exchange/tradingClass causes error 200 for US options, so we use minimal spec.
     private suspend fun contractForMktData(contract: OptionContract): Contract {
         val key = OptionContractKey(contract.symbol, contract.expiry, contract.strike, contract.type)
+        // Data-routing venue for the conId contract: SMART for US, the venue (EUREX) for EU. Required
+        // by IBKR even with a conId — omitting it caused error 321 "Please enter exchange" → no tick.
+        val mktExchange = contractFactory.defFor(contract.symbol).optionExchange
 
         // Try cache first (instant)
         contractCache.getCachedOptionConId(key)?.let {
             logger.debug { "[${contract.symbol}] mkt-data conId from cache (${contract.strike}P ${contract.expiry})" }
-            return contractFactory.conIdContract(it)
+            return contractFactory.conIdContract(it, mktExchange)
         }
 
         // Resolve on an independent scope so the bounded wait below only stops *waiting* — it never
@@ -234,7 +237,7 @@ class IbkrMarketTickAdapter(
             }
         conId?.let {
             logger.debug { "[${contract.symbol}] mkt-data conId resolved=$it (${contract.strike}P ${contract.expiry})" }
-            return contractFactory.conIdContract(it)
+            return contractFactory.conIdContract(it, mktExchange)
         }
 
         // Fall back to minimal contract spec (symbol+secType+currency+expiry+right only).

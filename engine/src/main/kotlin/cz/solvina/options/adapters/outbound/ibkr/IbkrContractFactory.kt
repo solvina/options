@@ -41,7 +41,19 @@ class IbkrContractFactory(
             if (!tradingClass.isNullOrBlank()) tradingClass(tradingClass)
         }
 
-    fun conIdContract(conId: Int): Contract = Contract().apply { conid(conId) }
+    // IBKR requires an [exchange] on market-data requests (reqMktData/reqTickByTickData) even when a
+    // conId uniquely identifies the instrument — without it the request is rejected with error 321
+    // "Please enter exchange" (and 200 "field #207"), which the execution path then mislabels as a
+    // no-market-data timeout. The conId already pins the instrument, so the exchange only routes the
+    // data feed: SMART for US, the venue (e.g. EUREX) for EU. Pass def.optionExchange.
+    fun conIdContract(
+        conId: Int,
+        exchange: String,
+    ): Contract =
+        Contract().apply {
+            conid(conId)
+            exchange(exchange)
+        }
 
     fun bagContract(
         soldContract: OptionContract,

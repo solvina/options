@@ -78,9 +78,13 @@ class IbkrMarketTickAdapterContractResolutionTest {
 
             val contracts = captureContracts()
 
-            // Both contracts should be conId-only (no symbol/secType fields)
+            // conId identifies the instrument; the exchange is still REQUIRED on the market-data
+            // request (IBKR error 321 "Please enter exchange" without it) and must be the venue —
+            // EUREX for this ASML instrument (SMART for US).
             assertEquals(soldConId, contracts.first.conid())
             assertEquals(boughtConId, contracts.second.conid())
+            assertEquals("EUREX", contracts.first.exchange())
+            assertEquals("EUREX", contracts.second.exchange())
         }
 
     @Test
@@ -99,6 +103,8 @@ class IbkrMarketTickAdapterContractResolutionTest {
 
             assertEquals(soldConId, contracts.first.conid())
             assertEquals(boughtConId, contracts.second.conid())
+            assertEquals("EUREX", contracts.first.exchange())
+            assertEquals("EUREX", contracts.second.exchange())
         }
 
     @Test
