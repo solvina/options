@@ -3,6 +3,8 @@ package cz.solvina.options.domain.features.scanner
 import cz.solvina.options.domain.features.execution.model.TradeExecutionRequest
 import cz.solvina.options.domain.features.market.MarketDataPort
 import cz.solvina.options.domain.features.market.OptionChainPort
+import cz.solvina.options.domain.features.notification.OpportunityNotificationPort
+import cz.solvina.options.domain.features.notification.SpreadOpportunity
 import cz.solvina.options.domain.features.spread.model.StrategyId
 import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.features.volatility.VolatilityPort
@@ -14,6 +16,7 @@ import org.springframework.stereotype.Component
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.Clock
+import java.time.Instant
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 import kotlin.math.abs
@@ -29,6 +32,8 @@ class BullPutCandidateSelector(
     private val universePort: UniversePort,
     private val config: BullPutScannerConfig,
     private val clock: Clock,
+    // Notification-only: emails the qualified candidate; NoOp default so unit tests need not supply it.
+    private val opportunityNotifier: OpportunityNotificationPort = OpportunityNotificationPort.NoOp,
 ) {
     suspend fun select(
         symbol: Symbol,
@@ -164,6 +169,43 @@ class BullPutCandidateSelector(
                     ivRank.rank,
                 )}%  underlying=${underlyingPrice.amount}  mid=\$$midCredit  max_risk=\$$maxRiskPerShare"
         }
+
+        // Notification-only: emails the full candidate while the per-leg quotes/greeks are still in
+        // scope. Best-effort — the notifier swallows failures; the session lookup is guarded too.
+        opportunityNotifier.notify(
+            SpreadOpportunity(
+                strategyId = StrategyId.BULL_PUT,
+                symbol = symbol,
+                session = runCatching { universePort.getMarketSchedule(symbol).session }.getOrDefault("US"),
+                detectedAt = Instant.now(clock),
+                ivRank = ivRank.rank,
+                ivRankThreshold = ivRankThreshold,
+                expiry = expiry,
+                dte = dte,
+                minDte = minDte,
+                maxDte = maxDte,
+                preferredDte = preferredDte,
+                targetDelta = targetDelta,
+                deltaMin = deltaMin,
+                deltaMax = deltaMax,
+                underlyingPrice = underlyingPrice.amount,
+                shortLeg = soldQuote,
+                longLeg = boughtQuote,
+                midCredit = midCredit,
+                bidCredit = bidCredit,
+                minCreditPerShare = minCreditPerShare,
+                targetWidth = spreadWidthUsd,
+                actualWidth = actualSpreadWidth,
+                maxRiskPerShare = maxRiskPerShare,
+                totalCapital = totalCapital.amount,
+                maxRiskPercent = maxRiskPercent,
+                quantity = 1,
+                takeProfitPercent = config.takeProfitPercent,
+                stopLossPercent = config.stopLossPercent,
+                timeProfitDte = config.timeProfitDte,
+                driftProtectionPct = config.driftProtectionPct,
+            ),
+        )
 
         return TradeExecutionRequest(
             soldContract = soldQuote.contract,

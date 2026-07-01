@@ -106,6 +106,18 @@ alerts:
     bot-token: ${TELEGRAM_BOT_TOKEN:}
     chat-id: ${TELEGRAM_CHAT_ID:}
 
+# Email notifications: one rich email per qualified spread candidate (bull put + bear call).
+# Credentials injected from env (.env). Password is a Gmail App Password (2FA), never the account password.
+notifications:
+  email:
+    enabled: true
+    smtp-host: smtp.gmail.com
+    smtp-port: 587
+    username: ${NOTIFY_EMAIL_USER:}
+    password: ${NOTIFY_EMAIL_APP_PASSWORD:}
+    from: ${NOTIFY_EMAIL_FROM:}
+    to: ${NOTIFY_EMAIL_TO:}
+
 # Position reconciliation: alert on IBKR positions not managed by any OPEN spread.
 reconciliation:
   delay-ms: 300000          # run every 5 min

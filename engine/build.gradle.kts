@@ -63,6 +63,9 @@ dependencies {
     // InfluxDB
     implementation("com.influxdb:influxdb-client-kotlin:7.2.0")
 
+    // Email notifications (Jakarta Mail impl) — SMTP for spread-opportunity emails
+    implementation("org.eclipse.angus:angus-mail:2.0.3")
+
     // Interactive Brokers TWS API
     implementation(files("lib/TwsApi_debug.jar"))
 }
