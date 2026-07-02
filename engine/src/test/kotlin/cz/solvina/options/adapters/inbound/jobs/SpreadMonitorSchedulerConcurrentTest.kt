@@ -6,8 +6,10 @@ import cz.solvina.options.domain.features.connection.status.ConnectionStatusPort
 import cz.solvina.options.domain.features.scanner.TradingKillSwitch
 import cz.solvina.options.domain.features.spread.SpreadManagementService
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.delay
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import kotlin.test.assertTrue
@@ -107,6 +109,46 @@ class SpreadMonitorSchedulerConcurrentTest {
 
         // If we get here without hanging, tryLock is working correctly
         assertTrue(true, "Multiple monitorSpreads calls completed without deadlock")
+    }
+
+    @Test
+    fun `mutex is released after checkExits suspends and resumes on a different dispatcher thread`() {
+        // checkExits() genuinely suspends (unlike the other tests' relaxed mock), so the launched
+        // coroutine on Dispatchers.IO may resume on a different thread than it started on — this is
+        // exactly the scenario a thread-bound ReentrantLock cannot survive (IllegalMonitorStateException
+        // on unlock from a different thread, leaving the lock stuck forever).
+        coEvery { spreadManagementService.checkExits() } coAnswers { delay(50) }
+        // Widen exchange hours to the full day so isAnyExchangeOpen() is independent of wall-clock
+        // time-of-day when this test actually runs — only the weekday gate still applies.
+        every { instrumentsConfig.exchanges } returns
+            mapOf(
+                "US" to
+                    ExchangeHours(
+                        timezone = "America/New_York",
+                        open = "00:00",
+                        close = "23:59",
+                    ),
+            )
+
+        val scheduler =
+            SpreadMonitorScheduler(
+                spreadManagementService,
+                connectionStatusPort,
+                killSwitch,
+                instrumentsConfig,
+            )
+
+        scheduler.monitorSpreads() // acquires the mutex, starts a 50ms suspend
+        scheduler.monitorSpreads() // should be skipped: previous run still in progress
+
+        Thread.sleep(300) // let the first run's coroutine complete and release the mutex
+
+        scheduler.monitorSpreads() // mutex must be free again — must not stay stuck
+
+        Thread.sleep(300) // let the third run complete
+
+        // Exactly 2 invocations: the first run and the third run. The second was skipped by tryLock.
+        coVerify(exactly = 2) { spreadManagementService.checkExits() }
     }
 
     @Test

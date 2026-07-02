@@ -62,7 +62,4 @@ class BearCallSpreadCloser(
                 ivRankAtExit = ivAtExit,
             ),
         )
-
-    override suspend fun markRollbackFailed(spread: Spread): Spread =
-        port.update((spread as BearCallSpread).copy(status = SpreadStatus.ROLLBACK_FAILED))
 }

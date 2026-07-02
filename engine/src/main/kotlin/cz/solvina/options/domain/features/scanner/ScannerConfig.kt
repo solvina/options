@@ -23,6 +23,9 @@ data class ScannerConfig(
     val ticksBeforePriceAdjust: Int = 5,
     val priceAdjustIntervalSeconds: Int = 30,
     val maxLegBidAskSpreadPct: Double = 0.30,
+    // Fresh-credit safety abort: a flat $0.10 is ~30% of a $0.35 credit but ~3% of a $3.00 one, so the
+    // effective threshold is percentage-of-target, floored at $0.05 for very small target credits.
+    val freshCreditMaxDriftPct: Double = 0.20,
     // Order chase (used by SpreadManagementService close orders)
     val orderChaseTimeoutMinutes: Long = 5,
     val orderChaseMaxRetries: Int = 3,

@@ -14,6 +14,11 @@ class IbkrOrderRegistry {
     internal val pendingOrderStatus = ConcurrentHashMap<Int, CompletableDeferred<OrderStatus>>()
     private val fillPrices = ConcurrentHashMap<Int, java.math.BigDecimal>()
     private val selfCancelledOrders = ConcurrentHashMap.newKeySet<Int>()
+
+    // Orders confirmed FILLED by IBKR, kept independent of pendingOrderStatus (which is removed once
+    // consumed). Absence from the open-orders list alone can mean "cancelled" OR "filled" — this set
+    // lets callers (e.g. OrderReplacementService) tell the two apart before submitting a replacement.
+    private val filledOrders = ConcurrentHashMap.newKeySet<Int>()
     private val orderIdCounter = AtomicInteger(1)
 
     fun seedOrderId(id: Int) {
@@ -31,19 +36,37 @@ class IbkrOrderRegistry {
         orderId: Int,
         status: String,
         avgFillPrice: Double = 0.0,
+        filled: java.math.BigDecimal = java.math.BigDecimal.ZERO,
+        remaining: java.math.BigDecimal = java.math.BigDecimal.ZERO,
     ) {
+        // Record fill state BEFORE the deferred lookup: a late "filled" callback arriving after the
+        // deferred was consumed/removed (e.g. a fill racing a cancel) must still be visible via
+        // isFilled/consumeFillPrice — that is what lets cancel paths tell "cancelled" from "filled".
+        if (status.lowercase() == "filled") {
+            filledOrders.add(orderId)
+            if (avgFillPrice > 0.0) fillPrices[orderId] = java.math.BigDecimal(avgFillPrice).setScale(4, java.math.RoundingMode.HALF_UP)
+        }
         val deferred = pendingOrderStatus[orderId] ?: return
-        when (status.lowercase()) {
-            "filled" -> {
-                if (avgFillPrice > 0.0) fillPrices[orderId] = java.math.BigDecimal(avgFillPrice).setScale(4, java.math.RoundingMode.HALF_UP)
-                deferred.complete(OrderStatus.FILLED)
+        // Qty is always 1 today, so no code path currently expects a partial fill. This is a tripwire
+        // for when that stops being true: a terminal status with 0 < filled < total would otherwise
+        // pass through silently as fully filled or fully cancelled.
+        if (filled > java.math.BigDecimal.ZERO && remaining > java.math.BigDecimal.ZERO) {
+            logger.warn {
+                "Order $orderId reported terminal status '$status' with a PARTIAL quantity " +
+                    "(filled=$filled remaining=$remaining) — partial fills are not modeled; treating per the terminal status"
             }
+        }
+        when (status.lowercase()) {
+            "filled" -> deferred.complete(OrderStatus.FILLED)
             "cancelled", "inactive", "apicancelled", "rejected" -> deferred.complete(OrderStatus.CANCELLED)
             else -> logger.debug { "Order $orderId status: $status (waiting for terminal status)" }
         }
     }
 
     fun consumeFillPrice(orderId: Int): java.math.BigDecimal? = fillPrices.remove(orderId)
+
+    /** True once IBKR has confirmed this order FILLED — distinguishes "filled" from "cancelled/absent". */
+    fun isFilled(orderId: Int): Boolean = filledOrders.contains(orderId)
 
     fun onError(
         id: Int,

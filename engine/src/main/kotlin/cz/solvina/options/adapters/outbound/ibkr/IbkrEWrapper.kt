@@ -216,7 +216,7 @@ class IbkrEWrapper(
                 "whyHeld" to whyHeld,
             )
         }
-        orderRegistry.onOrderStatus(orderId, status, avgFillPrice)
+        orderRegistry.onOrderStatus(orderId, status, avgFillPrice, filled.value(), remaining.value())
     }
 
     override fun openOrder(

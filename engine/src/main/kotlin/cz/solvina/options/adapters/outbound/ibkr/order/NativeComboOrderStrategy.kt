@@ -7,13 +7,15 @@ import com.ib.client.Order
 import cz.solvina.options.adapters.outbound.ibkr.IbkrConnectionConfig
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
 import cz.solvina.options.adapters.outbound.ibkr.cache.OptionContractKey
+import cz.solvina.options.adapters.outbound.ibkr.cache.resolveConIdOrCached
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import cz.solvina.options.domain.features.order.OrderStatus
+import cz.solvina.options.domain.features.order.floorToOptionTick
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
+import cz.solvina.options.domain.models.OptionType
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.withTimeout
 import java.math.BigDecimal
 
 private val logger = KotlinLogging.logger {}
@@ -54,9 +56,10 @@ class NativeComboOrderStrategy(
         }
 
         return try {
-            // Build native combo contract. 6s > the cache's own 5s network timeout so the cache
-            // governs the lookup and cleans up its own in-flight state (a sub-second timeout here
-            // cancels the cache mid-lookup and used to orphan its in-flight deferred — see E3).
+            // Build native combo contract. resolveConIdOrCached uses a 6s timeout > the cache's own
+            // 5s network timeout so the cache governs the lookup and cleans up its own in-flight state
+            // (a sub-second timeout here cancels the cache mid-lookup and used to orphan its in-flight
+            // deferred — see E3).
             val soldKey =
                 OptionContractKey(
                     symbol = soldContract.symbol,
@@ -72,19 +75,11 @@ class NativeComboOrderStrategy(
                     optionType = boughtContract.type,
                 )
             val soldConId =
-                try {
-                    withTimeout(6_000L) { contractCache.getOrFetchOptionConId(soldKey) }
-                } catch (e: Exception) {
-                    contractCache.getCachedOptionConId(soldKey)
-                        ?: error("Sold contract not in cache and lookup timed out for $soldKey")
-                }
+                contractCache.resolveConIdOrCached(soldKey)
+                    ?: error("Sold contract not in cache and lookup timed out for $soldKey")
             val boughtConId =
-                try {
-                    withTimeout(6_000L) { contractCache.getOrFetchOptionConId(boughtKey) }
-                } catch (e: Exception) {
-                    contractCache.getCachedOptionConId(boughtKey)
-                        ?: error("Bought contract not in cache and lookup timed out for $boughtKey")
-                }
+                contractCache.resolveConIdOrCached(boughtKey)
+                    ?: error("Bought contract not in cache and lookup timed out for $boughtKey")
 
             val bagContract =
                 buildNativeComboContract(
@@ -97,7 +92,7 @@ class NativeComboOrderStrategy(
                 Order().apply {
                     action("BUY")
                     orderType("LMT")
-                    lmtPrice(-netCredit.amount.floorToTick().toDouble()) // Negative = net credit accepted
+                    lmtPrice(-netCredit.amount.floorToOptionTick().toDouble()) // Negative = net credit accepted
                     totalQuantity(Decimal.get(qty.toLong()))
                     tif("DAY")
                     if (connectionConfig.account.isNotBlank()) account(connectionConfig.account)
@@ -117,7 +112,8 @@ class NativeComboOrderStrategy(
             registry.pendingOrderStatus[orderId] = deferred
 
             logger.info {
-                "[$exchangeId] Submitting NATIVE COMBO order: SELL ${soldContract.strike}P / BUY ${boughtContract.strike}P " +
+                "[$exchangeId] Submitting NATIVE COMBO order: SELL ${soldContract.strike}${soldContract.type.ibkrCode} / " +
+                    "BUY ${boughtContract.strike}${boughtContract.type.ibkrCode} " +
                     "@ net \$${netCredit.amount} orderId=$orderId (both legs atomic)"
             }
 
@@ -142,7 +138,8 @@ class NativeComboOrderStrategy(
             )
         } catch (e: Exception) {
             logger.error(e) {
-                "[$exchangeId] Failed to submit native combo order for ${soldContract.strike}P/${boughtContract.strike}P: ${e.message}"
+                "[$exchangeId] Failed to submit native combo order for ${soldContract.strike}${soldContract.type.ibkrCode}/" +
+                    "${boughtContract.strike}${boughtContract.type.ibkrCode}: ${e.message}"
             }
             OrderSubmissionResult(
                 status = SubmissionStatus.SYSTEM_ERROR,
@@ -162,9 +159,22 @@ class NativeComboOrderStrategy(
             return ValidationResult(false, "Legs must have same expiry date")
         }
 
-        // Validate strike relationship (sold should be higher for put spreads)
-        if (soldContract.strike <= boughtContract.strike) {
-            return ValidationResult(false, "Short strike must be > long strike for put spread")
+        // Both legs must be the same option type — a credit spread never mixes puts and calls.
+        if (soldContract.type != boughtContract.type) {
+            return ValidationResult(false, "Both legs must be the same option type (puts or calls)")
+        }
+
+        // Strike relationship depends on spread direction: bull put sells the HIGHER strike,
+        // bear call sells the LOWER strike.
+        when (soldContract.type) {
+            OptionType.PUT ->
+                if (soldContract.strike <= boughtContract.strike) {
+                    return ValidationResult(false, "Short strike must be > long strike for put spread")
+                }
+            OptionType.CALL ->
+                if (soldContract.strike >= boughtContract.strike) {
+                    return ValidationResult(false, "Short strike must be < long strike for call spread")
+                }
         }
 
         // Validate credit is positive

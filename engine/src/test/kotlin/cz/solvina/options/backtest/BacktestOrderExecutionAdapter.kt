@@ -46,8 +46,9 @@ class BacktestOrderExecutionAdapter : OrderExecutionPort {
 
     override suspend fun awaitFill(orderId: Int): OrderStatus = OrderStatus.FILLED
 
-    override suspend fun cancelAndAwait(orderId: Int) {
+    override suspend fun cancelAndAwait(orderId: Int): OrderStatus {
         // No-op — all fills are immediate in backtest
+        return OrderStatus.CANCELLED
     }
 
     override suspend fun replaceComboWithNewPrice(
@@ -59,6 +60,8 @@ class BacktestOrderExecutionAdapter : OrderExecutionPort {
     ): Int = submitComboLimitOrder(soldContract, boughtContract, newCredit, qty)
 
     override suspend fun getSymbolsWithOpenOrders(): Set<Symbol> = emptySet()
+
+    override fun consumeFillPrice(orderId: Int): java.math.BigDecimal? = null
 }
 
 data class ComboFillRecord(

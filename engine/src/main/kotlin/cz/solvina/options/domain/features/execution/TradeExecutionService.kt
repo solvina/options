@@ -9,6 +9,7 @@ import cz.solvina.options.domain.features.order.LegQuotes
 import cz.solvina.options.domain.features.order.OrderExecutionPort
 import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.features.order.StrandedLongLegException
+import cz.solvina.options.domain.features.order.optionTickFor
 import cz.solvina.options.domain.features.scanner.ScannerConfig
 import cz.solvina.options.domain.features.scanner.StrategyParamsRegistry
 import cz.solvina.options.domain.features.spread.SpreadQueryFacade
@@ -42,6 +43,10 @@ import kotlin.math.abs
 private val logger = KotlinLogging.logger {}
 private val tradeLogger = KotlinLogging.logger("TRADES")
 
+/** "450P/445P" (put spread) or "450C/455C" (call spread) — for log lines. */
+private val TradeExecutionRequest.legsLabel: String
+    get() = "${soldContract.strike}${soldContract.type.ibkrCode}/${boughtContract.strike}${boughtContract.type.ibkrCode}"
+
 @Service
 class TradeExecutionService(
     private val marketTickPort: MarketTickPort,
@@ -70,12 +75,12 @@ class TradeExecutionService(
         if (!config.tradingEnabled) {
             logger.info {
                 "[${request.underlyingSymbol}] DIAGNOSTIC: would enter " +
-                    "${request.soldContract.strike}P/${request.boughtContract.strike}P " +
+                    "${request.legsLabel} " +
                     "exp=${request.soldContract.expiry} " +
                     "credit≈\$${request.targetCredit} ivRank=${"%.1f".format(request.ivRankAtEntry)}%"
             }
             tradeLogger.info {
-                "DIAGNOSTIC ${request.underlyingSymbol}  ${request.soldContract.strike}P/${request.boughtContract.strike}P" +
+                "DIAGNOSTIC ${request.underlyingSymbol}  ${request.legsLabel}" +
                     "  exp=${request.soldContract.expiry}  credit=\$${request.targetCredit}  iv_rank=${"%.1f".format(
                         request.ivRankAtEntry,
                     )}%"
@@ -111,7 +116,7 @@ class TradeExecutionService(
                     "[${request.underlyingSymbol}] CAP_REACHED — active spreads at maxOpenSpreads=${config.maxOpenSpreads}, skipping entry"
                 }
                 tradeLogger.info {
-                    "REJECT ${request.underlyingSymbol}  ${request.soldContract.strike}P/${request.boughtContract.strike}P  reason=CAP_REACHED"
+                    "REJECT ${request.underlyingSymbol}  ${request.legsLabel}  reason=CAP_REACHED"
                 }
             }
             return TradeExecutionResult(reservation)
@@ -195,7 +200,8 @@ class TradeExecutionService(
                     }
                     writer.markBrokenLongOnly(pendingSpread, e.longOrderId, "broken_long_only: ${e.message}")
                     tradeLogger.warn {
-                        "BROKEN_LONG_ONLY ${request.underlyingSymbol}  ${request.boughtContract.strike}P" +
+                        "BROKEN_LONG_ONLY ${request.underlyingSymbol}  " +
+                            "${request.boughtContract.strike}${request.boughtContract.type.ibkrCode}" +
                             "  long_order=${e.longOrderId}  reason=${e.message}"
                     }
                     return TradeExecutionResult(ExecutionOutcome.BROKEN_LONG_ONLY, comboOrderId = e.longOrderId)
@@ -245,6 +251,20 @@ class TradeExecutionService(
             )
         }
 
+        // One ladder step, shared by the Credit and Timer handlers. Returns false when the credit
+        // floor was reached (caller breaks out with FLOOR_REACHED). When the ladder discovers the
+        // current order filled instead of cancelling, it returns the SAME order id with the credit
+        // unchanged — no new fill watcher is needed; the pending Fill event completes the loop.
+        suspend fun ladderStep(): Boolean {
+            val stepped = ladder(request, currentOrderId, currentCredit) ?: return false
+            currentCredit = stepped.first
+            if (stepped.second != currentOrderId) {
+                currentOrderId = stepped.second
+                launchFillWatcher(currentOrderId)
+            }
+            return true
+        }
+
         // Time-based ladder: fires every priceAdjustIntervalSeconds regardless of market data stream health.
         // This ensures the order chases toward the bid even when EUREX options data is not subscribed.
         val timerJob: Job =
@@ -268,10 +288,31 @@ class TradeExecutionService(
                                     // moved on. Honor it instead of discarding — otherwise a real
                                     // position goes untracked (E4). Credit is recorded at the current
                                     // ladder step (conservative: the older order's credit was >= this).
+                                    // The newer replacement order (currentOrderId) is still working at
+                                    // IBKR — cancel it now, or it can fill independently later and
+                                    // double the position.
                                     logger.warn {
                                         "[${request.underlyingSymbol}] Stale order ${event.orderId} reports FILLED " +
-                                            "(current=$currentOrderId) — honoring it as the fill"
+                                            "(current=$currentOrderId) — honoring it as the fill and cancelling the replacement"
                                     }
+                                    runCatching { orderExecutionPort.cancelAndAwait(currentOrderId) }
+                                        .onSuccess { cancelStatus ->
+                                            if (cancelStatus == OrderStatus.FILLED) {
+                                                // Worst case: BOTH orders filled. Only the stale one is
+                                                // recorded below — the replacement fill is a real extra
+                                                // position the orphan reconciliation must surface.
+                                                logger.error {
+                                                    "[${request.underlyingSymbol}] Replacement order $currentOrderId ALSO " +
+                                                        "filled during cancellation — DOUBLE FILL: only the stale order " +
+                                                        "${event.orderId} is tracked; flatten the extra position manually"
+                                                }
+                                            }
+                                        }.onFailure { ex ->
+                                            logger.warn(ex) {
+                                                "[${request.underlyingSymbol}] Failed to cancel replacement order " +
+                                                    "$currentOrderId after honoring stale fill ${event.orderId}"
+                                            }
+                                        }
                                     currentOrderId = event.orderId
                                     outcome = ExecutionOutcome.FILLED
                                     break
@@ -309,8 +350,15 @@ class TradeExecutionService(
                                     "[${request.underlyingSymbol}] DRIFT_ABORTED — " +
                                         "drift=${"%.2f".format(drift * 100)}% > threshold=${driftThreshold * 100}%"
                                 }
-                                orderExecutionPort.cancelAndAwait(currentOrderId)
-                                outcome = ExecutionOutcome.DRIFT_ABORTED
+                                val cancelStatus = orderExecutionPort.cancelAndAwait(currentOrderId)
+                                // The fill can race the abort's cancel — a filled order is a real
+                                // position and must be recorded as such, not as a drift abort.
+                                outcome =
+                                    if (cancelStatus == OrderStatus.FILLED) {
+                                        ExecutionOutcome.FILLED
+                                    } else {
+                                        ExecutionOutcome.DRIFT_ABORTED
+                                    }
                                 break
                             }
                         }
@@ -319,27 +367,19 @@ class TradeExecutionService(
                             ticksSinceAdjust++
                             if (ticksSinceAdjust >= config.ticksBeforePriceAdjust) {
                                 ticksSinceAdjust = 0
-                                val stepped = ladder(request, currentOrderId, currentCredit)
-                                if (stepped == null) {
+                                if (!ladderStep()) {
                                     outcome = ExecutionOutcome.FLOOR_REACHED
                                     break
                                 }
-                                currentCredit = stepped.first
-                                currentOrderId = stepped.second
-                                launchFillWatcher(currentOrderId)
                             }
                         }
 
                         is ExecutionEvent.Timer -> {
                             ticksSinceAdjust = 0
-                            val stepped = ladder(request, currentOrderId, currentCredit)
-                            if (stepped == null) {
+                            if (!ladderStep()) {
                                 outcome = ExecutionOutcome.FLOOR_REACHED
                                 break
                             }
-                            currentCredit = stepped.first
-                            currentOrderId = stepped.second
-                            launchFillWatcher(currentOrderId)
                         }
                     }
                 }
@@ -348,9 +388,18 @@ class TradeExecutionService(
             logger.info {
                 "[${request.underlyingSymbol}] TIMED_OUT after ${config.executionTimeoutMinutes} min"
             }
-            runCatching { orderExecutionPort.cancelAndAwait(currentOrderId) }
-                .onFailure { ex -> logger.warn(ex) { "[${request.underlyingSymbol}] Cancel on timeout failed" } }
-            outcome = ExecutionOutcome.TIMED_OUT
+            // The fill can race the timeout's cancel — a filled order is a real position and must
+            // be recorded as FILLED, never as CLOSED_TIMEOUT (which would leave it untracked).
+            val cancelStatus =
+                runCatching { orderExecutionPort.cancelAndAwait(currentOrderId) }
+                    .onFailure { ex -> logger.warn(ex) { "[${request.underlyingSymbol}] Cancel on timeout failed" } }
+                    .getOrNull()
+            outcome =
+                if (cancelStatus == OrderStatus.FILLED) {
+                    ExecutionOutcome.FILLED
+                } else {
+                    ExecutionOutcome.TIMED_OUT
+                }
         } catch (e: CancellationException) {
             throw e
         } finally {
@@ -362,19 +411,42 @@ class TradeExecutionService(
         }
 
         if (outcome == ExecutionOutcome.FILLED) {
+            // Prefer the broker-reported average fill price over the last ladder limit we submitted —
+            // price improvement (fills better than the resting limit) otherwise goes unrecorded, which
+            // then skews TP/SL thresholds computed off the stored creditPerShare. BAG combo fills report
+            // price using IBKR's own sign convention, so normalize with abs() and sanity-gate against
+            // the requested range before trusting it; anything outside that range falls back to the
+            // ladder limit we know is correct rather than risk persisting a bogus credit.
+            val reportedFill = orderExecutionPort.consumeFillPrice(currentOrderId)?.abs()
+            val grossCredit =
+                if (reportedFill != null &&
+                    reportedFill >= request.floorCredit &&
+                    reportedFill <= request.targetCredit.add(BigDecimal("0.10"))
+                ) {
+                    reportedFill
+                } else {
+                    if (reportedFill != null) {
+                        logger.warn {
+                            "[${request.underlyingSymbol}] Reported fill price \$$reportedFill outside expected range " +
+                                "[\$${request.floorCredit}, \$${request.targetCredit.add(BigDecimal("0.10"))}] — " +
+                                "using last ladder limit \$$currentCredit instead"
+                        }
+                    }
+                    currentCredit
+                }
             // Deduct entry fees (2 legs × feePerContract / contractMultiplier = fee per share)
             val feePerShare =
                 config.feePerContract
                     .multiply(BigDecimal("2"))
                     .divide(config.contractMultiplier, 6, RoundingMode.HALF_UP)
-            val netCredit = currentCredit.subtract(feePerShare).setScale(4, RoundingMode.HALF_UP)
+            val netCredit = grossCredit.subtract(feePerShare).setScale(4, RoundingMode.HALF_UP)
             writer.markFilled(pendingSpread, currentOrderId, netCredit)
             logger.info {
                 "[${request.underlyingSymbol}] FILLED — " +
-                    "gross=\$$currentCredit fees=\$$feePerShare net=\$$netCredit orderId=$currentOrderId spread saved"
+                    "gross=\$$grossCredit fees=\$$feePerShare net=\$$netCredit orderId=$currentOrderId spread saved"
             }
             tradeLogger.info {
-                "ENTRY  ${request.underlyingSymbol}  ${request.soldContract.strike}P/${request.boughtContract.strike}P" +
+                "ENTRY  ${request.underlyingSymbol}  ${request.legsLabel}" +
                     "  exp=${request.soldContract.expiry}  credit=\$$netCredit  iv_rank=${"%.1f".format(request.ivRankAtEntry)}%" +
                     "  underlying=${request.underlyingPriceAtEntry}  order=$currentOrderId"
             }
@@ -382,7 +454,7 @@ class TradeExecutionService(
         }
 
         tradeLogger.info {
-            "ABORTED ${request.underlyingSymbol}  ${request.soldContract.strike}P/${request.boughtContract.strike}P  reason=${outcome.name}"
+            "ABORTED ${request.underlyingSymbol}  ${request.legsLabel}  reason=${outcome.name}"
         }
         val abortStatus = if (outcome == ExecutionOutcome.ORDER_REJECTED) SpreadStatus.CLOSED_REJECTED else SpreadStatus.CLOSED_TIMEOUT
         writer.markStatus(pendingSpread, abortStatus, outcome.name.lowercase())
@@ -398,16 +470,30 @@ class TradeExecutionService(
     // Helpers
     // -------------------------------------------------------------------------
 
+    /**
+     * One price-improvement step. Returns null when the credit floor is reached (order cancelled),
+     * or (credit, orderId) to continue. When the current order turns out to have FILLED during the
+     * cancel/replace, returns the SAME order id with the credit UNCHANGED — the order rested (and
+     * filled) at the current credit, not the decremented one, and the pending Fill event will
+     * complete the loop.
+     */
     private suspend fun ladder(
         request: TradeExecutionRequest,
         currentOrderId: Int,
         currentCredit: BigDecimal,
     ): Pair<BigDecimal, Int>? {
-        val tickSize = minTickFor(currentCredit)
+        val tickSize = optionTickFor(currentCredit)
         val newCredit = currentCredit.subtract(tickSize).setScale(2, RoundingMode.HALF_DOWN)
         if (newCredit < request.floorCredit) {
             logger.info { "[${request.underlyingSymbol}] FLOOR_REACHED — next=\$$newCredit < floor=\$${request.floorCredit}" }
-            orderExecutionPort.cancelAndAwait(currentOrderId)
+            val cancelStatus = orderExecutionPort.cancelAndAwait(currentOrderId)
+            if (cancelStatus == OrderStatus.FILLED) {
+                logger.warn {
+                    "[${request.underlyingSymbol}] Order $currentOrderId FILLED during the floor cancel — " +
+                        "keeping the loop alive to honor the fill"
+                }
+                return Pair(currentCredit, currentOrderId)
+            }
             return null
         }
         val newOrderId =
@@ -418,11 +504,16 @@ class TradeExecutionService(
                 newCredit = Money(newCredit),
                 qty = request.quantity,
             )
+        if (newOrderId == currentOrderId) {
+            logger.info {
+                "[${request.underlyingSymbol}] Order $currentOrderId filled instead of cancelling — " +
+                    "no replacement submitted; retaining credit \$$currentCredit"
+            }
+            return Pair(currentCredit, currentOrderId)
+        }
         logger.info { "[${request.underlyingSymbol}] Laddered to \$$newCredit (orderId=$newOrderId)" }
         return Pair(newCredit, newOrderId)
     }
-
-    private fun minTickFor(price: BigDecimal): BigDecimal = if (price < BigDecimal("3.00")) BigDecimal("0.01") else BigDecimal("0.05")
 
     private suspend fun calculateFreshCredit(request: TradeExecutionRequest): Triple<BigDecimal, QuoteFreshnessResult?, SpreadCreditTick?> {
         val startNanos = System.nanoTime()
@@ -469,8 +560,14 @@ class TradeExecutionService(
                     "drift=\$$priceDrift"
             }
 
-            if (priceDrift > BigDecimal("0.10")) {
-                // Market moved more than $0.10 — safety abort
+            // Percentage-of-target threshold (floored at $0.05) rather than a flat dollar amount — a
+            // flat $0.10 is ~30% of a $0.35 credit but only ~3% of a $3.00 one.
+            val driftThreshold =
+                request.targetCredit
+                    .multiply(BigDecimal(config.freshCreditMaxDriftPct))
+                    .max(BigDecimal("0.05"))
+            if (priceDrift > driftThreshold) {
+                // Market moved too far — safety abort
                 val percent = "%.1f".format(priceDrift / request.targetCredit.max(BigDecimal("0.01")) * BigDecimal("100"))
                 logger.warn {
                     "[${request.underlyingSymbol}] Market moved too far: " +
@@ -505,8 +602,9 @@ class TradeExecutionService(
             // is visible in the journal. See contractForMktData fallback + acquireMarketDataLine logs.
             logger.warn {
                 "[${request.underlyingSymbol}] NO MARKET-DATA TICK in ${elapsedMs}ms (starvation, not price drift) — " +
-                    "aborting entry. sold=${request.soldContract.strike}P/${request.soldContract.expiry} " +
-                    "bought=${request.boughtContract.strike}P/${request.boughtContract.expiry}"
+                    "aborting entry. sold=${request.soldContract.strike}${request.soldContract.type.ibkrCode}" +
+                    "/${request.soldContract.expiry} " +
+                    "bought=${request.boughtContract.strike}${request.boughtContract.type.ibkrCode}/${request.boughtContract.expiry}"
             }
             Triple(
                 BigDecimal.ZERO,

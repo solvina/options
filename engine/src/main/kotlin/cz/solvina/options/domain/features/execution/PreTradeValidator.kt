@@ -37,7 +37,7 @@ class PreTradeValidator(
         if (request.underlyingSymbol in closingSymbols) {
             logger.info { "[${request.underlyingSymbol}] CLOSING_FREEZE — symbol has in-flight close order, entry blocked" }
             tradeLogger.info {
-                "REJECT ${request.underlyingSymbol}  ${request.soldContract.strike}P/${request.boughtContract.strike}P  reason=CLOSING_FREEZE"
+                "REJECT ${request.underlyingSymbol}  ${request.soldContract.strike}${request.soldContract.type.ibkrCode}/${request.boughtContract.strike}${request.boughtContract.type.ibkrCode}  reason=CLOSING_FREEZE"
             }
             return ExecutionOutcome.EXPOSURE_REJECTED
         }
@@ -51,24 +51,27 @@ class PreTradeValidator(
         ) {
             logger.info { "[${request.underlyingSymbol}] EXPOSURE_REJECTED — open or in-flight position exists" }
             tradeLogger.info {
-                "REJECT ${request.underlyingSymbol}  ${request.soldContract.strike}P/${request.boughtContract.strike}P  reason=EXPOSURE_REJECTED"
+                "REJECT ${request.underlyingSymbol}  ${request.soldContract.strike}${request.soldContract.type.ibkrCode}/${request.boughtContract.strike}${request.boughtContract.type.ibkrCode}  reason=EXPOSURE_REJECTED"
             }
             return ExecutionOutcome.EXPOSURE_REJECTED
         }
 
-        // Capital: available funds vs max risk per contract
+        // Capital: available funds vs total max risk for the requested quantity
         val availableFunds =
             accountPort.accountDetail.value
                 ?.availableFunds
                 ?.amount
-        val maxRiskPerContract = request.maxRiskPerShare.multiply(BigDecimal("100"))
-        if (availableFunds == null || availableFunds < maxRiskPerContract) {
+        val maxRiskTotal =
+            request.maxRiskPerShare
+                .multiply(config.contractMultiplier)
+                .multiply(BigDecimal(request.quantity))
+        if (availableFunds == null || availableFunds < maxRiskTotal) {
             logger.info {
                 "[${request.underlyingSymbol}] CAPITAL_REJECTED — available=\$$availableFunds " +
-                    "required=\$$maxRiskPerContract"
+                    "required=\$$maxRiskTotal"
             }
             tradeLogger.info {
-                "REJECT ${request.underlyingSymbol}  ${request.soldContract.strike}P/${request.boughtContract.strike}P  reason=CAPITAL_REJECTED  available=\$$availableFunds  required=\$$maxRiskPerContract"
+                "REJECT ${request.underlyingSymbol}  ${request.soldContract.strike}${request.soldContract.type.ibkrCode}/${request.boughtContract.strike}${request.boughtContract.type.ibkrCode}  reason=CAPITAL_REJECTED  available=\$$availableFunds  required=\$$maxRiskTotal"
             }
             return ExecutionOutcome.CAPITAL_REJECTED
         }
@@ -77,14 +80,14 @@ class PreTradeValidator(
         if (isLiquidityTooWide(request.soldBid, request.soldAsk, "sold")) {
             logger.info { "[${request.underlyingSymbol}] LIQUIDITY_REJECTED — sold leg spread too wide" }
             tradeLogger.info {
-                "REJECT ${request.underlyingSymbol}  ${request.soldContract.strike}P/${request.boughtContract.strike}P  reason=LIQUIDITY_REJECTED  leg=sold"
+                "REJECT ${request.underlyingSymbol}  ${request.soldContract.strike}${request.soldContract.type.ibkrCode}/${request.boughtContract.strike}${request.boughtContract.type.ibkrCode}  reason=LIQUIDITY_REJECTED  leg=sold"
             }
             return ExecutionOutcome.LIQUIDITY_REJECTED
         }
         if (isLiquidityTooWide(request.boughtBid, request.boughtAsk, "bought")) {
             logger.info { "[${request.underlyingSymbol}] LIQUIDITY_REJECTED — bought leg spread too wide" }
             tradeLogger.info {
-                "REJECT ${request.underlyingSymbol}  ${request.soldContract.strike}P/${request.boughtContract.strike}P  reason=LIQUIDITY_REJECTED  leg=bought"
+                "REJECT ${request.underlyingSymbol}  ${request.soldContract.strike}${request.soldContract.type.ibkrCode}/${request.boughtContract.strike}${request.boughtContract.type.ibkrCode}  reason=LIQUIDITY_REJECTED  leg=bought"
             }
             return ExecutionOutcome.LIQUIDITY_REJECTED
         }

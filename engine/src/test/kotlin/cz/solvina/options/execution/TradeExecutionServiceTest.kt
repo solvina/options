@@ -249,8 +249,9 @@ class TradeExecutionServiceTest {
 
                     override suspend fun awaitFill(orderId: Int): OrderStatus = deferreds[orderId]?.await() ?: OrderStatus.CANCELLED
 
-                    override suspend fun cancelAndAwait(orderId: Int) {
+                    override suspend fun cancelAndAwait(orderId: Int): OrderStatus {
                         deferreds[orderId]?.complete(OrderStatus.CANCELLED)
+                        return OrderStatus.CANCELLED
                     }
 
                     override suspend fun replaceComboWithNewPrice(
@@ -265,6 +266,8 @@ class TradeExecutionServiceTest {
                     }
 
                     override suspend fun getSymbolsWithOpenOrders(): Set<Symbol> = emptySet()
+
+                    override fun consumeFillPrice(orderId: Int): java.math.BigDecimal? = null
                 }
 
             val service =
@@ -309,7 +312,7 @@ class TradeExecutionServiceTest {
                         return OrderStatus.CANCELLED
                     }
 
-                    override suspend fun cancelAndAwait(orderId: Int) {}
+                    override suspend fun cancelAndAwait(orderId: Int): OrderStatus = OrderStatus.CANCELLED
 
                     override suspend fun replaceComboWithNewPrice(
                         existingOrderId: Int,
@@ -320,6 +323,8 @@ class TradeExecutionServiceTest {
                     ): Int = submitComboLimitOrder(soldContract, boughtContract, newCredit, qty)
 
                     override suspend fun getSymbolsWithOpenOrders(): Set<Symbol> = emptySet()
+
+                    override fun consumeFillPrice(orderId: Int): java.math.BigDecimal? = null
                 }
 
             val service =
@@ -388,8 +393,9 @@ class TradeExecutionServiceTest {
                         return OrderStatus.CANCELLED
                     }
 
-                    override suspend fun cancelAndAwait(orderId: Int) {
+                    override suspend fun cancelAndAwait(orderId: Int): OrderStatus {
                         cancelCalled = true
+                        return OrderStatus.CANCELLED
                     }
 
                     override suspend fun replaceComboWithNewPrice(
@@ -401,6 +407,8 @@ class TradeExecutionServiceTest {
                     ): Int = 1
 
                     override suspend fun getSymbolsWithOpenOrders(): Set<Symbol> = emptySet()
+
+                    override fun consumeFillPrice(orderId: Int): java.math.BigDecimal? = null
                 }
 
             val service =
@@ -416,6 +424,213 @@ class TradeExecutionServiceTest {
 
             assertEquals(ExecutionOutcome.TIMED_OUT, result.outcome)
             assertTrue(cancelCalled, "cancelAndAwait should have been called on timeout")
+        }
+
+    @Test
+    fun `stale fill cancels the newer replacement order before honoring it`() =
+        runTest {
+            // Simulates the race where an older (already-laddered-away) order actually fills right
+            // as a replacement order is in flight. The execution loop must cancel the newer
+            // replacement before adopting the stale fill — otherwise both orders can end up filled.
+            val deferreds = ConcurrentHashMap<Int, CompletableDeferred<OrderStatus>>()
+            val cancelledOrderIds = mutableListOf<Int>()
+            val nextId = AtomicInteger(1)
+            val secondOrderReady = Channel<Unit>(1)
+
+            val orderPort =
+                object : OrderExecutionPort {
+                    override suspend fun submitComboLimitOrder(
+                        soldContract: OptionContract,
+                        boughtContract: OptionContract,
+                        netCredit: Money,
+                        qty: Int,
+                        legQuotes: LegQuotes?,
+                    ): Int {
+                        val id = nextId.getAndIncrement()
+                        deferreds[id] = CompletableDeferred()
+                        if (id == 2) secondOrderReady.trySend(Unit)
+                        return id
+                    }
+
+                    override suspend fun awaitFill(orderId: Int): OrderStatus = deferreds[orderId]?.await() ?: OrderStatus.CANCELLED
+
+                    override suspend fun cancelAndAwait(orderId: Int): OrderStatus {
+                        cancelledOrderIds.add(orderId)
+                        deferreds[orderId]?.complete(OrderStatus.CANCELLED)
+                        return OrderStatus.CANCELLED
+                    }
+
+                    override suspend fun replaceComboWithNewPrice(
+                        existingOrderId: Int,
+                        soldContract: OptionContract,
+                        boughtContract: OptionContract,
+                        newCredit: Money,
+                        qty: Int,
+                    ): Int =
+                        // Mirrors the real-world race: the replacement is submitted while the old
+                        // order's fill deferred is still unresolved (IBKR hasn't confirmed the cancel).
+                        submitComboLimitOrder(soldContract, boughtContract, newCredit, qty, null)
+
+                    override suspend fun getSymbolsWithOpenOrders(): Set<Symbol> = emptySet()
+
+                    override fun consumeFillPrice(orderId: Int): java.math.BigDecimal? = null
+                }
+
+            val service =
+                buildService(
+                    marketTickPort =
+                        fixedMarketTickPort(
+                            underlyingPrice = 500.0,
+                            creditFlow = tickFlowLaddering(listOf(1.00, 1.00, 1.00)),
+                        ),
+                    orderExecutionPort = orderPort,
+                    config = baseConfig.copy(ticksBeforePriceAdjust = 1),
+                )
+
+            val resultDeferred = backgroundScope.async { service.execute(buildRequest(targetCredit = BigDecimal("1.00"))) }
+
+            secondOrderReady.receive() // wait for the ladder's replacement order (id=2) to be submitted
+            deferreds[1]!!.complete(OrderStatus.FILLED) // honor the stale (older) order's fill
+
+            val result = resultDeferred.await()
+
+            assertEquals(ExecutionOutcome.FILLED, result.outcome)
+            assertEquals(1, result.comboOrderId, "the stale (older) order id should be recorded as the fill")
+            assertTrue(
+                2 in cancelledOrderIds,
+                "the newer replacement order (id=2) must be cancelled once the stale fill is honored",
+            )
+        }
+
+    @Test
+    fun `ladder does not launch a duplicate fill watcher when the replacement order id is unchanged`() =
+        runTest {
+            // Mirrors OrderExecutionPort.replaceComboWithNewPrice returning the SAME order id when the
+            // old order actually filled instead of being cancelled (ReplacementCancelResult.Filled) —
+            // the execution loop must not spin up a second, duplicate fill watcher for that id.
+            val awaitFillCallCount = AtomicInteger(0)
+            val fillDeferred = CompletableDeferred<OrderStatus>()
+            val ladderStepped = Channel<Unit>(1)
+
+            val orderPort =
+                object : OrderExecutionPort {
+                    override suspend fun submitComboLimitOrder(
+                        soldContract: OptionContract,
+                        boughtContract: OptionContract,
+                        netCredit: Money,
+                        qty: Int,
+                        legQuotes: LegQuotes?,
+                    ): Int = 1
+
+                    override suspend fun awaitFill(orderId: Int): OrderStatus {
+                        awaitFillCallCount.incrementAndGet()
+                        return fillDeferred.await()
+                    }
+
+                    override suspend fun cancelAndAwait(orderId: Int): OrderStatus = OrderStatus.CANCELLED
+
+                    override suspend fun replaceComboWithNewPrice(
+                        existingOrderId: Int,
+                        soldContract: OptionContract,
+                        boughtContract: OptionContract,
+                        newCredit: Money,
+                        qty: Int,
+                    ): Int {
+                        ladderStepped.trySend(Unit)
+                        return existingOrderId
+                    }
+
+                    override suspend fun getSymbolsWithOpenOrders(): Set<Symbol> = emptySet()
+
+                    override fun consumeFillPrice(orderId: Int): java.math.BigDecimal? = null
+                }
+
+            val service =
+                buildService(
+                    marketTickPort =
+                        fixedMarketTickPort(
+                            underlyingPrice = 500.0,
+                            creditFlow = tickFlowLaddering(listOf(1.00, 1.00, 1.00)),
+                        ),
+                    orderExecutionPort = orderPort,
+                    config = baseConfig.copy(ticksBeforePriceAdjust = 1),
+                )
+
+            val resultDeferred = backgroundScope.async { service.execute(buildRequest(targetCredit = BigDecimal("1.00"))) }
+
+            ladderStepped.receive() // wait for at least one ladder step (id-unchanged path) to occur
+            fillDeferred.complete(OrderStatus.FILLED)
+
+            val result = resultDeferred.await()
+
+            assertEquals(ExecutionOutcome.FILLED, result.outcome)
+            assertEquals(1, result.comboOrderId)
+            assertEquals(
+                1,
+                awaitFillCallCount.get(),
+                "the ladder must not launch a second fill watcher for an unchanged order id",
+            )
+            // The order rested (and filled) at the ORIGINAL credit — the ladder's decremented credit
+            // must not be recorded when no replacement was actually submitted.
+            assertEquals(
+                0,
+                BigDecimal("1.0000").compareTo(result.creditAchieved),
+                "an unchanged order id must retain the original credit, not the decremented ladder step",
+            )
+        }
+
+    @Test
+    fun `a fill that races the execution-timeout cancel is recorded as FILLED not TIMED_OUT`() =
+        runTest {
+            // The execution timeout fires and cancelAndAwait discovers the order actually FILLED
+            // during the cancel — a real position exists and must be persisted as OPEN, never as
+            // CLOSED_TIMEOUT (which would leave it live at the broker but untracked by the engine).
+            val orderPort =
+                object : OrderExecutionPort {
+                    override suspend fun submitComboLimitOrder(
+                        soldContract: OptionContract,
+                        boughtContract: OptionContract,
+                        netCredit: Money,
+                        qty: Int,
+                        legQuotes: LegQuotes?,
+                    ): Int = 1
+
+                    override suspend fun awaitFill(orderId: Int): OrderStatus {
+                        delay(Long.MAX_VALUE)
+                        return OrderStatus.CANCELLED
+                    }
+
+                    override suspend fun cancelAndAwait(orderId: Int): OrderStatus = OrderStatus.FILLED
+
+                    override suspend fun replaceComboWithNewPrice(
+                        existingOrderId: Int,
+                        soldContract: OptionContract,
+                        boughtContract: OptionContract,
+                        newCredit: Money,
+                        qty: Int,
+                    ): Int = existingOrderId
+
+                    override suspend fun getSymbolsWithOpenOrders(): Set<Symbol> = emptySet()
+
+                    override fun consumeFillPrice(orderId: Int): java.math.BigDecimal? = null
+                }
+
+            val service =
+                buildService(
+                    marketTickPort = fixedMarketTickPort(500.0, tickFlowAtCredit(1.00)),
+                    orderExecutionPort = orderPort,
+                    config = baseConfig.copy(executionTimeoutMinutes = 1),
+                )
+
+            val resultDeferred = backgroundScope.async { service.execute(buildRequest(targetCredit = BigDecimal("1.00"))) }
+            advanceTimeBy(61_000)
+            val result = resultDeferred.await()
+
+            assertEquals(
+                ExecutionOutcome.FILLED,
+                result.outcome,
+                "a fill discovered by the timeout's cancel must be honored, not recorded as TIMED_OUT",
+            )
         }
 
     @Test
@@ -509,7 +724,7 @@ class TradeExecutionServiceTest {
 
             override suspend fun awaitFill(orderId: Int): OrderStatus = fillChannel.receive()
 
-            override suspend fun cancelAndAwait(orderId: Int) {}
+            override suspend fun cancelAndAwait(orderId: Int): OrderStatus = OrderStatus.CANCELLED
 
             override suspend fun replaceComboWithNewPrice(
                 existingOrderId: Int,
@@ -520,6 +735,45 @@ class TradeExecutionServiceTest {
             ): Int = submitComboLimitOrder(soldContract, boughtContract, newCredit, qty)
 
             override suspend fun getSymbolsWithOpenOrders(): Set<Symbol> = emptySet()
+
+            override fun consumeFillPrice(orderId: Int): java.math.BigDecimal? = null
+        }
+    }
+
+    /** Like [immediateComboOrderPort], but reports [reportedFillPrice] via consumeFillPrice on fill. */
+    private fun reportedFillOrderPort(
+        fillChannel: Channel<OrderStatus>,
+        reportedFillPrice: BigDecimal,
+        onSubmit: suspend (OptionContract, OptionContract, Money) -> Unit = { _, _, _ -> },
+    ): OrderExecutionPort {
+        val nextId = AtomicInteger(1)
+        return object : OrderExecutionPort {
+            override suspend fun submitComboLimitOrder(
+                soldContract: OptionContract,
+                boughtContract: OptionContract,
+                netCredit: Money,
+                qty: Int,
+                legQuotes: LegQuotes?,
+            ): Int {
+                onSubmit(soldContract, boughtContract, netCredit)
+                return nextId.getAndIncrement()
+            }
+
+            override suspend fun awaitFill(orderId: Int): OrderStatus = fillChannel.receive()
+
+            override suspend fun cancelAndAwait(orderId: Int): OrderStatus = OrderStatus.CANCELLED
+
+            override suspend fun replaceComboWithNewPrice(
+                existingOrderId: Int,
+                soldContract: OptionContract,
+                boughtContract: OptionContract,
+                newCredit: Money,
+                qty: Int,
+            ): Int = submitComboLimitOrder(soldContract, boughtContract, newCredit, qty)
+
+            override suspend fun getSymbolsWithOpenOrders(): Set<Symbol> = emptySet()
+
+            override fun consumeFillPrice(orderId: Int): BigDecimal = reportedFillPrice
         }
     }
 
@@ -535,7 +789,7 @@ class TradeExecutionServiceTest {
 
             override suspend fun awaitFill(orderId: Int): OrderStatus = OrderStatus.CANCELLED
 
-            override suspend fun cancelAndAwait(orderId: Int) {}
+            override suspend fun cancelAndAwait(orderId: Int): OrderStatus = OrderStatus.CANCELLED
 
             override suspend fun replaceComboWithNewPrice(
                 existingOrderId: Int,
@@ -546,6 +800,8 @@ class TradeExecutionServiceTest {
             ): Int = error("replaceComboWithNewPrice must not be reached when the cap rejects the entry")
 
             override suspend fun getSymbolsWithOpenOrders(): Set<Symbol> = emptySet()
+
+            override fun consumeFillPrice(orderId: Int): java.math.BigDecimal? = null
         }
 
     private fun neverFillOrderPort(): OrderExecutionPort {
@@ -564,7 +820,7 @@ class TradeExecutionServiceTest {
                 return OrderStatus.CANCELLED
             }
 
-            override suspend fun cancelAndAwait(orderId: Int) {}
+            override suspend fun cancelAndAwait(orderId: Int): OrderStatus = OrderStatus.CANCELLED
 
             override suspend fun replaceComboWithNewPrice(
                 existingOrderId: Int,
@@ -575,6 +831,8 @@ class TradeExecutionServiceTest {
             ): Int = nextId.getAndIncrement()
 
             override suspend fun getSymbolsWithOpenOrders(): Set<Symbol> = emptySet()
+
+            override fun consumeFillPrice(orderId: Int): java.math.BigDecimal? = null
         }
     }
 
@@ -679,6 +937,48 @@ class TradeExecutionServiceTest {
             )
         }
 
+    @Test
+    fun `uses the broker-reported fill price over the ladder limit when it's within the expected range`() =
+        runTest {
+            // Submitted (ladder) limit is $1.00, but the broker reports a better fill of $1.02 — price
+            // improvement that must be recorded, or TP/SL thresholds later drift off the wrong credit.
+            val fillChannel = Channel<OrderStatus>(1)
+            val service =
+                buildService(
+                    marketTickPort = fixedMarketTickPort(500.0, tickFlowAtCredit(1.00)),
+                    orderExecutionPort =
+                        reportedFillOrderPort(fillChannel, reportedFillPrice = BigDecimal("1.02")) { _, _, _ ->
+                            fillChannel.send(OrderStatus.FILLED)
+                        },
+                )
+
+            val result = service.execute(buildRequest(targetCredit = BigDecimal("1.00")))
+
+            assertEquals(ExecutionOutcome.FILLED, result.outcome)
+            assertEquals(0, BigDecimal("1.0200").compareTo(result.creditAchieved), "must use the reported $1.02 fill, not the $1.00 limit")
+        }
+
+    @Test
+    fun `falls back to the ladder limit when the broker-reported fill price is out of the expected range`() =
+        runTest {
+            // A garbage/mis-signed reported price (way above target+0.10) must not be trusted —
+            // fall back to the last ladder limit we know is correct.
+            val fillChannel = Channel<OrderStatus>(1)
+            val service =
+                buildService(
+                    marketTickPort = fixedMarketTickPort(500.0, tickFlowAtCredit(1.00)),
+                    orderExecutionPort =
+                        reportedFillOrderPort(fillChannel, reportedFillPrice = BigDecimal("99.00")) { _, _, _ ->
+                            fillChannel.send(OrderStatus.FILLED)
+                        },
+                )
+
+            val result = service.execute(buildRequest(targetCredit = BigDecimal("1.00")))
+
+            assertEquals(ExecutionOutcome.FILLED, result.outcome)
+            assertEquals(0, BigDecimal("1.0000").compareTo(result.creditAchieved), "must fall back to the $1.00 ladder limit")
+        }
+
     // -------------------------------------------------------------------------
     // Entry cooldown
     // -------------------------------------------------------------------------
@@ -766,6 +1066,60 @@ class TradeExecutionServiceTest {
             // No tick within the freshness window = market-data starvation, now distinctly labelled
             // NO_MARKET_DATA (not MARKET_MOVED_TOO_FAR, which is reserved for genuine price drift).
             assertEquals(ExecutionOutcome.NO_MARKET_DATA, result.outcome)
+        }
+
+    // -------------------------------------------------------------------------
+    // Fresh-credit drift guard scales with target credit
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `fresh-credit drift guard scales with target credit - 15pct move on a $1 credit does not abort`() =
+        runTest {
+            // driftThreshold = max($1.00 × 0.20, $0.05) = $0.20. A flat $0.10 threshold (the old rule)
+            // would have aborted this $0.15 move; the percentage-based one must let it through.
+            val fillChannel = Channel<OrderStatus>(1)
+            val service =
+                buildService(
+                    marketTickPort = fixedMarketTickPort(500.0, tickFlowAtCredit(targetCredit = 1.00, soldMidOffset = 0.15)),
+                    orderExecutionPort =
+                        immediateComboOrderPort(fillChannel) { _, _, _ ->
+                            fillChannel.send(OrderStatus.FILLED)
+                        },
+                )
+
+            val result = service.execute(buildRequest(targetCredit = BigDecimal("1.00")))
+
+            assertEquals(ExecutionOutcome.FILLED, result.outcome, "a 15% drift on a $1.00 credit must not trip the 20% guard")
+        }
+
+    @Test
+    fun `fresh-credit drift guard still aborts when the move exceeds the percentage threshold`() =
+        runTest {
+            // driftThreshold = max($1.00 × 0.20, $0.05) = $0.20. A $0.30 move must still abort.
+            val service =
+                buildService(
+                    marketTickPort = fixedMarketTickPort(500.0, tickFlowAtCredit(targetCredit = 1.00, soldMidOffset = 0.30)),
+                    orderExecutionPort = neverFillOrderPort(),
+                )
+
+            val result = service.execute(buildRequest(targetCredit = BigDecimal("1.00")))
+
+            assertEquals(ExecutionOutcome.MARKET_MOVED_TOO_FAR, result.outcome)
+        }
+
+    @Test
+    fun `fresh-credit drift guard floors the threshold at 5 cents for small target credits`() =
+        runTest {
+            // driftThreshold = max($0.35 × 0.20, $0.05) = $0.07; a $0.10 move must still abort.
+            val service =
+                buildService(
+                    marketTickPort = fixedMarketTickPort(500.0, tickFlowAtCredit(targetCredit = 0.35, soldMidOffset = 0.10)),
+                    orderExecutionPort = neverFillOrderPort(),
+                )
+
+            val result = service.execute(buildRequest(targetCredit = BigDecimal("0.35"), floorCredit = BigDecimal("0.20")))
+
+            assertEquals(ExecutionOutcome.MARKET_MOVED_TOO_FAR, result.outcome)
         }
 
     // -------------------------------------------------------------------------

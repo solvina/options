@@ -5,6 +5,8 @@ import com.ib.client.OrderCancel
 import cz.solvina.options.adapters.outbound.ibkr.IbkrInstrumentsConfig
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOpenOrdersAdapter
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
+import cz.solvina.options.domain.features.alert.AlertLevel
+import cz.solvina.options.domain.features.alert.AlertPort
 import cz.solvina.options.domain.features.order.LegQuotes
 import cz.solvina.options.domain.features.order.OrderExecutionPort
 import cz.solvina.options.domain.features.order.OrderStatus
@@ -28,6 +30,7 @@ class IbkrOrderExecutionAdapter(
     private val reconciliationService: PositionReconciliationService,
     private val orderReplacementService: OrderReplacementService,
     private val instrumentsConfig: IbkrInstrumentsConfig,
+    private val alertPort: AlertPort,
 ) : OrderExecutionPort {
     override suspend fun submitComboLimitOrder(
         soldContract: OptionContract,
@@ -61,16 +64,27 @@ class IbkrOrderExecutionAdapter(
                             soldContract = soldContract,
                             boughtContract = boughtContract,
                             qty = qty,
-                            shortOrderId = result.primaryOrderId,
-                            longOrderId = result.secondaryOrderId,
                         )
                     if (!verification.success) {
+                        // The leg-by-leg strategy only reports SUCCESS after BOTH order-level fill
+                        // deferreds completed FILLED — that is authoritative. This account-level
+                        // re-check can simply lag (position feed latency); treating its timeout as
+                        // "rejected" would abandon (cancel) two orders that are already filled and
+                        // record a real position as CLOSED_REJECTED, leaving it live in the account
+                        // but untracked (no TP/SL/DTE). Trust the order-level fills, alert instead.
                         logger.error {
-                            "Leg-by-leg reconciliation failed (SHORT=${result.primaryOrderId} LONG=${result.secondaryOrderId}): " +
-                                "${verification.message} — abandoning"
+                            "Leg-by-leg account-level reconciliation lagging (SHORT=${result.primaryOrderId} " +
+                                "LONG=${result.secondaryOrderId}): ${verification.message} — both legs already " +
+                                "confirmed FILLED at the order level; tracking the position and alerting for manual verification"
                         }
-                        reconciliationService.abandonMatch(result.primaryOrderId, result.secondaryOrderId)
-                        throw IllegalStateException("Leg-by-leg reconciliation failed: ${verification.message}")
+                        alertPort.send(
+                            AlertLevel.CRITICAL,
+                            "Leg-by-leg position feed lag",
+                            "Both legs of a leg-by-leg spread (SHORT=${result.primaryOrderId} LONG=${result.secondaryOrderId}) " +
+                                "confirmed FILLED at the order level, but the account position feed did not reflect both " +
+                                "within the verification window (${verification.message}). The spread is being tracked as " +
+                                "filled — please verify the account position manually in TWS.",
+                        )
                     }
                 }
                 logger.info { "Order ${result.primaryOrderId} submitted via ${strategyRouter.getStrategyInfo(exchange)}" }
@@ -92,7 +106,10 @@ class IbkrOrderExecutionAdapter(
     override suspend fun awaitFill(orderId: Int): OrderStatus {
         val deferred =
             registry.pendingOrderStatus[orderId]
-                ?: return OrderStatus.CANCELLED
+                // No deferred left doesn't always mean cancelled — the entry may have been consumed
+                // by another await while the order actually FILLED. The registry's fill record is
+                // the authoritative tiebreaker.
+                ?: return if (registry.isFilled(orderId)) OrderStatus.FILLED else OrderStatus.CANCELLED
         return try {
             deferred.await()
         } finally {
@@ -100,7 +117,7 @@ class IbkrOrderExecutionAdapter(
         }
     }
 
-    override suspend fun cancelAndAwait(orderId: Int) {
+    override suspend fun cancelAndAwait(orderId: Int): OrderStatus {
         logger.info { "Cancelling BAG order $orderId" }
         client.cancelOrder(orderId, OrderCancel())
         runCatching {
@@ -114,6 +131,14 @@ class IbkrOrderExecutionAdapter(
             registry.pendingOrderStatus.remove(orderId)?.complete(OrderStatus.CANCELLED)
         }
         delay(200)
+        // A fill can race the cancel: IBKR fills the order before processing the cancel request.
+        // Report the true terminal state so callers never record a filled order as aborted.
+        return if (registry.isFilled(orderId)) {
+            logger.warn { "Order $orderId FILLED during cancellation — reporting FILLED, not CANCELLED" }
+            OrderStatus.FILLED
+        } else {
+            OrderStatus.CANCELLED
+        }
     }
 
     override suspend fun replaceComboWithNewPrice(
@@ -123,25 +148,37 @@ class IbkrOrderExecutionAdapter(
         newCredit: Money,
         qty: Int,
     ): Int {
-        // Atomic replacement: must verify old order is completely removed before submitting new
-        // Prevents double-fill scenario where both old and new orders execute
-        val verificationSuccess = orderReplacementService.replacementCancel(existingOrderId)
-
-        if (!verificationSuccess) {
-            // CRITICAL: Old order still in IBKR — DO NOT submit new order
-            // Risk: Both orders could fill simultaneously, doubling position
-            logger.error {
-                "Order replacement BLOCKED: old order $existingOrderId still in IBKR after verification attempts. " +
-                    "Will not submit replacement to prevent double-order scenario."
+        // Atomic replacement: must verify old order is completely removed (and not filled instead)
+        // before submitting new. Prevents the double-fill scenario where both old and new orders fill.
+        return when (val result = orderReplacementService.replacementCancel(existingOrderId)) {
+            is ReplacementCancelResult.Removed -> {
+                logger.info { "Order replacement verified: old order $existingOrderId removed, submitting replacement" }
+                submitComboLimitOrder(soldContract, boughtContract, newCredit, qty, legQuotes = null)
             }
-            throw IllegalStateException(
-                "Order replacement failed: could not verify removal of old order $existingOrderId. " +
-                    "Check IBKR manually before retrying.",
-            )
+            is ReplacementCancelResult.Filled -> {
+                // The old order actually filled while we tried to cancel it — it is now a real
+                // position. Submitting a replacement would double it. Return the existing order id
+                // unchanged so the caller's fill watcher (already registered against it) delivers
+                // the FILLED status.
+                logger.warn {
+                    "Order replacement SKIPPED: old order $existingOrderId filled instead of cancelling — " +
+                        "not submitting a replacement (would double the position)"
+                }
+                existingOrderId
+            }
+            is ReplacementCancelResult.Unverified -> {
+                // CRITICAL: Old order still in IBKR — DO NOT submit new order
+                // Risk: Both orders could fill simultaneously, doubling position
+                logger.error {
+                    "Order replacement BLOCKED: old order $existingOrderId still in IBKR after verification attempts. " +
+                        "Will not submit replacement to prevent double-order scenario."
+                }
+                throw IllegalStateException(
+                    "Order replacement failed: could not verify removal of old order $existingOrderId. " +
+                        "Check IBKR manually before retrying.",
+                )
+            }
         }
-
-        logger.info { "Order replacement verified: old order $existingOrderId removed, submitting replacement" }
-        return submitComboLimitOrder(soldContract, boughtContract, newCredit, qty, legQuotes = null)
     }
 
     override suspend fun getSymbolsWithOpenOrders(): Set<Symbol> =
@@ -149,4 +186,6 @@ class IbkrOrderExecutionAdapter(
             .getOrDefault(emptyList())
             .map { Symbol(it.symbol) }
             .toSet()
+
+    override fun consumeFillPrice(orderId: Int): java.math.BigDecimal? = registry.consumeFillPrice(orderId)
 }

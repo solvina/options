@@ -7,11 +7,15 @@ import com.ib.client.Order
 import cz.solvina.options.adapters.outbound.ibkr.IbkrConnectionConfig
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
 import cz.solvina.options.adapters.outbound.ibkr.cache.OptionContractKey
+import cz.solvina.options.adapters.outbound.ibkr.cache.resolveConIdOrCached
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import cz.solvina.options.domain.features.order.LegQuotes
 import cz.solvina.options.domain.features.order.OrderStatus
+import cz.solvina.options.domain.features.order.ceilToOptionTick
+import cz.solvina.options.domain.features.order.floorToOptionTick
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
+import cz.solvina.options.domain.models.OptionType
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -76,8 +80,9 @@ class LegByLegOrderStrategy(
 
         return try {
             logger.info {
-                "[$exchangeId] LEG-BY-LEG entry (LONG-first): BUY ${boughtContract.strike}P @ \$$longLimit then " +
-                    "SELL ${soldContract.strike}P @ \$$shortLimit (net target \$${netCredit.amount})"
+                "[$exchangeId] LEG-BY-LEG entry (LONG-first): " +
+                    "BUY ${boughtContract.strike}${boughtContract.type.ibkrCode} @ \$$longLimit then " +
+                    "SELL ${soldContract.strike}${soldContract.type.ibkrCode} @ \$$shortLimit (net target \$${netCredit.amount})"
             }
 
             // ---- Step 1: protective LONG leg first ----
@@ -153,10 +158,10 @@ class LegByLegOrderStrategy(
         // drop it so pendingOrderStatus doesn't leak (E8).
         registry.pendingOrderStatus.remove(longOrderId)
         if (unwindStrandedLongLeg) {
-            val sellBack = legQuotes?.boughtBid?.floorToTick()?.coerceAtLeast(BigDecimal("0.01")) ?: BigDecimal("0.01")
+            val sellBack = legQuotes?.boughtBid?.floorToOptionTick()?.coerceAtLeast(BigDecimal("0.01")) ?: BigDecimal("0.01")
             logger.error {
-                "[$exchangeId] STRANDED LONG ($reason) — auto-unwind ON: selling LONG ${boughtContract.strike}P " +
-                    "back @ \$$sellBack"
+                "[$exchangeId] STRANDED LONG ($reason) — auto-unwind ON: " +
+                    "selling LONG ${boughtContract.strike}${boughtContract.type.ibkrCode} back @ \$$sellBack"
             }
             val unwindId = submitSingleLeg(boughtContract, "SELL", qty, sellBack, "UNWIND-LONG")
             return OrderSubmissionResult(
@@ -168,7 +173,7 @@ class LegByLegOrderStrategy(
         }
         logger.error {
             "[$exchangeId] STRANDED LONG ($reason) — auto-unwind OFF: keeping LONG $longOrderId " +
-                "(${boughtContract.strike}P) open; flagging BROKEN_LONG_ONLY for manual handling"
+                "(${boughtContract.strike}${boughtContract.type.ibkrCode}) open; flagging BROKEN_LONG_ONLY for manual handling"
         }
         return OrderSubmissionResult(
             status = SubmissionStatus.STRANDED_LONG,
@@ -208,10 +213,23 @@ class LegByLegOrderStrategy(
         if (soldContract.expiry != boughtContract.expiry) {
             return ValidationResult(false, "Legs must have same expiry date")
         }
-        if (soldContract.strike <= boughtContract.strike) {
-            return ValidationResult(false, "Short strike must be > long strike for put spread")
+        // Both legs must be the same option type — a credit spread never mixes puts and calls.
+        if (soldContract.type != boughtContract.type) {
+            return ValidationResult(false, "Both legs must be the same option type (puts or calls)")
         }
-        val spreadWidth = (soldContract.strike - boughtContract.strike).toDouble()
+        // Strike relationship depends on spread direction: bull put sells the HIGHER strike,
+        // bear call sells the LOWER strike.
+        when (soldContract.type) {
+            OptionType.PUT ->
+                if (soldContract.strike <= boughtContract.strike) {
+                    return ValidationResult(false, "Short strike must be > long strike for put spread")
+                }
+            OptionType.CALL ->
+                if (soldContract.strike >= boughtContract.strike) {
+                    return ValidationResult(false, "Short strike must be < long strike for call spread")
+                }
+        }
+        val spreadWidth = (soldContract.strike - boughtContract.strike).abs().toDouble()
         if (spreadWidth < 1.0) {
             return ValidationResult(false, "EUREX may require minimum \$1.00 spread width")
         }
@@ -238,16 +256,12 @@ class LegByLegOrderStrategy(
                     strike = contract.strike,
                     optionType = contract.type,
                 )
+            // resolveConIdOrCached uses a 6s timeout > the cache's own 5s network timeout, so the
+            // cache governs and cleans up its own in-flight state. (A sub-second timeout here cancels
+            // the cache mid-lookup and used to orphan its in-flight deferred — see E3.)
             val conId =
-                try {
-                    // 6s > the cache's own 5s network timeout, so the cache governs and cleans up its
-                    // own in-flight state. (A sub-second timeout here cancels the cache mid-lookup and
-                    // used to orphan its in-flight deferred — see E3.)
-                    withTimeout(6_000L) { contractCache.getOrFetchOptionConId(key) }
-                } catch (e: Exception) {
-                    contractCache.getCachedOptionConId(key)
-                        ?: error("Contract not in cache and lookup timed out for $key")
-                }
+                contractCache.resolveConIdOrCached(key)
+                    ?: error("Contract not in cache and lookup timed out for $key")
 
             val legContract =
                 Contract().apply {
@@ -272,7 +286,10 @@ class LegByLegOrderStrategy(
             } else {
                 registry.pendingOrderStatus[orderId] = CompletableDeferred()
 
-                logger.debug { "[$exchangeId] Submitting $legDescription leg: $action ${contract.strike}P @ $limitPrice orderId=$orderId" }
+                logger.debug {
+                    "[$exchangeId] Submitting $legDescription leg: $action ${contract.strike}${contract.type.ibkrCode} " +
+                        "@ $limitPrice orderId=$orderId"
+                }
                 client.placeOrder(orderId, legContract, order)
                 orderId
             }
@@ -290,9 +307,9 @@ class LegByLegOrderStrategy(
     ): BigDecimal =
         legQuotes
             ?.boughtAsk
-            ?.ceilToTick()
+            ?.ceilToOptionTick()
             ?.coerceAtLeast(BigDecimal("0.01"))
-            ?: (netCredit.amount * longLegCreditPct).floorToTick().coerceAtLeast(BigDecimal("0.01"))
+            ?: (netCredit.amount * longLegCreditPct).floorToOptionTick().coerceAtLeast(BigDecimal("0.01"))
 
     /** Marketable SELL price for the short: hit the bid (rounded down to the tick grid). */
     private fun shortLegLimitPrice(
@@ -301,6 +318,6 @@ class LegByLegOrderStrategy(
     ): BigDecimal =
         legQuotes
             ?.soldBid
-            ?.floorToTick()
-            ?: (netCredit.amount * shortLegCreditPct).floorToTick()
+            ?.floorToOptionTick()
+            ?: (netCredit.amount * shortLegCreditPct).floorToOptionTick()
 }

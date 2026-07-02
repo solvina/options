@@ -62,7 +62,4 @@ class BullPutSpreadCloser(
                 ivRankAtExit = ivAtExit,
             ),
         )
-
-    override suspend fun markRollbackFailed(spread: Spread): Spread =
-        port.update((spread as BullPutSpread).copy(status = SpreadStatus.ROLLBACK_FAILED))
 }

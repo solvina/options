@@ -1,7 +1,6 @@
 package cz.solvina.options.adapters.outbound.ibkr.order
 
 import cz.solvina.options.domain.features.account.PositionsPort
-import cz.solvina.options.domain.features.order.OrderCleanupService
 import cz.solvina.options.domain.models.OptionContract
 import cz.solvina.options.domain.models.OptionType
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -25,9 +24,7 @@ private val logger = KotlinLogging.logger {}
  */
 @Component
 class PositionReconciliationService(
-    private val ibkrClient: com.ib.client.EClientSocket,
     private val positionsPort: PositionsPort,
-    private val orderCleanupService: OrderCleanupService,
 ) {
     /**
      * Verify that both legs of a spread actually filled in the account
@@ -35,16 +32,15 @@ class PositionReconciliationService(
      * @param soldContract SHORT leg
      * @param boughtContract LONG leg
      * @param qty Expected quantity
-     * @param timeoutMs How long to wait for verification (default 5s)
+     * @param timeoutMs How long to wait for verification (default 15s — the account position feed
+     *   can lag order-level fill confirmations)
      * @return true if both legs found with correct quantities and directions
      */
     suspend fun verifyBothLegsFilled(
         soldContract: OptionContract,
         boughtContract: OptionContract,
         qty: Int,
-        timeoutMs: Long = 5000,
-        shortOrderId: Int? = null,
-        longOrderId: Int? = null,
+        timeoutMs: Long = 15_000,
     ): VerificationResult {
         val startTime = Instant.now()
         val matchKey = "${soldContract.symbol}-${soldContract.strike}-${boughtContract.strike}"
@@ -89,21 +85,14 @@ class PositionReconciliationService(
             }
         }
 
-        // Timeout: one or both legs not found
+        // Timeout: one or both legs not found. Do NOT cancel orders or remove their fill deferreds
+        // here — this method only runs after the leg-by-leg strategy confirmed BOTH legs FILLED at
+        // the order level, so a timeout means the account position feed is lagging, not that the
+        // orders are dangling. The old cleanup deleted the SHORT leg's completed fill deferred,
+        // which made the execution loop's awaitFill see CANCELLED and record a real, filled spread
+        // as CLOSED_REJECTED — exactly the failure the caller's trust-order-level-fills path exists
+        // to prevent.
         logger.warn { "✗ Position reconciliation FAILED (timeout): $matchKey" }
-
-        // Issue #8: Cleanup pending orders on verification timeout
-        if (shortOrderId != null || longOrderId != null) {
-            val cleanupResult =
-                orderCleanupService.cleanupOnReconciliationTimeout(
-                    shortOrderId = shortOrderId,
-                    longOrderId = longOrderId,
-                )
-            logger.info {
-                "Cleanup on reconciliation timeout: cancelled=${cleanupResult.cancelledCount}, " +
-                    "failed=${cleanupResult.failedCount}"
-            }
-        }
 
         val finalShortLegFound =
             runCatching {
@@ -124,20 +113,6 @@ class PositionReconciliationService(
     }
 
     /**
-     * Abandon a half-filled/unverified leg-by-leg entry and cancel both orders to prevent orphans.
-     */
-    fun abandonMatch(
-        shortOrderId: Int,
-        longOrderId: Int,
-    ) {
-        logger.warn { "Abandoning leg-by-leg entry: SHORT=$shortOrderId, LONG=$longOrderId" }
-
-        // Cancel both orders to prevent orphaned positions
-        ibkrClient.cancelOrder(shortOrderId, com.ib.client.OrderCancel())
-        ibkrClient.cancelOrder(longOrderId, com.ib.client.OrderCancel())
-    }
-
-    /**
      * Check if a position exists in the account with expected quantity/direction
      * Queries account positions and matches by symbol, strike, and option type
      */
@@ -151,10 +126,12 @@ class PositionReconciliationService(
             val positions = positionsPort.getPositions()
 
             // Find position matching symbol, strike, and option type
+            // BigDecimal equality via `==` is scale-sensitive (445 != 445.0) — compareTo is the
+            // correct comparison for values that may arrive from IBKR with a different scale.
             val position =
                 positions.firstOrNull { pos ->
                     pos.symbol == symbol &&
-                        pos.strike == strike &&
+                        pos.strike?.compareTo(strike) == 0 &&
                         pos.optionRight == optionType.ibkrCode &&
                         pos.secType == "OPT"
                 }

@@ -9,13 +9,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 import java.time.DayOfWeek
 import java.time.LocalTime
 import java.time.ZoneId
 import java.time.ZonedDateTime
-import java.util.concurrent.locks.ReentrantLock
 
 private val logger = KotlinLogging.logger {}
 
@@ -27,7 +27,13 @@ class SpreadMonitorScheduler(
     private val instrumentsConfig: IbkrInstrumentsConfig,
 ) {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private val monitorLock = ReentrantLock()
+
+    // Coroutine Mutex (not a thread-bound ReentrantLock): checkExits() suspends and may resume on a
+    // different dispatcher thread, so the lock must not be thread-confined — a ReentrantLock.unlock()
+    // from a different thread than lock() throws IllegalMonitorStateException, which would leave the
+    // lock held forever and silently stop all exit monitoring. Same hazard as documented in
+    // PositionReconciliationScheduler.
+    private val monitorMutex = Mutex()
 
     @Scheduled(fixedDelayString = "\${scanner.monitor-delay-ms:60000}")
     fun monitorSpreads() {
@@ -45,7 +51,7 @@ class SpreadMonitorScheduler(
         }
 
         scope.launch {
-            if (!monitorLock.tryLock()) {
+            if (!monitorMutex.tryLock()) {
                 logger.debug { "Spread monitor skipped: previous run still in progress" }
                 return@launch
             }
@@ -54,7 +60,7 @@ class SpreadMonitorScheduler(
                 runCatching { spreadManagementService.checkExits() }
                     .onFailure { e -> logger.error(e) { "Spread monitor failed: ${e.message}" } }
             } finally {
-                monitorLock.unlock()
+                monitorMutex.unlock()
             }
         }
     }

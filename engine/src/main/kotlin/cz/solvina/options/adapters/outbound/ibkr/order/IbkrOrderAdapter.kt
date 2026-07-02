@@ -7,6 +7,7 @@ import com.ib.client.OrderCancel
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
 import cz.solvina.options.adapters.outbound.ibkr.cache.OptionContractKey
+import cz.solvina.options.adapters.outbound.ibkr.cache.resolveConIdOrCached
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import cz.solvina.options.domain.features.order.LegAction
 import cz.solvina.options.domain.features.order.LegOrder
@@ -36,10 +37,10 @@ class IbkrOrderAdapter(
         qty: Int,
     ): LegOrder {
         val key = OptionContractKey(contract.symbol, contract.expiry, contract.strike, contract.type)
-        val conId =
-            runCatching {
-                withTimeout(100L) { contractCache.getOrFetchOptionConId(key) }
-            }.getOrNull()
+        val conId = contractCache.resolveConIdOrCached(key)
+        if (conId == null) {
+            logger.warn { "[$key] Placing close order without a resolved conId (lookup failed, no cached value)" }
+        }
 
         val ibkrContract = buildIbkrContract(contract, conId)
 
@@ -57,7 +58,7 @@ class IbkrOrderAdapter(
             }
 
         logger.info {
-            "Placing ${action.name} ${contract.symbol} ${contract.strike}P ${contract.expiry} " +
+            "Placing ${action.name} ${contract.symbol} ${contract.strike}${contract.type.ibkrCode} ${contract.expiry} " +
                 "@ \$${limitPrice.amount} orderId=$orderId"
         }
         client.placeOrder(orderId, ibkrContract, ibkrOrder)
@@ -77,10 +78,10 @@ class IbkrOrderAdapter(
         qty: Int,
     ): LegOrder {
         val key = OptionContractKey(contract.symbol, contract.expiry, contract.strike, contract.type)
-        val conId =
-            runCatching {
-                withTimeout(100L) { contractCache.getOrFetchOptionConId(key) }
-            }.getOrNull()
+        val conId = contractCache.resolveConIdOrCached(key)
+        if (conId == null) {
+            logger.warn { "[$key] Placing close order without a resolved conId (lookup failed, no cached value)" }
+        }
 
         val ibkrContract = buildIbkrContract(contract, conId)
         val orderId = registry.nextOrderId()
@@ -96,7 +97,7 @@ class IbkrOrderAdapter(
             }
 
         logger.info {
-            "Placing MKT ${action.name} ${contract.symbol} ${contract.strike}P ${contract.expiry} orderId=$orderId"
+            "Placing MKT ${action.name} ${contract.symbol} ${contract.strike}${contract.type.ibkrCode} ${contract.expiry} orderId=$orderId"
         }
         client.placeOrder(orderId, ibkrContract, ibkrOrder)
 

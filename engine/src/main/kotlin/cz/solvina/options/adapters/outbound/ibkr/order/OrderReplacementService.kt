@@ -1,11 +1,24 @@
 package cz.solvina.options.adapters.outbound.ibkr.order
 
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOpenOrdersAdapter
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.delay
 import org.springframework.stereotype.Component
 
 private val logger = KotlinLogging.logger {}
+
+/** Outcome of attempting to replace an order: absence from open-orders alone can mean either. */
+sealed interface ReplacementCancelResult {
+    /** Old order confirmed gone and NOT filled — safe to submit the replacement. */
+    data object Removed : ReplacementCancelResult
+
+    /** Old order was actually FILLED (raced the cancel) — do NOT submit a replacement. */
+    data object Filled : ReplacementCancelResult
+
+    /** Could not confirm either state within the verification window. */
+    data object Unverified : ReplacementCancelResult
+}
 
 /**
  * Atomic order replacement service that ensures the old order is completely removed before submitting new.
@@ -17,6 +30,7 @@ private val logger = KotlinLogging.logger {}
 class OrderReplacementService(
     private val orderCancellationService: OrderCancellationService,
     private val openOrdersAdapter: IbkrOpenOrdersAdapter,
+    private val orderRegistry: IbkrOrderRegistry,
 ) {
     /**
      * Verify that an order has been completely removed from IBKR open orders.
@@ -57,10 +71,16 @@ class OrderReplacementService(
      * This ensures the old order is completely removed from IBKR before the new order is submitted,
      * preventing the double-fill scenario where both orders fill due to timing.
      *
+     * Absence from the open-orders list proves the order is no longer WORKING, but that is true both
+     * when it was cancelled AND when it FILLED in the race window — so the registry's fill-status
+     * (set from the authoritative orderStatus callback) is consulted to tell them apart before the
+     * caller decides whether to submit a replacement.
+     *
      * @param existingOrderId The order to be replaced
-     * @return true if cancellation verified, false if verification failed
+     * @return [ReplacementCancelResult.Removed] if safe to replace, [ReplacementCancelResult.Filled]
+     *   if the old order filled instead, [ReplacementCancelResult.Unverified] if neither could be confirmed.
      */
-    suspend fun replacementCancel(existingOrderId: Int): Boolean {
+    suspend fun replacementCancel(existingOrderId: Int): ReplacementCancelResult {
         logger.info { "Replacement cancel: orderId=$existingOrderId" }
 
         // Use OrderCancellationService for atomic cancel with verification
@@ -70,19 +90,27 @@ class OrderReplacementService(
                 reason = "order_replacement",
             )
 
-        val result = cancellationResults.firstOrNull() ?: return false
+        val result = cancellationResults.firstOrNull()
 
-        return when {
-            result.success -> {
-                logger.info { "Replacement cancel verified: orderId=$existingOrderId" }
-                true
+        val removedFromOpenOrders =
+            when {
+                result == null -> false
+                result.success -> true
+                else -> {
+                    // If cancellation couldn't be verified after retries, attempt direct verification
+                    logger.warn { "Cancellation service returned false, attempting direct verification" }
+                    verifyOrderRemoved(existingOrderId)
+                }
             }
 
-            else -> {
-                // If cancellation couldn't be verified after retries, attempt direct verification
-                logger.warn { "Cancellation service returned false, attempting direct verification" }
-                verifyOrderRemoved(existingOrderId)
-            }
+        if (!removedFromOpenOrders) return ReplacementCancelResult.Unverified
+
+        if (orderRegistry.isFilled(existingOrderId)) {
+            logger.warn { "Replacement cancel: orderId=$existingOrderId was FILLED, not cancelled — no replacement will be submitted" }
+            return ReplacementCancelResult.Filled
         }
+
+        logger.info { "Replacement cancel verified: orderId=$existingOrderId removed (not filled)" }
+        return ReplacementCancelResult.Removed
     }
 }

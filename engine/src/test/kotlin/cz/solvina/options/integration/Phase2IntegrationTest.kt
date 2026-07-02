@@ -6,12 +6,14 @@ import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOpenOrdersAdapter
 import cz.solvina.options.adapters.outbound.ibkr.account.OpenOrder
 import cz.solvina.options.adapters.outbound.ibkr.order.OrderCancellationService
 import cz.solvina.options.adapters.outbound.ibkr.order.OrderReplacementService
+import cz.solvina.options.adapters.outbound.ibkr.order.ReplacementCancelResult
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import io.mockk.coEvery
 import io.mockk.mockk
 import io.mockk.verify
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
-import kotlin.test.assertFalse
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
@@ -23,12 +25,14 @@ class Phase2IntegrationTest {
     private val client: EClientSocket = mockk(relaxed = true)
     private val openOrdersAdapter: IbkrOpenOrdersAdapter = mockk()
 
+    private val orderRegistry: IbkrOrderRegistry = mockk(relaxed = true)
+
     private lateinit var orderCancellationService: OrderCancellationService
     private lateinit var orderReplacementService: OrderReplacementService
 
     fun setup() {
         orderCancellationService = OrderCancellationService(client, openOrdersAdapter)
-        orderReplacementService = OrderReplacementService(orderCancellationService, openOrdersAdapter)
+        orderReplacementService = OrderReplacementService(orderCancellationService, openOrdersAdapter, orderRegistry)
     }
 
     @Test
@@ -120,7 +124,7 @@ class Phase2IntegrationTest {
 
             val result = orderReplacementService.replacementCancel(orderId)
 
-            assertTrue(result)
+            assertEquals(ReplacementCancelResult.Removed, result)
             verify { client.cancelOrder(orderId, any<OrderCancel>()) }
         }
 
@@ -146,8 +150,8 @@ class Phase2IntegrationTest {
 
             val result = orderReplacementService.replacementCancel(orderId)
 
-            // Should return false but not throw
-            assertFalse(result)
+            // Should return Unverified but not throw
+            assertEquals(ReplacementCancelResult.Unverified, result)
         }
 
     @Test

@@ -6,6 +6,7 @@ import cz.solvina.options.domain.features.market.MarketDataPort
 import cz.solvina.options.domain.features.order.LegAction
 import cz.solvina.options.domain.features.order.OrderPort
 import cz.solvina.options.domain.features.order.OrderStatus
+import cz.solvina.options.domain.features.order.roundToOptionTick
 import cz.solvina.options.domain.features.scanner.ScannerConfig
 import cz.solvina.options.domain.features.scanner.StrategyParamsRegistry
 import cz.solvina.options.domain.features.spread.model.Spread
@@ -17,7 +18,9 @@ import cz.solvina.options.domain.features.volatility.VolatilityPort
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
 import io.github.oshai.kotlinlogging.KotlinLogging
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.math.RoundingMode
@@ -29,6 +32,12 @@ import java.util.UUID
 
 private val logger = KotlinLogging.logger {}
 private val tradeLogger = KotlinLogging.logger("TRADES")
+
+/** "450P/445P" (bull put) or "520C/525C" (bear call) — for TRADES-journal lines. */
+private val Spread.legsLabel: String
+    get() =
+        "${soldLeg.contract.strike}${soldLeg.contract.type.ibkrCode}/" +
+            "${boughtLeg.contract.strike}${boughtLeg.contract.type.ibkrCode}"
 
 @Service
 class SpreadManagementService(
@@ -186,7 +195,9 @@ class SpreadManagementService(
         pos.symbol == symbol.value &&
             pos.secType == "OPT" &&
             pos.expiry == contract.expiry &&
-            pos.strike == contract.strike &&
+            // BigDecimal `==` is scale-sensitive (445 != 445.0) — compareTo is the correct comparison
+            // for a strike that may arrive from IBKR with a different scale than our own contract.
+            pos.strike?.compareTo(contract.strike) == 0 &&
             // IBKR reports the right via Types.Right.getApiString() = "P"/"C" (first char only),
             // never "Put"/"Call". Derive the expected code from the leg's own contract so this
             // matches both puts (bull put) and calls (bear call). Matching against "Put" here was a
@@ -259,19 +270,32 @@ class SpreadManagementService(
             logger.debug { "Skipped $skipped spread(s): exchange not in regular trading hours" }
         }
 
+        // Spreads are evaluated CONCURRENTLY: a TP/time exit now chases a limit order that can block
+        // for minutes, and running spreads sequentially would let one slow chase delay a stop-loss
+        // check on every other symbol. Each spread is independent (per-symbol exposure rules forbid
+        // two spreads on one symbol), so per-spread ordering is preserved while symbols don't wait
+        // on each other. The scheduler-level mutex still prevents overlapping checkExits runs.
         if (tradableOpen.isNotEmpty()) {
             logger.info { "Checking exits for ${tradableOpen.size} open spread(s)" }
-            for (spread in tradableOpen) {
-                runCatching { checkSpreadExit(spread) }
-                    .onFailure { e -> logger.error(e) { "[${spread.symbol}] Error checking spread exit: ${e.message}" } }
+            coroutineScope {
+                for (spread in tradableOpen) {
+                    launch {
+                        runCatching { checkSpreadExit(spread) }
+                            .onFailure { e -> logger.error(e) { "[${spread.symbol}] Error checking spread exit: ${e.message}" } }
+                    }
+                }
             }
         }
 
         if (tradableClosing.isNotEmpty()) {
             logger.info { "Retrying close for ${tradableClosing.size} stuck CLOSING spread(s)" }
-            for (spread in tradableClosing) {
-                runCatching { retryClose(spread) }
-                    .onFailure { e -> logger.error(e) { "[${spread.symbol}] Error retrying close: ${e.message}" } }
+            coroutineScope {
+                for (spread in tradableClosing) {
+                    launch {
+                        runCatching { retryClose(spread) }
+                            .onFailure { e -> logger.error(e) { "[${spread.symbol}] Error retrying close: ${e.message}" } }
+                    }
+                }
             }
         }
     }
@@ -396,10 +420,25 @@ class SpreadManagementService(
         val (closeStatus, reason) = exitSignal
         val exitContext = captureExitContext(spread)
 
-        // Time exit may fire without a live quote; record the last known spread value for P&L.
-        val recordedValue = currentSpreadValue ?: spread.lastSpreadValue ?: BigDecimal.ZERO
-        logger.info { "[${spread.symbol}] Closing spread at market — $reason" }
-        forceCloseSpread(spread, recordedValue, closeStatus, reason, exitContext)
+        // Take-profit and time exits are not urgent — chase a limit at the mid first to capture the
+        // edge a market order would give away, escalating to market only if the limit chase fails
+        // (closeSpread leaves the spread CLOSING and retryClose escalates next cycle). Stop-loss and
+        // any strategy-specific exit (e.g. bear-call dividend-assignment protection) need certainty
+        // of execution over price, so they always go straight to market — as does a time exit when
+        // quotes are BLIND, since there is no live mid to price a limit off of.
+        if (soldMidLive != null &&
+            boughtMidLive != null &&
+            (closeStatus == SpreadStatus.CLOSED_PROFIT || closeStatus == SpreadStatus.CLOSED_TIME)
+        ) {
+            logger.info { "[${spread.symbol}] Closing spread via limit chase — $reason" }
+            val spreadValue = soldMidLive.amount.subtract(boughtMidLive.amount)
+            closeSpread(spread, closeStatus, soldMidLive, boughtMidLive, spreadValue, exitContext, closeReason = reason)
+        } else {
+            // Time exit may fire without a live quote; record the last known spread value for P&L.
+            val recordedValue = currentSpreadValue ?: spread.lastSpreadValue ?: BigDecimal.ZERO
+            logger.info { "[${spread.symbol}] Closing spread at market — $reason" }
+            forceCloseSpread(spread, recordedValue, closeStatus, reason, exitContext)
+        }
 
         if (closeStatus == SpreadStatus.CLOSED_STOP) {
             executionPort.blockEntry(spread.symbol, Duration.ofHours(config.stopLossCooldownHours))
@@ -420,11 +459,6 @@ class SpreadManagementService(
         return underlyingPrice to ivRank
     }
 
-    private fun roundToTick(price: BigDecimal): BigDecimal {
-        val tick = if (price < BigDecimal("3.00")) BigDecimal("0.01") else BigDecimal("0.05")
-        return price.divide(tick, 0, RoundingMode.HALF_UP).multiply(tick).setScale(2)
-    }
-
     private suspend fun closeSpread(
         spread: Spread,
         closeStatus: SpreadStatus,
@@ -432,9 +466,10 @@ class SpreadManagementService(
         boughtMid: Money,
         currentSpreadValue: BigDecimal,
         exitContext: Pair<BigDecimal?, BigDecimal?> = Pair(null, null),
+        closeReason: String = closeStatus.name,
     ) {
-        val roundedSoldMid = Money(roundToTick(soldMid.amount))
-        val roundedBoughtMid = Money(roundToTick(boughtMid.amount))
+        val roundedSoldMid = Money(soldMid.amount.roundToOptionTick())
+        val roundedBoughtMid = Money(boughtMid.amount.roundToOptionTick())
 
         // Mark CLOSING immediately so the scanner won't re-enter this symbol while orders are in flight
         val closer = closers.forSpread(spread)
@@ -452,13 +487,13 @@ class SpreadManagementService(
                 }
                 return
             }
-            closer.close(closing, closeStatus, closeStatus.name, currentSpreadValue, exitContext.first, exitContext.second)
+            closer.close(closing, closeStatus, closeReason, currentSpreadValue, exitContext.first, exitContext.second)
             logger.info { "[${spread.symbol}] Sold leg worthless — closed $closeStatus without buy-back" }
             tradeLogger.info {
-                "EXIT   ${spread.symbol}  ${spread.soldLeg.contract.strike}P/${spread.boughtLeg.contract.strike}P" +
-                    "  exp=${spread.soldLeg.contract.expiry}  reason=${closeStatus.name}  value=\$0 (worthless)" +
+                "EXIT   ${spread.symbol}  ${spread.legsLabel}" +
+                    "  exp=${spread.soldLeg.contract.expiry}  reason=$closeReason  value=\$0 (worthless)" +
                     "  credit=\$${spread.creditPerShare}  pnl=\$${spread.creditPerShare.multiply(
-                        BigDecimal("100"),
+                        config.contractMultiplier,
                     ).multiply(BigDecimal(spread.quantity))}"
             }
             return
@@ -476,7 +511,7 @@ class SpreadManagementService(
                 "[${spread.symbol}] Buy-back of sold put did not fill after chase — left as CLOSING; use Kill button or manual close"
             }
             tradeLogger.info {
-                "CLOSING ${spread.symbol}  ${spread.soldLeg.contract.strike}P/${spread.boughtLeg.contract.strike}P  reason=buy_back_unfilled"
+                "CLOSING ${spread.symbol}  ${spread.legsLabel}  reason=buy_back_unfilled"
             }
             return
         }
@@ -489,59 +524,56 @@ class SpreadManagementService(
                 qty = spread.quantity,
             )
         if (sellBackOrder.status != OrderStatus.FILLED) {
-            // Issue #1: Partial fill rollback - buyBackOrder succeeded but sellBackOrder failed
-            // Position is now UNHEDGED (sold leg closed, bought leg still open)
-            // Attempt immediate rollback by selling the SOLD leg back at market
+            // The short leg is already bought back (flat); the long leg's sell-back just didn't fill.
+            // The residual position is a paid-for long option — a bounded debit, never unhedged risk
+            // — so finish the close by selling it at market rather than re-establishing the short.
             logger.warn {
-                "[${spread.symbol}] Sell-back of bought put did not fill — attempting rollback to prevent unhedged position"
+                "[${spread.symbol}] Sell-back of bought leg did not fill after chase — retrying at market " +
+                    "(residual position is a bounded long, not unhedged)"
             }
 
-            val rollbackMarketOrder =
+            val marketSellBack =
                 runCatching {
-                    orderPort.placeAndAwaitFill(
-                        contract = spread.soldLeg.contract,
-                        action = LegAction.SELL, // Sell (reverse the buy) at market
-                        limitPrice = Money(BigDecimal.ONE), // Market order — fill at any price
+                    orderPort.placeMarketOrder(
+                        contract = spread.boughtLeg.contract,
+                        action = LegAction.SELL,
                         qty = spread.quantity,
                     )
                 }.onFailure { e ->
-                    logger.error(e) {
-                        "[${spread.symbol}] Rollback failed: could not sell closed leg back to reverse partial fill. " +
-                            "Position may be unhedged. Manual intervention required."
+                    logger.warn(e) {
+                        "[${spread.symbol}] Market sell-back of bought leg failed — left as CLOSING; " +
+                            "retryClose will attempt again next monitor cycle"
                     }
                 }.getOrNull()
 
-            if (rollbackMarketOrder?.status == OrderStatus.FILLED) {
-                logger.info {
-                    "[${spread.symbol}] Rollback successful: sold leg reversed, spread cancelled without unhedged exposure"
-                }
+            if (marketSellBack?.status == OrderStatus.FILLED) {
+                closer.close(closing, closeStatus, closeReason, currentSpreadValue, exitContext.first, exitContext.second)
+                logger.info { "[${spread.symbol}] Spread closed: bought leg sold at market after limit chase failed" }
                 tradeLogger.info {
-                    "CLOSING ${spread.symbol}  ${spread.soldLeg.contract.strike}P/${spread.boughtLeg.contract.strike}P  reason=partial_fill_rolled_back"
+                    "EXIT   ${spread.symbol}  ${spread.legsLabel}" +
+                        "  exp=${spread.soldLeg.contract.expiry}  reason=$closeReason  value=\$$currentSpreadValue" +
+                        "  (bought leg closed at market)"
                 }
             } else {
-                logger.error {
-                    "[${spread.symbol}] Rollback failed or incomplete: unhedged exposure exists. " +
-                        "Bought leg: OPEN (failed to sell), Sold leg: CLOSED (can't reverse). Manual close required."
+                logger.warn {
+                    "[${spread.symbol}] Bought leg still open (short already flat) — left as CLOSING; " +
+                        "legsStillHeld will skip the already-flat short on the next retry"
                 }
                 tradeLogger.info {
-                    "CLOSING ${spread.symbol}  ${spread.soldLeg.contract.strike}P/${spread.boughtLeg.contract.strike}P  " +
-                        "reason=sell_back_unfilled_rollback_failed  WARNING_UNHEDGED"
+                    "CLOSING ${spread.symbol}  ${spread.legsLabel}  reason=sell_back_unfilled"
                 }
-                // Mark ROLLBACK_FAILED to prevent retry from placing a second close order on the same leg.
-                // This spread requires manual intervention — the monitor loop skips ROLLBACK_FAILED status.
-                closer.markRollbackFailed(closing)
             }
             return
         }
 
-        closer.close(closing, closeStatus, closeStatus.name, currentSpreadValue, exitContext.first, exitContext.second)
+        closer.close(closing, closeStatus, closeReason, currentSpreadValue, exitContext.first, exitContext.second)
         logger.info { "[${spread.symbol}] Spread closed: $closeStatus at \$$currentSpreadValue" }
         tradeLogger.info {
-            "EXIT   ${spread.symbol}  ${spread.soldLeg.contract.strike}P/${spread.boughtLeg.contract.strike}P" +
-                "  exp=${spread.soldLeg.contract.expiry}  reason=${closeStatus.name}  value=\$$currentSpreadValue" +
+            "EXIT   ${spread.symbol}  ${spread.legsLabel}" +
+                "  exp=${spread.soldLeg.contract.expiry}  reason=$closeReason  value=\$$currentSpreadValue" +
                 "  credit=\$${spread.creditPerShare}  pnl=\$${spread.creditPerShare.subtract(
                     currentSpreadValue,
-                ).multiply(BigDecimal("100")).multiply(BigDecimal(spread.quantity))}"
+                ).multiply(config.contractMultiplier).multiply(BigDecimal(spread.quantity))}"
         }
     }
 }

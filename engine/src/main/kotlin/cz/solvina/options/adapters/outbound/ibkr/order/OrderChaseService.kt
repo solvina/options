@@ -8,6 +8,8 @@ import com.ib.client.OrderCancel
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import cz.solvina.options.domain.features.order.LegOrder
 import cz.solvina.options.domain.features.order.OrderStatus
+import cz.solvina.options.domain.features.order.ceilToOptionTick
+import cz.solvina.options.domain.features.order.floorToOptionTick
 import cz.solvina.options.domain.features.scanner.ScannerConfig
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CompletableDeferred
@@ -16,7 +18,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
-import java.math.RoundingMode
 
 private val logger = KotlinLogging.logger {}
 
@@ -64,11 +65,29 @@ class OrderChaseService(
             // the timeout path didn't run, so cancel the IBKR order now before repricing.
             if (!cancelledByTimeout) cancelAndWait(orderId)
 
+            // The fill can race the cancel: IBKR fills the order before processing the cancel
+            // request. Repricing after such a fill would submit a SECOND order for the same leg and
+            // double the position — honor the fill instead.
+            if (registry.isFilled(orderId)) {
+                logger.warn { "Order $orderId FILLED during cancellation — honoring the fill instead of repricing" }
+                return LegOrder(orderId, OrderStatus.FILLED)
+            }
+
             if (attempt < config.orderChaseMaxRetries) {
+                // Reprice toward the marketable side: SELL walks the limit DOWN toward the bid, BUY
+                // walks it UP toward the ask. Applying the SELL direction to a BUY (e.g. the short
+                // leg's buy-back when closing a spread) would make the order progressively less
+                // fillable instead of more.
                 price =
-                    price
-                        .multiply(BigDecimal.ONE.subtract(BigDecimal(config.orderChasePriceStep)))
-                        .setScale(2, RoundingMode.HALF_DOWN)
+                    if (action == "BUY") {
+                        price
+                            .multiply(BigDecimal.ONE.add(BigDecimal(config.orderChasePriceStep)))
+                            .ceilToOptionTick()
+                    } else {
+                        price
+                            .multiply(BigDecimal.ONE.subtract(BigDecimal(config.orderChasePriceStep)))
+                            .floorToOptionTick()
+                    }
                 orderId = registry.nextOrderId()
                 logger.info { "Repricing: new orderId=$orderId price=$price (attempt ${attempt + 1}/${config.orderChaseMaxRetries})" }
 

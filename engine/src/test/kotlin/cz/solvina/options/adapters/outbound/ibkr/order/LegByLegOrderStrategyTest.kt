@@ -86,6 +86,16 @@ class LegByLegOrderStrategyTest {
         expiry: LocalDate = LocalDate.of(2024, 6, 21),
     ) = OptionContract(symbol = Symbol("TSLA"), strike = BigDecimal(strike), expiry = expiry, type = OptionType.PUT)
 
+    private fun soldCall(
+        strike: String = "240.00",
+        expiry: LocalDate = LocalDate.of(2024, 6, 21),
+    ) = OptionContract(symbol = Symbol("TSLA"), strike = BigDecimal(strike), expiry = expiry, type = OptionType.CALL)
+
+    private fun boughtCall(
+        strike: String = "250.00",
+        expiry: LocalDate = LocalDate.of(2024, 6, 21),
+    ) = OptionContract(symbol = Symbol("TSLA"), strike = BigDecimal(strike), expiry = expiry, type = OptionType.CALL)
+
     private fun legQuotes(
         soldBid: String,
         soldAsk: String,
@@ -240,6 +250,53 @@ class LegByLegOrderStrategyTest {
             assertEquals(0.57, buy.lmtPrice(), 1e-9)
             // short hits the bid, floor-to-tick: 1.234 -> 1.23
             assertEquals(1.23, sell.lmtPrice(), 1e-9)
+        }
+
+    @Test
+    fun `accepts a valid bear-call spread - sold strike below bought strike`() =
+        runTest {
+            val result =
+                buildStrategy().submitSpreadOrder(
+                    soldContract = soldCall(),
+                    boughtContract = boughtCall(),
+                    netCredit = Money(BigDecimal("2.00")),
+                    qty = 1,
+                    legQuotes = legQuotes(soldBid = "1.30", soldAsk = "1.40", boughtBid = "0.45", boughtAsk = "0.55"),
+                )
+
+            assertEquals(SubmissionStatus.SUCCESS, result.status)
+        }
+
+    @Test
+    fun `rejects a bear-call spread with sold strike above bought strike`() =
+        runTest {
+            val result =
+                buildStrategy().submitSpreadOrder(
+                    soldContract = soldCall(strike = "250.00"),
+                    boughtContract = boughtCall(strike = "240.00"),
+                    netCredit = Money(BigDecimal("2.00")),
+                    qty = 1,
+                )
+
+            assertEquals(SubmissionStatus.REJECTED, result.status)
+            assertTrue(result.message.contains("Short strike must be < long strike"))
+            assertTrue(placedOrders.isEmpty())
+        }
+
+    @Test
+    fun `rejects a spread mixing puts and calls`() =
+        runTest {
+            val result =
+                buildStrategy().submitSpreadOrder(
+                    soldContract = sold(),
+                    boughtContract = boughtCall(),
+                    netCredit = Money(BigDecimal("2.00")),
+                    qty = 1,
+                )
+
+            assertEquals(SubmissionStatus.REJECTED, result.status)
+            assertTrue(result.message.contains("same option type"))
+            assertTrue(placedOrders.isEmpty())
         }
 
     @Test

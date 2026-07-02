@@ -43,7 +43,4 @@ interface SpreadCloser {
         underlyingAtExit: BigDecimal?,
         ivAtExit: BigDecimal?,
     ): Spread
-
-    /** Mark ROLLBACK_FAILED — unhedged exposure, manual intervention required. */
-    suspend fun markRollbackFailed(spread: Spread): Spread
 }

@@ -44,8 +44,14 @@ interface OrderExecutionPort {
     /** Suspend until the order fills, is cancelled, or errors. */
     suspend fun awaitFill(orderId: Int): OrderStatus
 
-    /** Cancel the order and wait for IBKR confirmation (up to 10 s). */
-    suspend fun cancelAndAwait(orderId: Int)
+    /**
+     * Cancel the order and wait for IBKR confirmation (up to 10 s).
+     *
+     * Returns the order's true terminal status: [OrderStatus.FILLED] when the fill raced the cancel
+     * (the order is a real position — the caller must honor it, not record the entry as aborted),
+     * [OrderStatus.CANCELLED] otherwise.
+     */
+    suspend fun cancelAndAwait(orderId: Int): OrderStatus
 
     /**
      * Cancel the existing combo order and resubmit at [newCredit].
@@ -61,4 +67,11 @@ interface OrderExecutionPort {
 
     /** Returns the set of underlying symbols that have at least one open order on the broker. */
     suspend fun getSymbolsWithOpenOrders(): Set<Symbol>
+
+    /**
+     * Consume (and clear) the broker-reported average fill price for [orderId], if the order status
+     * callback carried one. Null when no fill price was reported (e.g. the order didn't fill, or the
+     * broker sent no avgFillPrice). One-shot: a second call for the same orderId returns null.
+     */
+    fun consumeFillPrice(orderId: Int): BigDecimal?
 }

@@ -165,6 +165,7 @@ class SpreadManagementServiceTest {
         runTest {
             // credit=$1.00 → TP threshold = $1.00 × 0.50 = $0.50
             // spread value = soldMid($0.30) − boughtMid($0.05) = $0.25  →  below threshold
+            // TP has live quotes, so it closes via the limit-chase path (placeAndAwaitFill), not market.
             val spreadPort = mockk<BullPutSpreadPort>()
             val marketDataPort = mockk<MarketDataPort>()
             val orderPort = mockk<OrderPort>()
@@ -177,7 +178,7 @@ class SpreadManagementServiceTest {
             coEvery { marketDataPort.getOptionMid(boughtContract) } returns Money(BigDecimal("0.05"))
             coEvery { marketDataPort.getOptionMidLive(boughtContract) } returns Money(BigDecimal("0.05"))
             coEvery { marketDataPort.getUnderlyingPrice(any()) } returns Money(BigDecimal("500"))
-            coEvery { orderPort.placeMarketOrder(any(), any(), any()) } returns filledOrder
+            coEvery { orderPort.placeAndAwaitFill(any(), any(), any(), any()) } returns filledOrder
 
             val updated = slot<BullPutSpread>()
             coEvery { spreadPort.update(capture(updated)) } answers { firstArg() }
@@ -185,6 +186,7 @@ class SpreadManagementServiceTest {
             buildService(spreadPort, marketDataPort, orderPort).checkExits()
 
             assertEquals(SpreadStatus.CLOSED_PROFIT, updated.captured.status)
+            coVerify(exactly = 0) { orderPort.placeMarketOrder(any(), any(), any()) }
         }
 
     @Test
@@ -233,6 +235,95 @@ class SpreadManagementServiceTest {
                 )
             }
             assertEquals(boughtMid, sellBackPrice.captured.amount)
+        }
+
+    @Test
+    fun `sell-back unfilled after buy-back retries the long leg at market instead of re-selling the short`() =
+        runTest {
+            // Buy-back (short leg) filled; the limit sell-back of the long leg did not. The residual
+            // position is a paid-for long option — a bounded debit, never unhedged risk — so the close
+            // must finish by selling THAT leg at market, and must NEVER re-sell the short (which would
+            // re-establish short risk).
+            val spread = buildOpenSpread()
+            val spreadPort = mockk<BullPutSpreadPort>()
+            val marketDataPort = mockk<MarketDataPort>()
+            val orderPort = mockk<OrderPort>()
+
+            coEvery { spreadPort.findById(spread.id!!) } returns spread
+            coEvery { spreadPort.update(any()) } answers { firstArg() }
+            coEvery { marketDataPort.getOptionMid(soldContract) } returns Money(BigDecimal("0.30"))
+            coEvery { marketDataPort.getOptionMidLive(soldContract) } returns Money(BigDecimal("0.30"))
+            coEvery { marketDataPort.getOptionMid(boughtContract) } returns Money(BigDecimal("0.05"))
+            coEvery { marketDataPort.getOptionMidLive(boughtContract) } returns Money(BigDecimal("0.05"))
+            coEvery { marketDataPort.getUnderlyingPrice(any()) } returns Money(BigDecimal("500"))
+            // Buy-back (short leg, BUY) fills at the limit; sell-back (long leg, SELL) does not.
+            coEvery { orderPort.placeAndAwaitFill(soldContract, LegAction.BUY, any(), any()) } returns filledOrder
+            coEvery { orderPort.placeAndAwaitFill(boughtContract, LegAction.SELL, any(), any()) } returns pendingOrder
+            // The market-order retry for the long leg succeeds.
+            coEvery { orderPort.placeMarketOrder(boughtContract, LegAction.SELL, any()) } returns filledOrder
+
+            val updated = slot<BullPutSpread>()
+            coEvery { spreadPort.update(capture(updated)) } answers { firstArg() }
+
+            SpreadManagementService(
+                closers = buildClosers(spreadPort),
+                marketDataPort = marketDataPort,
+                orderPort = orderPort,
+                universePort = universePort,
+                volatilityPort = mockk(relaxed = true),
+                executionPort = mockk(relaxed = true),
+                config = config,
+                clock = clockAtEntry,
+                quoteHealthService = mockk(relaxed = true),
+                strategyRegistry = strategyRegistry,
+                strategyParams = strategyParams,
+            ).softClose(spread.id!!)
+
+            // Never re-sell (or re-buy) the short leg to "roll back" — that would re-establish short risk.
+            coVerify(exactly = 0) { orderPort.placeMarketOrder(soldContract, any(), any()) }
+            coVerify(exactly = 1) { orderPort.placeMarketOrder(boughtContract, LegAction.SELL, any()) }
+            assertEquals(SpreadStatus.CLOSED_MANUAL, updated.captured.status)
+        }
+
+    @Test
+    fun `sell-back unfilled and the market retry also fails - spread stays CLOSING for the next cycle`() =
+        runTest {
+            val spread = buildOpenSpread()
+            val spreadPort = mockk<BullPutSpreadPort>()
+            val marketDataPort = mockk<MarketDataPort>()
+            val orderPort = mockk<OrderPort>()
+
+            coEvery { spreadPort.findById(spread.id!!) } returns spread
+            coEvery { spreadPort.update(any()) } answers { firstArg() }
+            coEvery { marketDataPort.getOptionMid(soldContract) } returns Money(BigDecimal("0.30"))
+            coEvery { marketDataPort.getOptionMidLive(soldContract) } returns Money(BigDecimal("0.30"))
+            coEvery { marketDataPort.getOptionMid(boughtContract) } returns Money(BigDecimal("0.05"))
+            coEvery { marketDataPort.getOptionMidLive(boughtContract) } returns Money(BigDecimal("0.05"))
+            coEvery { marketDataPort.getUnderlyingPrice(any()) } returns Money(BigDecimal("500"))
+            coEvery { orderPort.placeAndAwaitFill(soldContract, LegAction.BUY, any(), any()) } returns filledOrder
+            coEvery { orderPort.placeAndAwaitFill(boughtContract, LegAction.SELL, any(), any()) } returns pendingOrder
+            coEvery { orderPort.placeMarketOrder(boughtContract, LegAction.SELL, any()) } returns pendingOrder
+
+            val updates = mutableListOf<BullPutSpread>()
+            coEvery { spreadPort.update(capture(updates)) } answers { firstArg() }
+
+            SpreadManagementService(
+                closers = buildClosers(spreadPort),
+                marketDataPort = marketDataPort,
+                orderPort = orderPort,
+                universePort = universePort,
+                volatilityPort = mockk(relaxed = true),
+                executionPort = mockk(relaxed = true),
+                config = config,
+                clock = clockAtEntry,
+                quoteHealthService = mockk(relaxed = true),
+                strategyRegistry = strategyRegistry,
+                strategyParams = strategyParams,
+            ).softClose(spread.id!!)
+
+            coVerify(exactly = 0) { orderPort.placeMarketOrder(soldContract, any(), any()) }
+            val closingState = updates.last { it.status == SpreadStatus.CLOSING }
+            assertEquals(SpreadStatus.CLOSING, closingState.status)
         }
 
     // -------------------------------------------------------------------------
@@ -312,6 +403,7 @@ class SpreadManagementServiceTest {
         runTest {
             // A clean profit exit is not punished — the symbol stays eligible for the next scan.
             // spread value = $0.25 < TP threshold $0.50 → take profit, no block.
+            // TP has live quotes, so it closes via the limit-chase path (placeAndAwaitFill), not market.
             val spreadPort = mockk<BullPutSpreadPort>()
             val marketDataPort = mockk<MarketDataPort>()
             val orderPort = mockk<OrderPort>()
@@ -325,10 +417,14 @@ class SpreadManagementServiceTest {
             coEvery { marketDataPort.getOptionMid(boughtContract) } returns Money(BigDecimal("0.05"))
             coEvery { marketDataPort.getOptionMidLive(boughtContract) } returns Money(BigDecimal("0.05"))
             coEvery { marketDataPort.getUnderlyingPrice(any()) } returns Money(BigDecimal("500"))
-            coEvery { orderPort.placeMarketOrder(any(), any(), any()) } returns filledOrder
+            coEvery { orderPort.placeAndAwaitFill(any(), any(), any(), any()) } returns filledOrder
+
+            val updated = slot<BullPutSpread>()
+            coEvery { spreadPort.update(capture(updated)) } answers { firstArg() }
 
             buildService(spreadPort, marketDataPort, orderPort, executionPort).checkExits()
 
+            assertEquals(SpreadStatus.CLOSED_PROFIT, updated.captured.status, "the close must actually complete")
             assertTrue(executionPort.blockedEntries.isEmpty(), "blockEntry must not be called on a TP exit")
         }
 
@@ -343,6 +439,7 @@ class SpreadManagementServiceTest {
             // Prices are in the hold zone (no TP/SL) to confirm it is the time rule that fires.
             //
             // spread value = $0.60 — above TP($0.50) and below SL($1.50) → only DTE fires.
+            // Time exit has live quotes here, so it closes via the limit-chase path, not market.
             val nearExpiry = LocalDate.of(2025, 3, 21).minusDays(10)
             val clock = Clock.fixed(nearExpiry.atStartOfDay(java.time.ZoneOffset.UTC).toInstant(), java.time.ZoneOffset.UTC)
 
@@ -358,6 +455,35 @@ class SpreadManagementServiceTest {
             coEvery { marketDataPort.getOptionMid(boughtContract) } returns Money(BigDecimal("0.10"))
             coEvery { marketDataPort.getOptionMidLive(boughtContract) } returns Money(BigDecimal("0.10"))
             coEvery { marketDataPort.getUnderlyingPrice(any()) } returns Money(BigDecimal("500"))
+            coEvery { orderPort.placeAndAwaitFill(any(), any(), any(), any()) } returns filledOrder
+
+            val updated = slot<BullPutSpread>()
+            coEvery { spreadPort.update(capture(updated)) } answers { firstArg() }
+
+            buildService(spreadPort, marketDataPort, orderPort, clock = clock).checkExits()
+
+            assertEquals(SpreadStatus.CLOSED_TIME, updated.captured.status)
+            coVerify(exactly = 0) { orderPort.placeMarketOrder(any(), any(), any()) }
+        }
+
+    @Test
+    fun `time exit falls back to market when quotes are BLIND (no live mid to price a limit)`() =
+        runTest {
+            // Same DTE trigger as above, but no live quotes are available — a limit can't be priced,
+            // so the time exit must still go out, via forceCloseSpread (market).
+            val nearExpiry = LocalDate.of(2025, 3, 21).minusDays(10)
+            val clock = Clock.fixed(nearExpiry.atStartOfDay(java.time.ZoneOffset.UTC).toInstant(), java.time.ZoneOffset.UTC)
+
+            val spreadPort = mockk<BullPutSpreadPort>()
+            val marketDataPort = mockk<MarketDataPort>()
+            val orderPort = mockk<OrderPort>()
+
+            coEvery { spreadPort.findOpen() } returns listOf(buildOpenSpread())
+            coEvery { spreadPort.findByStatus(SpreadStatus.CLOSING) } returns emptyList()
+            coEvery { spreadPort.update(any()) } answers { firstArg() }
+            coEvery { marketDataPort.getOptionMidLive(soldContract) } returns null
+            coEvery { marketDataPort.getOptionMidLive(boughtContract) } returns null
+            coEvery { marketDataPort.getUnderlyingPrice(any()) } returns Money(BigDecimal("500"))
             coEvery { orderPort.placeMarketOrder(any(), any(), any()) } returns filledOrder
 
             val updated = slot<BullPutSpread>()
@@ -366,6 +492,7 @@ class SpreadManagementServiceTest {
             buildService(spreadPort, marketDataPort, orderPort, clock = clock).checkExits()
 
             assertEquals(SpreadStatus.CLOSED_TIME, updated.captured.status)
+            coVerify(exactly = 0) { orderPort.placeAndAwaitFill(any(), any(), any(), any()) }
         }
 
     // -------------------------------------------------------------------------
@@ -484,9 +611,12 @@ class SpreadManagementServiceTest {
 
             val marketDataPort = mockk<MarketDataPort>()
             // spread value = 0.40 − 0.05 = 0.35 ≤ TP threshold (credit $1.00 × 0.50 = 0.50) → take-profit.
+            // TP has live quotes, so it closes via the limit-chase path (placeAndAwaitFill).
             coEvery { marketDataPort.getOptionMidLive(soldCall) } returns Money(BigDecimal("0.40"))
             coEvery { marketDataPort.getOptionMidLive(boughtCall) } returns Money(BigDecimal("0.05"))
             coEvery { marketDataPort.getUnderlyingPrice(any()) } returns Money(BigDecimal("500"))
+            val orderPort = mockk<OrderPort>()
+            coEvery { orderPort.placeAndAwaitFill(any(), any(), any(), any()) } returns filledOrder
 
             val closers =
                 SpreadCloserRegistry(
@@ -499,7 +629,7 @@ class SpreadManagementServiceTest {
             SpreadManagementService(
                 closers = closers,
                 marketDataPort = marketDataPort,
-                orderPort = mockk(relaxed = true),
+                orderPort = orderPort,
                 universePort = universePort,
                 volatilityPort = mockk(relaxed = true),
                 executionPort = mockk(relaxed = true),
@@ -766,6 +896,51 @@ class SpreadManagementServiceTest {
             buildService(spreadPort, marketDataPort, orderPort, positionsPort = positionsPort)
                 .forceClose(spread.id!!)
 
+            coVerify(exactly = 1) { orderPort.placeMarketOrder(soldContract, LegAction.BUY, any()) }
+            coVerify(exactly = 0) { orderPort.placeMarketOrder(boughtContract, LegAction.SELL, any()) }
+        }
+
+    @Test
+    fun `force-close recognizes a held leg even when IBKR reports the strike with a different BigDecimal scale`() =
+        runTest {
+            // BigDecimal `==` is scale-sensitive (480 != 480.0). IBKR positions can report a strike
+            // with a different scale than our own OptionContract — positionMatchesLeg must still
+            // recognize the leg as held, or force-close would wrongly treat it as already flat and
+            // skip the buy-back entirely, leaving a real position untouched.
+            val spread = buildOpenSpread()
+            val spreadPort = mockk<BullPutSpreadPort>()
+            val marketDataPort = mockk<MarketDataPort>()
+            val orderPort = mockk<OrderPort>()
+
+            coEvery { spreadPort.findById(spread.id!!) } returns spread
+            coEvery { spreadPort.update(any()) } answers { firstArg() }
+            coEvery { marketDataPort.getOptionMid(soldContract) } returns Money(BigDecimal("0.20"))
+            coEvery { marketDataPort.getOptionMid(boughtContract) } returns Money(BigDecimal("0.05"))
+            coEvery { marketDataPort.getUnderlyingPrice(any()) } returns Money(BigDecimal("495"))
+
+            val positionsPort =
+                object : cz.solvina.options.domain.features.account.PositionsPort {
+                    override suspend fun getPositions() =
+                        listOf(
+                            cz.solvina.options.domain.features.account.AccountPosition(
+                                account = "DU1",
+                                symbol = symbol.value,
+                                secType = "OPT",
+                                currency = "USD",
+                                expiry = expiry,
+                                strike = soldContract.strike.setScale(1), // "480" (contract) vs "480.0" (IBKR)
+                                optionRight = "P",
+                                quantity = BigDecimal("-1"),
+                                avgCost = BigDecimal.ZERO,
+                            ),
+                        )
+                }
+            coEvery { orderPort.placeMarketOrder(soldContract, LegAction.BUY, any()) } returns filledOrder
+
+            buildService(spreadPort, marketDataPort, orderPort, positionsPort = positionsPort)
+                .forceClose(spread.id!!)
+
+            // The short leg must be recognized as held (scale-insensitive match) and bought back.
             coVerify(exactly = 1) { orderPort.placeMarketOrder(soldContract, LegAction.BUY, any()) }
             coVerify(exactly = 0) { orderPort.placeMarketOrder(boughtContract, LegAction.SELL, any()) }
         }
