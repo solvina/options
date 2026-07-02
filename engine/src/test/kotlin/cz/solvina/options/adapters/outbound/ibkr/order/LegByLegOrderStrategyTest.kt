@@ -11,8 +11,10 @@ import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
 import cz.solvina.options.domain.models.OptionType
 import cz.solvina.options.domain.models.Symbol
+import io.mockk.Runs
 import io.mockk.coEvery
 import io.mockk.every
+import io.mockk.just
 import io.mockk.mockk
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.test.runTest
@@ -55,6 +57,7 @@ class LegByLegOrderStrategyTest {
     fun setup() {
         every { registry.nextOrderId() } answers { nextId.getAndIncrement() }
         every { registry.pendingOrderStatus } returns pending
+        every { registry.markSelfCancelled(any()) } just Runs
         coEvery { contractCache.getOrFetchOptionConId(any()) } returns 123456
         every { client.placeOrder(any(), any(), any()) } answers {
             val id = firstArg<Int>()

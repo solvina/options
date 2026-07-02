@@ -22,7 +22,7 @@ class OrderReplacementServiceTest {
     private val client: EClientSocket = mockk(relaxed = true)
     private val openOrdersAdapter: IbkrOpenOrdersAdapter = mockk()
     private val orderRegistry: IbkrOrderRegistry = mockk()
-    private val cancellationService = OrderCancellationService(client, openOrdersAdapter)
+    private val cancellationService = OrderCancellationService(client, openOrdersAdapter, mockk(relaxed = true))
     private val service = OrderReplacementService(cancellationService, openOrdersAdapter, orderRegistry)
 
     private fun openOrder(orderId: Int) =

@@ -199,6 +199,9 @@ class LegByLegOrderStrategy(
     }
 
     private fun cancelQuietly(orderId: Int) {
+        // Our own abort cancel, not a broker rejection — mark it so the code-202 callback is
+        // logged at DEBUG and no reject reason is stashed.
+        registry.markSelfCancelled(orderId)
         runCatching { client.cancelOrder(orderId, com.ib.client.OrderCancel()) }
             .onFailure { e -> logger.warn(e) { "[$exchangeId] Failed to cancel order $orderId" } }
         // Abandoned leg — drop its fill deferred so pendingOrderStatus doesn't leak (E8).

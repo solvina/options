@@ -31,7 +31,7 @@ class Phase2IntegrationTest {
     private lateinit var orderReplacementService: OrderReplacementService
 
     fun setup() {
-        orderCancellationService = OrderCancellationService(client, openOrdersAdapter)
+        orderCancellationService = OrderCancellationService(client, openOrdersAdapter, mockk(relaxed = true))
         orderReplacementService = OrderReplacementService(orderCancellationService, openOrdersAdapter, orderRegistry)
     }
 

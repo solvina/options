@@ -4,6 +4,7 @@ import com.ib.client.EClientSocket
 import com.ib.client.OrderCancel
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOpenOrdersAdapter
 import cz.solvina.options.adapters.outbound.ibkr.account.OpenOrder
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import io.mockk.coEvery
 import io.mockk.mockk
 import io.mockk.verify
@@ -16,7 +17,8 @@ import kotlin.test.assertTrue
 class OrderCancellationServiceTest {
     private val client: EClientSocket = mockk(relaxed = true)
     private val openOrdersAdapter: IbkrOpenOrdersAdapter = mockk()
-    private val service = OrderCancellationService(client, openOrdersAdapter)
+    private val registry: IbkrOrderRegistry = mockk(relaxed = true)
+    private val service = OrderCancellationService(client, openOrdersAdapter, registry)
 
     @Test
     fun `atomic cancel verifies order state before issuing cancel`() =
@@ -43,6 +45,9 @@ class OrderCancellationServiceTest {
             assertTrue(results[0].success)
             assertEquals("verified_removed", results[0].reason)
             verify { client.cancelOrder(orderId, any<OrderCancel>()) }
+            // Our own cancel must be marked self-cancelled so the broker's code-202 ack is logged
+            // at DEBUG (not ERROR "check account permissions") and stashes no reject reason.
+            verify { registry.markSelfCancelled(orderId) }
         }
 
     @Test

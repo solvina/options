@@ -119,6 +119,9 @@ class IbkrOrderExecutionAdapter(
 
     override suspend fun cancelAndAwait(orderId: Int): OrderStatus {
         logger.info { "Cancelling BAG order $orderId" }
+        // Our own abort/reprice cancel, not a broker rejection — mark it so the code-202 callback
+        // is logged at DEBUG and no reject reason is stashed.
+        registry.markSelfCancelled(orderId)
         client.cancelOrder(orderId, OrderCancel())
         runCatching {
             withTimeout(10_000L) {

@@ -3,6 +3,7 @@ package cz.solvina.options.adapters.outbound.ibkr.order
 import com.ib.client.EClientSocket
 import com.ib.client.OrderCancel
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOpenOrdersAdapter
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.delay
 import org.springframework.stereotype.Component
@@ -19,6 +20,7 @@ private val logger = KotlinLogging.logger {}
 class OrderCancellationService(
     private val client: EClientSocket,
     private val openOrdersAdapter: IbkrOpenOrdersAdapter,
+    private val registry: IbkrOrderRegistry,
 ) {
     data class CancellationResult(
         val orderId: Int,
@@ -78,6 +80,9 @@ class OrderCancellationService(
                     logger.info {
                         "Cancel request: orderId=$orderId symbol=${openOrder?.symbol ?: "unknown"} action=${openOrder?.action ?: "unknown"}"
                     }
+                    // This is our own cancel (repricing/cleanup), not a broker rejection — mark it so
+                    // the resulting code-202 callback is logged at DEBUG and no reject reason is stashed.
+                    registry.markSelfCancelled(orderId)
                     client.cancelOrder(orderId, OrderCancel())
 
                     val verificationResult = verifyOrderRemoved(orderId, maxRetries = 5)

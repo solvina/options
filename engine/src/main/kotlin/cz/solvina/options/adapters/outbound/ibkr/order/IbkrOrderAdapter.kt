@@ -107,6 +107,9 @@ class IbkrOrderAdapter(
 
     override suspend fun cancelOrder(orderId: Int) {
         logger.info { "Cancelling order $orderId" }
+        // Our own cleanup cancel, not a broker rejection — mark it so the code-202 callback is
+        // logged at DEBUG and no reject reason is stashed.
+        registry.markSelfCancelled(orderId)
         client.cancelOrder(orderId, OrderCancel())
     }
 
