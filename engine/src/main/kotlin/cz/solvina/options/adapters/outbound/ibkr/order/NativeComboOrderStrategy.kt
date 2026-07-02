@@ -83,6 +83,7 @@ class NativeComboOrderStrategy(
 
             val bagContract =
                 buildNativeComboContract(
+                    underlyingSymbol = soldContract.symbol.value,
                     soldConId = soldConId,
                     boughtConId = boughtConId,
                 )
@@ -188,6 +189,7 @@ class NativeComboOrderStrategy(
     override fun notes(): String = "Native combo order (atomic): both legs fill together or order cancelled. Most reliable."
 
     private fun buildNativeComboContract(
+        underlyingSymbol: String,
         soldConId: Int,
         boughtConId: Int,
     ): Contract {
@@ -212,7 +214,11 @@ class NativeComboOrderStrategy(
         val currency = "USD"
 
         return Contract().apply {
-            symbol("") // Empty for BAG orders
+            // IBKR requires the BAG parent to carry the UNDERLYING symbol; an empty symbol is rejected
+            // at order validation with error 321 ("The symbol or the local-symbol or the security id
+            // must be entered"), which silently blocked every native combo entry. The conids on the
+            // legs identify the actual options; this only names the combo's underlying.
+            symbol(underlyingSymbol)
             secType("BAG")
             exchange(exchangeId)
             currency(currency)

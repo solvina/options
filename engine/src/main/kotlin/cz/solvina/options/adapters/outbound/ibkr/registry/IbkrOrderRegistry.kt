@@ -15,6 +15,11 @@ class IbkrOrderRegistry {
     private val fillPrices = ConcurrentHashMap<Int, java.math.BigDecimal>()
     private val selfCancelledOrders = ConcurrentHashMap.newKeySet<Int>()
 
+    // Broker-reported rejection reason per orderId (IBKR code + message), so the execution loop can
+    // attach the *why* to an ORDER_REJECTED outcome. onError delivers it on a different thread from the
+    // status flow the executor consumes, so we stash it here for the executor to consume one-shot.
+    private val rejectReasons = ConcurrentHashMap<Int, String>()
+
     // Orders confirmed FILLED by IBKR, kept independent of pendingOrderStatus (which is removed once
     // consumed). Absence from the open-orders list alone can mean "cancelled" OR "filled" — this set
     // lets callers (e.g. OrderReplacementService) tell the two apart before submitting a replacement.
@@ -65,6 +70,9 @@ class IbkrOrderRegistry {
 
     fun consumeFillPrice(orderId: Int): java.math.BigDecimal? = fillPrices.remove(orderId)
 
+    /** One-shot: the broker-reported rejection reason for [orderId] (IBKR code + message), or null. */
+    fun consumeRejectReason(orderId: Int): String? = rejectReasons.remove(orderId)
+
     /** True once IBKR has confirmed this order FILLED — distinguishes "filled" from "cancelled/absent". */
     fun isFilled(orderId: Int): Boolean = filledOrders.contains(orderId)
 
@@ -80,6 +88,7 @@ class IbkrOrderRegistry {
         // the caller (OrderChaseService) will cancel the queued order and not reprice.
         if (code == 399) {
             logger.warn { "Order $id queued for after-hours [code=399] — failing fast to avoid stale overnight fill" }
+            rejectReasons[id] = "code=$code: $msg"
             pendingOrderStatus.remove(id)?.complete(OrderStatus.CANCELLED)
             return
         }
@@ -93,9 +102,12 @@ class IbkrOrderRegistry {
                 isPaperAccountLimit -> logger.warn { "Order $id rejected/cancelled [code=$code]: $msg" }
                 else -> logger.error { "Order $id rejected [code=$code] — unexpected reason (check account permissions): $msg" }
             }
+            // Self-cancel is our own reprice, not a broker rejection — don't surface it as a reason.
+            if (!isSelfCancelled) rejectReasons[id] = "code=$code: $msg"
             pendingOrderStatus.remove(id)?.complete(OrderStatus.CANCELLED)
             return
         }
+        rejectReasons[id] = "code=$code: $msg"
         pendingOrderStatus.remove(id)?.completeExceptionally(RuntimeException("IBKR error [code=$code]: $msg"))
     }
 

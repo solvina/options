@@ -74,4 +74,14 @@ interface OrderExecutionPort {
      * broker sent no avgFillPrice). One-shot: a second call for the same orderId returns null.
      */
     fun consumeFillPrice(orderId: Int): BigDecimal?
+
+    /**
+     * Consume (and clear) the broker-reported rejection reason for [orderId] — the IBKR error code and
+     * message behind a CANCELLED/rejected status — so the caller can log *why* an entry was rejected.
+     * Null when the broker reported no reason (e.g. a normal fill, or our own reprice cancel). One-shot.
+     *
+     * Diagnostic-only (it never affects recorded P&L), so it defaults to null — only the live IBKR
+     * adapter overrides it; test doubles and the backtest adapter can ignore it.
+     */
+    fun consumeRejectReason(orderId: Int): String? = null
 }

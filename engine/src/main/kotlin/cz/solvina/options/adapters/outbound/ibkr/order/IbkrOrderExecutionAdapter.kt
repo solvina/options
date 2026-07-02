@@ -188,4 +188,6 @@ class IbkrOrderExecutionAdapter(
             .toSet()
 
     override fun consumeFillPrice(orderId: Int): java.math.BigDecimal? = registry.consumeFillPrice(orderId)
+
+    override fun consumeRejectReason(orderId: Int): String? = registry.consumeRejectReason(orderId)
 }

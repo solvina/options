@@ -215,6 +215,9 @@ class TradeExecutionService(
         var currentCredit = freshCredit
         var ticksSinceAdjust = 0
         var outcome = ExecutionOutcome.TIMED_OUT
+        // Broker-reported rejection reason (IBKR code + message), captured on ORDER_REJECTED so it
+        // reaches the human-readable execution log and TRADES record instead of only the raw wrapper log.
+        var rejectReason: String? = null
 
         logger.info {
             "[${request.underlyingSymbol}] Combo order submitted: " +
@@ -330,9 +333,11 @@ class TradeExecutionService(
                                     break
                                 }
                                 OrderStatus.CANCELLED -> {
+                                    rejectReason = orderExecutionPort.consumeRejectReason(currentOrderId)
                                     logger.info {
                                         "[${request.underlyingSymbol}] ORDER_REJECTED — " +
-                                            "orderId=$currentOrderId rejected/cancelled by broker"
+                                            "orderId=$currentOrderId rejected/cancelled by broker" +
+                                            (rejectReason?.let { ": $it" } ?: "")
                                     }
                                     outcome = ExecutionOutcome.ORDER_REJECTED
                                     break
@@ -454,7 +459,8 @@ class TradeExecutionService(
         }
 
         tradeLogger.info {
-            "ABORTED ${request.underlyingSymbol}  ${request.legsLabel}  reason=${outcome.name}"
+            "ABORTED ${request.underlyingSymbol}  ${request.legsLabel}  reason=${outcome.name}" +
+                (rejectReason?.let { "  ($it)" } ?: "")
         }
         val abortStatus = if (outcome == ExecutionOutcome.ORDER_REJECTED) SpreadStatus.CLOSED_REJECTED else SpreadStatus.CLOSED_TIMEOUT
         writer.markStatus(pendingSpread, abortStatus, outcome.name.lowercase())

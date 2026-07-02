@@ -113,6 +113,9 @@ class IbkrEWrapper(
     ) {
         logger.trace { "tickPrice: tickerId=$tickerId, field=$field, price=$price" }
         twsRaw.debug { twsJson("TICK_PRICE", "tid" to tickerId, "field" to tickFieldName(field), "price" to price) }
+        // A positive price is live data flowing (IBKR sends -1 when a value is unavailable); keep the
+        // market-data flow heartbeat fresh between scans. See MarketDataHealthTracker.recordLiveTick.
+        if (price > 0.0) marketDataHealthTracker.recordLiveTick()
         marketDataRegistry.onTickPrice(tickerId, field, price)
     }
 
@@ -486,6 +489,9 @@ class IbkrEWrapper(
                 "count" to count,
             )
         }
+        // Real-time bars stream continuously (flag scanner) even between scans — the best live-data
+        // heartbeat for the market-data flow signal. See MarketDataHealthTracker.recordLiveTick.
+        marketDataHealthTracker.recordLiveTick()
         marketDataRegistry.onRealtimeBar(reqId, time, open, high, low, close, volume.value().toLong(), wap.value().toDouble())
     }
 

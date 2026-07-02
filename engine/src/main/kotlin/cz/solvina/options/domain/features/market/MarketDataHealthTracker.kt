@@ -7,17 +7,19 @@ import java.time.Clock
  * Always-current market-data flow signal, distinct from the IBKR socket-connection status. The
  * socket can be "connected" while data is fully starved (e.g. a competing session denying quotes),
  * so this tracks whether the engine is actually *receiving* prices: every underlying-price fetch
- * records a success or failure, and [snapshot] reports whether data flowed recently. Read by the
- * `/health/market-data` endpoint and shown as a separate UI light.
+ * records a success or failure, and any live streaming tick/bar refreshes the freshness heartbeat
+ * via [recordLiveTick] (so the signal stays live *between* scans, not just while one is running).
+ * [snapshot] reports whether data flowed recently. Read by the `/health/market-data` endpoint and
+ * shown as a separate UI light.
  */
 @Component
 class MarketDataHealthTracker(
     private val clock: Clock,
 ) {
     data class Snapshot(
-        /** A price fetch succeeded within [FRESH_MS] — data is live. */
+        /** A price fetch succeeded or a live tick/bar arrived within [FRESH_MS] — data is live. */
         val flowing: Boolean,
-        /** Seconds since the last successful fetch, or null if none ever. */
+        /** Seconds since the last successful fetch or live tick/bar, or null if none ever. */
         val lastSuccessAgeSeconds: Long?,
         /** Successful fetches in the trailing [WINDOW_MS]. */
         val successes: Int,
@@ -57,6 +59,21 @@ class MarketDataHealthTracker(
             lastError = reason
             prune(now)
         }
+
+    /**
+     * Live-tick heartbeat, called from the EWrapper on every valid streaming price/bar. Keeps the
+     * flow signal fresh *between* scans — [recordSuccess] only fires while a scan is actively
+     * fetching, so without this the signal decays to `flowing=false` in the 15-min gap between runs.
+     *
+     * Deliberately lock-free and does NOT touch the success/failure counters: ticks arrive many per
+     * second, so counting them would swamp [Snapshot.successes]. It only advances the freshness
+     * timestamp behind [Snapshot.flowing] and [Snapshot.lastSuccessAgeSeconds]. A plain volatile
+     * write is enough — concurrent writes with [recordSuccess] just race to "most recent", which is
+     * exactly the value we want.
+     */
+    fun recordLiveTick() {
+        lastSuccessAt = clock.millis()
+    }
 
     /** Called when IBKR reports the "connected from a different IP address" / competing-session error. */
     fun recordCompetingSession() {
