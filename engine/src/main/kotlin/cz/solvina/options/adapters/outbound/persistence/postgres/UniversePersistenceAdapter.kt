@@ -5,7 +5,9 @@ import cz.solvina.options.adapters.outbound.ibkr.IbkrInstrumentsConfig
 import cz.solvina.options.adapters.outbound.ibkr.InstrumentDef
 import cz.solvina.options.adapters.outbound.persistence.postgres.entity.InstrumentUniverseEntity
 import cz.solvina.options.adapters.outbound.persistence.postgres.repository.InstrumentUniverseRepository
+import cz.solvina.options.domain.features.universe.DaySession
 import cz.solvina.options.domain.features.universe.InstrumentConfig
+import cz.solvina.options.domain.features.universe.MarketCalendarPort
 import cz.solvina.options.domain.features.universe.MarketSchedule
 import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.models.Symbol
@@ -23,6 +25,7 @@ import java.util.concurrent.ConcurrentHashMap
 class UniversePersistenceAdapter(
     private val repository: InstrumentUniverseRepository,
     private val instrumentsConfig: IbkrInstrumentsConfig,
+    private val marketCalendar: MarketCalendarPort,
 ) : UniversePort {
     private val cache = ConcurrentHashMap<String, InstrumentConfig>()
 
@@ -44,6 +47,14 @@ class UniversePersistenceAdapter(
         val now = ZonedDateTime.now(zone)
         if (now.dayOfWeek == DayOfWeek.SATURDAY || now.dayOfWeek == DayOfWeek.SUNDAY) return false
         val time = now.toLocalTime()
+        // Prefer the broker's liquid-hours calendar when known — it captures holidays and half-days
+        // that the fixed weekday window cannot. Fall back to the fixed window only when the calendar
+        // has not been warmed yet (cold start / IBKR unavailable), preserving prior behaviour.
+        when (val session = marketCalendar.sessionFor(symbol, now.toLocalDate())) {
+            DaySession.Closed -> return false
+            is DaySession.Open -> return !time.isBefore(session.open) && time.isBefore(session.close)
+            null -> Unit // no calendar yet — fall through to the fixed-window default below
+        }
         val open = LocalTime.parse(hours.open)
         val close = LocalTime.parse(hours.close)
         return !time.isBefore(open) && time.isBefore(close)

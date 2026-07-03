@@ -37,6 +37,7 @@ class IbkrContractCache(
     private val client: EClientSocket,
     private val contractFactory: IbkrContractFactory,
     private val rateLimiter: IbkrRateLimiter,
+    private val tradingHoursCache: cz.solvina.options.adapters.outbound.ibkr.TradingHoursCache,
 ) {
     @Lazy @Autowired
     private lateinit var optionParamsCache: IbkrOptionParamsCache
@@ -74,24 +75,7 @@ class IbkrContractCache(
         underlyingConIds[symbol]?.let { return it }
 
         logger.debug { "[$symbol] Fetching underlying conId" }
-        val reqId = registry.nextReqId()
-        val deferred = CompletableDeferred<List<com.ib.client.ContractDetails>>()
-        registry.pendingContractDetails[reqId] = PendingContractRequest(deferred, CopyOnWriteArrayList())
-
-        val details: List<com.ib.client.ContractDetails> =
-            rateLimiter.withContractDetails {
-                client.reqContractDetails(reqId, contractFactory.stockContract(symbol))
-                try {
-                    withTimeout(5000L) {
-                        deferred.await()
-                    }
-                } catch (e: TimeoutCancellationException) {
-                    registry.pendingContractDetails.remove(reqId)
-                    registry.timedOutReqIds.add(reqId)
-                    logger.error { "[$symbol] Contract lookup timeout (5s) — IBKR not responding" }
-                    error("Contract lookup timeout for $symbol after 5s")
-                }
-            }
+        val details = fetchStockContractDetails(symbol)
 
         val conId =
             details.firstOrNull()?.contract()?.conid()
@@ -99,11 +83,44 @@ class IbkrContractCache(
 
         details.firstOrNull()?.let { cd ->
             stockTickMeta[symbol] = StockTickMeta(minTick = cd.minTick(), marketRuleIds = cd.marketRuleIds() ?: "")
+            tradingHoursCache.update(symbol, cd.liquidHours())
         }
 
         underlyingConIds[symbol] = conId
         logger.debug { "[$symbol] Underlying conId = $conId" }
         return conId
+    }
+
+    /**
+     * Force-refresh [symbol]'s trading calendar from a fresh stock ContractDetails fetch. Unlike
+     * [getOrFetchUnderlyingConId] this always hits IBKR (the conId cache would otherwise short-circuit),
+     * so a long-running engine keeps today's holiday/half-day schedule current. Best-effort: failures
+     * are logged and swallowed.
+     */
+    suspend fun warmTradingHours(symbol: Symbol) {
+        runCatching { fetchStockContractDetails(symbol) }
+            .onSuccess { details -> details.firstOrNull()?.let { tradingHoursCache.update(symbol, it.liquidHours()) } }
+            .onFailure { e -> logger.debug { "[$symbol] trading-hours warm failed: ${e.message}" } }
+    }
+
+    private suspend fun fetchStockContractDetails(symbol: Symbol): List<com.ib.client.ContractDetails> {
+        val reqId = registry.nextReqId()
+        val deferred = CompletableDeferred<List<com.ib.client.ContractDetails>>()
+        registry.pendingContractDetails[reqId] = PendingContractRequest(deferred, CopyOnWriteArrayList())
+
+        return rateLimiter.withContractDetails {
+            client.reqContractDetails(reqId, contractFactory.stockContract(symbol))
+            try {
+                withTimeout(5000L) {
+                    deferred.await()
+                }
+            } catch (e: TimeoutCancellationException) {
+                registry.pendingContractDetails.remove(reqId)
+                registry.timedOutReqIds.add(reqId)
+                logger.error { "[$symbol] Contract lookup timeout (5s) — IBKR not responding" }
+                error("Contract lookup timeout for $symbol after 5s")
+            }
+        }
     }
 
     /**
