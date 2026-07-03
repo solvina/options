@@ -144,11 +144,37 @@ class IbkrOptionChainAdapter(
         return candidateStrikes.mapNotNull { strike ->
             runCatching {
                 val contract = OptionContract(symbol, expiry, strike, optionType)
+                // Prefer the conId warmed by the verified-strikes lookup — it identifies the exact
+                // series unambiguously. Re-specifying by symbol/exchange/tradingClass/multiplier from
+                // reqSecDefOptParams can disagree with the series the strikes were verified against
+                // (seen on EUREX: verified strikes exist, yet every spec-based reqMktData gets error
+                // 200 "no security definition"). Same approach the execution path already uses.
+                val contractKey = OptionContractKey(symbol, expiry, strike, optionType)
+                val conId = contractCache.getCachedOptionConId(contractKey)
+                // Route with the venue the conId's series actually lists on (recorded when the strikes
+                // were verified) — the configured/params exchange can disagree with the real listing on
+                // EU venues. Fall back to the params venue, then the configured option exchange.
+                val routingExchange =
+                    contractCache.getCachedOptionConIdExchange(contractKey)
+                        ?: params.exchange.takeIf { it != "SMART" }
+                        ?: contractFactory.defFor(symbol).optionExchange
+                val mdContract =
+                    if (conId != null) {
+                        contractFactory.conIdContract(conId, routingExchange)
+                    } else {
+                        contractFactory.optionContract(contract, params.exchange, params.tradingClass, params.multiplier)
+                    }
+                val requestDesc =
+                    if (conId != null) {
+                        "conId=$conId route=$routingExchange"
+                    } else {
+                        "spec exchange=${params.exchange} tradingClass=${params.tradingClass} multiplier=${params.multiplier}"
+                    }
                 val snapshot =
                     reqMktDataSnapshot(
                         registry,
                         client,
-                        contractFactory.optionContract(contract, params.exchange, params.tradingClass, params.multiplier),
+                        mdContract,
                         "",
                         SnapshotReady.OPTION_QUOTE,
                     )
@@ -159,7 +185,7 @@ class IbkrOptionChainAdapter(
                 if (snapshot.delta.isNaN()) {
                     logger.warn {
                         "[$symbol] No live greeks for strike $strike $expiry " +
-                            "(bid=${snapshot.bid} ask=${snapshot.ask}) — skipping, no BS fallback"
+                            "(bid=${snapshot.bid} ask=${snapshot.ask}, via $requestDesc) — skipping, no BS fallback"
                     }
                     return@runCatching null
                 }

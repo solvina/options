@@ -52,6 +52,12 @@ class IbkrContractCache(
 
     private val stockTickMeta = ConcurrentHashMap<Symbol, StockTickMeta>()
     private val optionConIds = ConcurrentHashMap<OptionContractKey, Int>()
+
+    // The exchange of the series each cached conId belongs to — market-data requests must route with
+    // the venue the contract actually lists on. For EU options the configured/params exchange can
+    // disagree with the real listing (e.g. EUREX configured, options actually on FTA), and routing a
+    // conId through the wrong venue rejects the request just like a wrong spec would.
+    private val optionConIdExchanges = ConcurrentHashMap<OptionContractKey, String>()
     private val inFlightOptionConIds = ConcurrentHashMap<OptionContractKey, Deferred<Int>>()
 
     // Negative cache: a key maps to WHEN it was last marked missing. Time-boxed so a single
@@ -355,7 +361,33 @@ class IbkrContractCache(
         verifiedStrikes[VerifiedKey(symbol, expiry, optionType)] =
             actualStrikes.mapTo(TreeSet()) { BigDecimal(it.toString()) }
 
-        // Warm the per-strike conId cache (prefer the primary series) so execution resolves instantly.
+        // EU diagnostic: which series (exchange/tradingClass) did IBKR actually return? A mismatch
+        // between this and the configured/params exchange is the root of "verified strikes exist but
+        // every market-data request 200s" (e.g. EUREX configured, options actually listed on FTA).
+        val seriesBreakdown =
+            details
+                .groupingBy { "${it.contract().exchange()}/${it.contract().tradingClass()}" }
+                .eachCount()
+                .entries
+                .sortedByDescending { it.value }
+                .joinToString(", ") { "${it.key} ×${it.value}" }
+        val preferredMatches =
+            details.count { d ->
+                (cachedExchange == null || d.contract().exchange() == cachedExchange) &&
+                    (cachedTradingClass.isNullOrBlank() || d.contract().tradingClass() == cachedTradingClass)
+            }
+        if (preferredMatches == 0 && cachedExchange != null) {
+            logger.warn {
+                "[$symbol $expiry] No option series matches params exchange=$cachedExchange " +
+                    "tradingClass=$cachedTradingClass — actual series: $seriesBreakdown. " +
+                    "Using first available series; check the configured optionExchange."
+            }
+        } else {
+            logger.debug { "[$symbol $expiry] Option series: $seriesBreakdown (preferred matches: $preferredMatches)" }
+        }
+
+        // Warm the per-strike conId cache (prefer the primary series, then any venue listing over
+        // SMART) so execution and market-data requests resolve instantly and route correctly.
         details
             .groupBy { it.contract().strike() }
             .forEach { (strike, group) ->
@@ -363,12 +395,11 @@ class IbkrContractCache(
                     group.firstOrNull { d ->
                         (cachedExchange == null || d.contract().exchange() == cachedExchange) &&
                             (cachedTradingClass.isNullOrBlank() || d.contract().tradingClass() == cachedTradingClass)
-                    } ?: group.firstOrNull()
-                chosen?.contract()?.conid()?.let { conId ->
-                    optionConIds.putIfAbsent(
-                        OptionContractKey(symbol, expiry, BigDecimal(strike.toString()), optionType),
-                        conId,
-                    )
+                    } ?: group.firstOrNull { it.contract().exchange() != "SMART" } ?: group.firstOrNull()
+                chosen?.contract()?.let { c ->
+                    val key = OptionContractKey(symbol, expiry, BigDecimal(strike.toString()), optionType)
+                    optionConIds.putIfAbsent(key, c.conid())
+                    c.exchange()?.takeIf { it.isNotBlank() }?.let { optionConIdExchanges.putIfAbsent(key, it) }
                 }
             }
 
@@ -386,6 +417,9 @@ class IbkrContractCache(
 
     fun getCachedOptionConId(key: OptionContractKey): Int? = optionConIds[key]
 
+    /** The exchange of the series [key]'s cached conId belongs to — route market-data requests with this. */
+    fun getCachedOptionConIdExchange(key: OptionContractKey): String? = optionConIdExchanges[key]
+
     /** Returns the authoritative strike set for a given expiry+right, populated after the first
      *  reqContractDetails call for that expiry. Null means no data yet — fall back to option params. */
     fun getVerifiedStrikes(
@@ -397,6 +431,7 @@ class IbkrContractCache(
     private fun evictExpired() {
         val today = LocalDate.now()
         optionConIds.keys.removeIf { it.expiry.isBefore(today) }
+        optionConIdExchanges.keys.removeIf { it.expiry.isBefore(today) }
         missingContracts.keys.removeIf { it.expiry.isBefore(today) }
         verifiedStrikes.keys.removeIf { it.expiry.isBefore(today) }
     }

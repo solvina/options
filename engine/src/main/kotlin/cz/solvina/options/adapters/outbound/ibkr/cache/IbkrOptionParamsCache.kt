@@ -50,7 +50,19 @@ class IbkrOptionParamsCache(
 
         val params = deferred.await()
         cache[symbol] = params
-        logger.info { "[$symbol] Cached ${params.expirations.size} expirations, ${params.strikes.size} strikes" }
+        logger.info {
+            "[$symbol] Cached ${params.expirations.size} expirations, ${params.strikes.size} strikes " +
+                "[exchange=${params.exchange} tradingClass=${params.tradingClass} multiplier=${params.multiplier}]"
+        }
+        if (params.expirations.isEmpty()) {
+            // EU pitfall: the params request only accepts responses matching the configured
+            // optionExchange — if the options actually list on a different venue (e.g. FTA vs EUREX),
+            // every response is skipped and this symbol can never produce candidates.
+            logger.warn {
+                "[$symbol] reqSecDefOptParams yielded NO expirations for configured exchange=$configuredExchange — " +
+                    "likely optionExchange mismatch (options listed on a different venue)"
+            }
+        }
         return params
     }
 }
