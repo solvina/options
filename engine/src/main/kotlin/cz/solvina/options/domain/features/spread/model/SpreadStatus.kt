@@ -17,6 +17,13 @@ enum class SpreadStatus {
     /** Entry order never filled (timed out / drift aborted / floor reached) — no position was opened. */
     CLOSED_TIMEOUT,
 
+    /**
+     * Startup recovery could not confirm a live position for a PENDING entry (order gone from the
+     * broker's open orders and both legs not held) — treated as never-opened. Distinct from
+     * CLOSED_MANUAL so recovery artifacts never appear as deliberate user closes in analytics.
+     */
+    CLOSED_RECOVERY_UNKNOWN,
+
     /** Bear call force-closed to avoid ex-dividend early-assignment on the short call (US only). */
     CLOSED_DIVIDEND_RISK,
 

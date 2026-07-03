@@ -96,7 +96,7 @@ export type ListSpreadsData = {
     body?: never;
     path?: never;
     query?: {
-        status?: 'OPEN' | 'CLOSING' | 'CLOSED_PROFIT' | 'CLOSED_STOP' | 'CLOSED_TIME' | 'CLOSED_MANUAL' | 'CLOSED_REJECTED' | 'CLOSED_TIMEOUT';
+        status?: 'OPEN' | 'CLOSING' | 'CLOSED_PROFIT' | 'CLOSED_STOP' | 'CLOSED_TIME' | 'CLOSED_MANUAL' | 'CLOSED_REJECTED' | 'CLOSED_TIMEOUT' | 'CLOSED_RECOVERY_UNKNOWN';
         page?: number;
         size?: number;
     };

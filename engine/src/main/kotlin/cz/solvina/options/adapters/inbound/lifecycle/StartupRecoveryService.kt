@@ -16,11 +16,18 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.springframework.stereotype.Component
 import java.time.Instant
 
 private val logger = KotlinLogging.logger {}
+
+/** How many times recovery polls the broker position feed before deciding a leg is not held. */
+private const val RECOVERY_POSITION_POLLS = 5
+
+/** Delay between recovery position polls — lets a feed that is still warming up at startup populate. */
+private const val RECOVERY_POSITION_POLL_DELAY_MS = 500L
 
 @Component
 class StartupRecoveryService(
@@ -134,29 +141,69 @@ class StartupRecoveryService(
                 }
             } else {
                 // Order not found in IBKR — it filled or was cancelled while the engine was down.
-                // Do NOT blindly close: if BOTH legs are actually held at the broker the order
-                // filled, so adopt the spread as OPEN (else it becomes an unmanaged orphan).
-                val positions =
-                    runCatching { positionsPort.getPositions() }
-                        .onFailure { e -> logger.warn(e) { "Recovery: could not fetch positions for orderId=$orderId" } }
-                        .getOrDefault(emptyList())
-                if (bothLegsHeld(spread, positions)) {
-                    spreadPort.update(spread.copy(status = SpreadStatus.OPEN))
-                    logger.warn {
-                        "Recovery: orderId=$orderId for ${spread.symbol} vanished from open orders but BOTH legs are " +
-                            "held — adopting spread ${spread.id} as OPEN so it gets managed"
+                // Do NOT blindly close: if BOTH legs are actually held at the broker the order filled,
+                // so adopt the spread as OPEN (else it becomes an unmanaged orphan). Crucially we must
+                // be able to TRUST the position snapshot before concluding "not held": a fetch that
+                // throws — or an empty snapshot from a feed that has not warmed up yet at startup — is
+                // NOT evidence the legs are flat. Treating it as such false-closes a live position
+                // (phantom close + de-managed real risk), so we only decide on a trustworthy snapshot.
+                val positions = fetchPositionsForRecovery(spread)
+                when {
+                    positions == null -> {
+                        // Never got a usable snapshot — leave PENDING so the next startup / reconciliation
+                        // re-evaluates, rather than false-closing a position we simply could not observe.
+                        logger.warn {
+                            "Recovery: orderId=$orderId for ${spread.symbol} vanished from open orders but positions " +
+                                "could not be fetched — leaving PENDING for re-evaluation (not closing)"
+                        }
                     }
-                } else {
-                    logger.warn {
-                        "Recovery: orderId=$orderId for ${spread.symbol} not in open orders and legs not both held — " +
-                            "closing as recovery_unknown (any stranded leg will be flagged by reconciliation)"
+                    bothLegsHeld(spread, positions) -> {
+                        spreadPort.update(spread.copy(status = SpreadStatus.OPEN))
+                        logger.warn {
+                            "Recovery: orderId=$orderId for ${spread.symbol} vanished from open orders but BOTH legs are " +
+                                "held — adopting spread ${spread.id} as OPEN so it gets managed"
+                        }
                     }
-                    spreadPort.update(
-                        spread.copy(status = SpreadStatus.CLOSED_MANUAL, closeReason = "recovery_unknown", closedAt = Instant.now()),
-                    )
+                    else -> {
+                        logger.warn {
+                            "Recovery: orderId=$orderId for ${spread.symbol} not in open orders and legs confirmed not held — " +
+                                "closing as recovery_unknown (any stranded leg will be flagged by reconciliation)"
+                        }
+                        spreadPort.update(
+                            spread.copy(
+                                status = SpreadStatus.CLOSED_RECOVERY_UNKNOWN,
+                                closeReason = "recovery_unknown",
+                                closedAt = Instant.now(),
+                            ),
+                        )
+                    }
                 }
             }
         }
+    }
+
+    /**
+     * Fetch a broker position snapshot trustworthy enough to base a recovery close on, tolerating a
+     * feed that is still warming up at startup. Polls up to [RECOVERY_POSITION_POLLS] times and stops
+     * early on the first authoritative snapshot (one that shows this spread's legs, or is simply
+     * non-empty — a warm feed listing other positions is proof these legs are flat). Returns the last
+     * successful snapshot otherwise, or null only when EVERY attempt threw — in which case the caller
+     * must NOT treat the spread as flat.
+     */
+    private suspend fun fetchPositionsForRecovery(spread: BullPutSpread): List<AccountPosition>? {
+        var last: List<AccountPosition>? = null
+        repeat(RECOVERY_POSITION_POLLS) { attempt ->
+            val snapshot =
+                runCatching { positionsPort.getPositions() }
+                    .onFailure { e -> logger.warn(e) { "Recovery: could not fetch positions for ${spread.symbol} (attempt $attempt)" } }
+                    .getOrNull()
+            if (snapshot != null) {
+                last = snapshot
+                if (bothLegsHeld(spread, snapshot) || snapshot.isNotEmpty()) return snapshot
+            }
+            if (attempt < RECOVERY_POSITION_POLLS - 1) delay(RECOVERY_POSITION_POLL_DELAY_MS)
+        }
+        return last
     }
 
     /** True if both legs of [spread] are present at the broker with the expected signed quantities. */

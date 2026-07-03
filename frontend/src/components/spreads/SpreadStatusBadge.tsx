@@ -6,6 +6,7 @@ const styles: Record<string, string> = {
   CLOSED_STOP: 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300',
   CLOSED_TIME: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300',
   CLOSED_MANUAL: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300',
+  CLOSED_RECOVERY_UNKNOWN: 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400',
 }
 
 export function SpreadStatusBadge({ status }: { status: string }) {
