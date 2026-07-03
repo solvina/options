@@ -74,7 +74,10 @@ class PositionReconciliationScheduler(
     private suspend fun runReconcile() {
         // Everything the engine actively manages: open credit spreads (bull put + bear call) and
         // open bull-flag stock positions. Anything held outside this set is a true orphan.
-        val openSpreads = spreadClosers.allOpen()
+        // CLOSING spreads still hold live legs at the broker (close orders in flight or stuck
+        // retrying) and ARE managed — without them a stuck-CLOSING spread's legs get falsely
+        // flagged as orphans and raise CRITICAL alerts.
+        val openSpreads = spreadClosers.allOpen() + spreadClosers.allClosing()
         val openFlags = flagPort.findOpen()
         val positions = positionsPort.getPositions()
         val orphans = detector.detect(openSpreads, openFlags, positions)

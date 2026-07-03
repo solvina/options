@@ -95,13 +95,13 @@ class IbkrContractCache(
      * Force-refresh [symbol]'s trading calendar from a fresh stock ContractDetails fetch. Unlike
      * [getOrFetchUnderlyingConId] this always hits IBKR (the conId cache would otherwise short-circuit),
      * so a long-running engine keeps today's holiday/half-day schedule current. Best-effort: failures
-     * are logged and swallowed.
+     * are logged and swallowed. Returns true when a ContractDetails response was received.
      */
-    suspend fun warmTradingHours(symbol: Symbol) {
+    suspend fun warmTradingHours(symbol: Symbol): Boolean =
         runCatching { fetchStockContractDetails(symbol) }
             .onSuccess { details -> details.firstOrNull()?.let { tradingHoursCache.update(symbol, it.liquidHours()) } }
             .onFailure { e -> logger.debug { "[$symbol] trading-hours warm failed: ${e.message}" } }
-    }
+            .isSuccess
 
     private suspend fun fetchStockContractDetails(symbol: Symbol): List<com.ib.client.ContractDetails> {
         val reqId = registry.nextReqId()
