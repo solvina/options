@@ -478,17 +478,29 @@ class SpreadManagementService(
         // Sold leg is priced at zero — options are effectively worthless. Placing a buy limit at $0.00
         // will never fill. Skip the buy-back and close directly.
         if (roundedSoldMid.amount <= BigDecimal.ZERO) {
-            // M1: a zero can mean "no market data" rather than "genuinely worthless". Only mark the
-            // spread closed-as-worthless when a LIVE quote confirms it; otherwise leave it CLOSING so
-            // the monitor retries — never report a phantom close while the real position stays open.
-            if (marketDataPort.getOptionMidLive(spread.soldLeg.contract) == null) {
+            // M1: a zero can mean "no market data" rather than "genuinely worthless". Finalize the
+            // close only when the $0 is confirmed real — either a LIVE quote confirms it, or the broker
+            // affirms the short leg is flat (worthless / expired / already bought back). If neither
+            // confirms, leave it CLOSING so the monitor retries — never phantom-close a live position
+            // during a data outage. Without the broker check a manual close placed while market data is
+            // down strands in CLOSING forever (never reaching a terminal status), so it also never
+            // surfaces in analytics.
+            val liveConfirmsWorthless = marketDataPort.getOptionMidLive(spread.soldLeg.contract) != null
+            // legsStillHeld returns null when positions can't be queried (stay CLOSING, safe); the short
+            // leg is `.first` — false means the broker affirmatively reports it flat.
+            val brokerConfirmsShortFlat = legsStillHeld(spread)?.first == false
+            if (!liveConfirmsWorthless && !brokerConfirmsShortFlat) {
                 logger.warn {
-                    "[${spread.symbol}] Sold leg priced \$0 but no live quote — leaving CLOSING (not marking worthless)"
+                    "[${spread.symbol}] Sold leg priced \$0 but neither a live quote nor a flat broker " +
+                        "position confirms it — leaving CLOSING (not marking worthless)"
                 }
                 return
             }
             closer.close(closing, closeStatus, closeReason, currentSpreadValue, exitContext.first, exitContext.second)
-            logger.info { "[${spread.symbol}] Sold leg worthless — closed $closeStatus without buy-back" }
+            logger.info {
+                "[${spread.symbol}] Sold leg worthless (${if (liveConfirmsWorthless) "live quote" else "broker flat"}) " +
+                    "— closed $closeStatus without buy-back"
+            }
             tradeLogger.info {
                 "EXIT   ${spread.symbol}  ${spread.legsLabel}" +
                     "  exp=${spread.soldLeg.contract.expiry}  reason=$closeReason  value=\$0 (worthless)" +
