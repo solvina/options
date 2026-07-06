@@ -1,61 +1,43 @@
-# Trading Engine Documentation
+# Trading Engine
 
-## Overview
-
-The trading engine is a Kotlin/Java application (engine.jar, ~80MB) that runs on a Raspberry Pi and manages algorithmic trading of options spreads. It connects to Interactive Brokers (IB Gateway) and executes bull put spreads on equities when IV conditions are favorable.
+The engine is a Kotlin/Spring Boot application (hexagonal ports-and-adapters) that trades
+automatically through Interactive Brokers (IB Gateway). It runs three strategies — bull put
+spreads and bear call spreads on options, and a bull-flag breakout strategy on stocks — on top of
+the shared infrastructure documented here: market data, order execution, risk monitoring,
+recovery, alerting, and a React frontend.
 
 **Source**: `/home/solvina/projects/options/engine/` (Gradle-built)  
-**Binary**: `/home/solvina/options/engine.jar` (deployed)  
-**Service**: `options-engine.service` (systemd)
+**Binary**: `/home/solvina/options/engine.jar` (deployed via `deploy.sh`)  
+**Service**: `options-engine.service` (systemd, Spring profile `rpi`)  
+**Frontend**: `/home/solvina/projects/options/frontend/` (React + OpenAPI-generated clients)
+
+Strategy rules and their current parameters: [STRATEGY_OPTIONS.md](STRATEGY_OPTIONS.md) and
+[STRATEGY_STOCKS.md](STRATEGY_STOCKS.md). Work in progress and open problems: [CURRENT.md](CURRENT.md).
+Parameter values live in `engine/src/main/resources/application.yml` (+ `application-rpi.yml`
+profile overrides). This document describes *mechanics*, not values, so it doesn't rot as
+parameters are tuned.
 
 ---
 
-## Trading Strategy
+## Architecture
 
-### Strategy Type: Bull Put Spreads
-
-A bull put spread on a stock earning $1.88 per spread:
-1. **SELL** 1 put at a higher strike (e.g., 1340P) — collect $1.88 premium
-2. **BUY** 1 put at a lower strike (e.g., 1330P) — pay $0.04 premium
-3. **Net**: Receive $1.84 credit if both legs fill
-
-**Max Risk**: $10 per spread (1 spread = 100 shares × $0.10 strike width) at 1:100 leverage  
-**Max Profit**: $1.84 per spread (collected credit)
-
-### Current Live Strategy Parameters (2026-06-26)
-
-| Parameter | Setting | Config Key | Notes |
-|-----------|---------|------------|-------|
-| **Entry Delta Target** | 0.30 | `scanner.target-delta` | Short put ~30-delta, ~$1.50 credit on $5 width |
-| **Delta Band** | 0.25–0.30 | `scanner.delta-min/max` | Accept spreads in this delta range |
-| **IV Rank Threshold** | > 45% | `scanner.iv-rank-threshold` | Trade only in elevated IV environments |
-| **DTE Range** | 30–50 days | `scanner.min-dte/max-dte` | Prefer 45 DTE |
-| **Spread Width** | $5.00 | `scanner.spread-width-usd` | Fixed width, standardized risk |
-| **Min Credit** | $0.35/share | `scanner.min-credit-per-share` | Minimum $35 per spread |
-| **Max Open Spreads** | 5 | `scanner.max-open-spreads` | Concurrent position limit |
-| **Take-Profit** | 50% of credit | `scanner.take-profit-percent` | Exit at $0.75 on $1.50 credit |
-| **Stop-Loss** | 200% of credit | `scanner.stop-loss-percent` | Exit at $3.00 loss on $1.50 credit ("breathing room") |
-| **Time Exit** | 21 DTE | `scanner.time-profit-dte` | Close spreads at 21 DTE (earlier than 14 DTE) |
-| **Drift Protection** | 5% | `scanner.drift-protection-pct` | Abort if underlying moves > 5% during entry |
-| **Max Bid/Ask Spread** | 15% | `scanner.max-leg-bid-ask-spread-pct` | Only trade liquid options |
-| **Execution Timeout** | 15 min | `scanner.execution-timeout-minutes` | Give up and rescind if not filled in 15 min |
-| **Order Chase Timeout** | 3 min | `scanner.order-chase-timeout-minutes` | Ladder for 3 min max |
-| **Quote Monitoring** | Phase 1 active | `quote-monitoring.*` | Track quote age (LIVE/STALE/BLIND), log transitions, no trading action |
-| **Reconciliation** | Every 5 min | `reconciliation.delay-ms` | Detect orphaned positions, alert to Telegram |
-| **Market Hours** | 9am–11pm CEST | — | Covers EU (9-17:30) + US (3:30pm–4pm ET) markets |
-
-**Strategy Profile**: ~72–76% win rate, ~4 wins erase 1 max loss ($3.50 loss on $1.50 credit), sustainable.
-
-### Selection Criteria
-
-Spreads are identified by scanning 30+ stocks every 15 minutes (configurable: `/spreads?cron`):
-- **IV Rank > 45%** — Trade only when implied volatility is elevated (configurable: `scanner.iv-rank-threshold`)
-- **DTE: 30–50, preferred 45** — Day-to-expiration window (configurable: `min-dte`, `max-dte`, `preferred-dte`)
-- **Credit ≥ $0.35** — Minimum $0.35 per share ($35 per spread minimum) after fees (configurable: `min-credit-per-share`)
-- **Delta band: 0.25–0.30** — Short put target delta ~30-delta for ~$1.50 credit on $5 width (configurable: `delta-min`, `delta-max`, `target-delta`)
-- **Spread width: $5.00** — Fixed width (configurable: `spread-width-usd`)
-- **Max 5 open spreads** — Risk limit (configurable: `max-open-spreads`)
-- **EU + US markets** — Active 9:00 AM - 10:59 PM CEST (covers both Frankfurt/Euronext and NYSE/NASDAQ hours)
+- **Domain** (`domain/features/*`): strategy logic, exit rules, scanners, risk services — no IBKR
+  or persistence types; talks outward only through **ports** (interfaces).
+- **Outbound adapters** (`adapters/outbound/*`): IBKR (TWS API via EClientSocket/EWrapper +
+  registries correlating async callbacks), Postgres (JPA + Liquibase), InfluxDB, Telegram/email.
+- **Inbound adapters** (`adapters/inbound/*`): REST API (OpenAPI-first — specs in
+  `engine/openapi/*.yaml` generate the Kotlin interfaces and the frontend clients) and scheduled
+  jobs (scanner cron, spread monitor, reconciliation, dividend refresh, regime warmup).
+- **Fatal lockout** (`FatalLockoutService` + `GuardedEClientSocket`): a latched fatal condition
+  (e.g. gateway logged into a different account than configured) blocks ALL `placeOrder` calls at
+  the socket, fires a CRITICAL alert, and shows on `/health/fatal` + a red frontend banner.
+  Cleared only by fixing the cause and restarting.
+- **Market data modes**: live (`reqMarketDataType(1)`) or delayed
+  (`ibkr.connection.use-live-market-data=false` → type 3). Delayed tick IDs are normalized in
+  `IbkrMarketDataRegistry`; tick-by-tick and most generic ticks are unavailable on delayed, and
+  real-time bars (flag strategy) require a live subscription. Dividend data (IB_DIVIDENDS tick)
+  is also live-only — a delayed deployment reads it from the prod engine's DB instead
+  (`dividends.remote.*`, health recorded in `dividend_sync_status`).
 
 ### Execution Flow
 
@@ -221,11 +203,6 @@ The engine continuously reconciles IBKR account positions against its managed OP
 - Ensures visibility: if orphans appear, Telegram alerts immediately
 - Categorizes orphans: naked shorts, inverted pairs, stock assignments, etc.
 
-**Current state** (2026-06-26):
-- 5 known orphans (being manually closed at market open)
-- Detection working: 5 detected every reconciliation run, deduped (no re-alert)
-- Future: Auto-adoption will eliminate most new orphans
-
 **Code**: `PositionReconciliationScheduler`, `OrphanPositionDetector`, `TelegramAlertAdapter`, `StartupRecoveryService`
 
 ### Drift Protection
@@ -291,24 +268,13 @@ Holds option chain metadata (expirations, strikes, available contracts):
 
 ## Database Schema
 
-### Core Entities
-
-**Spread** - Represents one entry or exit position
-- `symbol` (TEXT) — Underlying stock symbol
-- `status` (ENUM) — PENDING, OPEN, CLOSED_PROFIT, CLOSED_LOSS, CLOSED_REJECTED
-- `entry_credit` (NUMERIC) — Credit received at entry
-- `exit_credit` (NUMERIC) — Credit received at exit (if closed)
-- `engineManaged` (BOOLEAN) — Whether exit is controlled by engine vs manual
-
-**Order** - Represents IBKR order submissions
-- `orderId` (INT) — IBKR's order ID for tracking
-- `status` (ENUM) — SUBMITTED, FILLED, CANCELLED, REJECTED
-- `limitPrice` (NUMERIC) — Price submitted to IBKR
-
-**Trade** - Log of all decisions and outcomes
-- `symbol` (TEXT) — Underlying
-- `decision` (ENUM) — SKIP, CANDIDATE, ABORTED, FILLED, EXITED
-- `reason` (TEXT) — Why the decision was made
+The schema is defined by Liquibase migrations in
+`engine/src/main/resources/db/changelog/` (one `vN__*.yaml` per change, included from
+`db.changelog-master.yaml`) — that directory is the source of truth. Main tables:
+`bull_put_spreads`, `bear_call_spreads` (one row per spread with entry/exit journaling),
+`flag_positions` (stock strategy, with extended journal columns), `instrument_universe`
+(per-symbol config + dividend data), `iv_rank_cache`, `dividend_sync_status` (prod→paper relay
+health), `backtest_run`, `execution_log` (currently unwired — see CURRENT.md).
 
 ### Schema Conventions
 
@@ -391,87 +357,31 @@ cd /home/solvina/projects/options/engine
 ### Deploy
 
 ```bash
-# Build succeeds → JAR created at:
-# /home/solvina/projects/options/engine/build/libs/engine.jar
-
-# Copy to production
-cp build/libs/engine.jar /home/solvina/options/engine.jar
-
-# Restart service
-systemctl restart options-engine.service
-
-# Verify health
-curl -s http://localhost:8081/health | jq '.'
+# From the repo root — builds engine + frontend, uploads, restarts services,
+# brings up docker compose (db, ib-gateway, loki, grafana, alloy):
+./deploy.sh
 ```
 
-### Code Structure
-
-```
-src/main/kotlin/cz/solvina/options/
-├── adapters/
-│   └── outbound/ibkr/
-│       ├── order/
-│       │   ├── NativeComboOrderStrategy.kt  (US markets)
-│       │   └── LegByLegOrderStrategy.kt     (EU markets)
-│       └── contract/
-│           └── IbkrContractCache.kt         (Contract lookup caching)
-├── domain/features/
-│   ├── execution/
-│   │   └── TradeExecutionService.kt         (Order submission & monitoring)
-│   └── spread/
-│       └── SpreadMonitorScheduler.kt        (Periodic monitoring)
-└── application/
-    └── ScannerConfig.kt                     (Cron schedule)
-```
-
----
-
-## Known Issues & Fixes
-
-### FIXED (2026-06-12)
-1. **BUY leg limit price = $0.00** — EUREX leg-by-leg orders rejected by exchange
-   - Fix: Enforce minimum limit price of $0.01
-2. **Stale option chain cache** → phantom strikes → Error 200
-   - Fix: Reduced TTL from 24h to 1h with lazy refresh
-
-### Active (0.8% impact)
-- Order timeout rate on ASML, likely due to EUREX trading phases and leg-by-leg strategy fragility
-- Solution planned: Migrate to BAG contract definition for EU markets
-
-### Improvements Planned
-- BAG contract support for EU markets (eliminates leg-by-leg partial fill risk)
-- Pre-warming contract cache at startup (reduces first-order lookup latency)
-- Circuit breaker for repeated contract lookup timeouts
-- Metrics/alerting for quote staleness events
+Deployment gotchas that have bitten before:
+- `deploy.sh` runs compose with `--env-file .env.rpi` — gateway credentials live in **both**
+  `/home/solvina/options/.env` and `/home/solvina/options/.env.rpi`; keep them in sync.
+- The engine's systemd unit reads `/home/solvina/options/engine.env` (Telegram/email
+  credentials). Compose `.env` files are NOT visible to the engine process.
+- IB Gateway logs in directly as the **paper username** (`svzxsu299`); the live username +
+  paper mode is rejected by IBKR ("multiple Paper Trading users").
 
 ---
 
 ## Configuration
 
-Engine configuration is controlled via:
+- **`application.yml`** (packaged): all engine parameters — scanner/strategy settings, IBKR
+  connection, quote monitoring, regime gating, alerts, dividend relay. Inline comments document
+  each key.
+- **`application-rpi.yml`** (packaged, profile `rpi`): per-box overrides (paper account flag,
+  EU instrument venue config, watchlist).
+- **External override** (no rebuild): a file at `/home/solvina/options/config/application.yml`
+  overrides packaged values on restart — use sparingly, it silently wins over the jar.
 
-**Application Properties**: `/home/solvina/projects/options/engine/src/main/resources/application.yml`
-- IV Rank threshold (45% minimum)
-- Scanner cron expression (currently: `0 */15 9-22 * * MON-FRI`)
-- Fee per contract (for net credit calculation)
-
-**Environment**: Raspberry Pi system
-- IB Gateway configured for paper trading (can switch to live)
-- Database: PostgreSQL (currently not running in production, only in tests)
-- Network: Stable WiFi/Ethernet to IB Gateway
-
----
-
-## Performance Notes
-
-**Raspberry Pi (4GB RAM)**:
-- Gradle builds take 2-5 minutes (due to slow disk I/O)
-- 30+ symbols scanned every 15 minutes: ~100ms per symbol
-- Average order execution: 500ms - 3s per spread (depends on market conditions)
-- Concurrent order monitoring: handles 50+ open orders
-
-**Network**:
-- IB Gateway connection is stable (monitored)
-- IBKR API throughput: ~100 requests/second capacity
-- Current rate: ~5-10 requests/second average
+Current known issues, open work, and planned improvements are tracked in
+[CURRENT.md](CURRENT.md), not here.
 
