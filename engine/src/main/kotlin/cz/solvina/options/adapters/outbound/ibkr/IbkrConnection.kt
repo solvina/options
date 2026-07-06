@@ -34,7 +34,7 @@ class IbkrConnection(
         client.eConnect(config.host, config.port, config.clientId)
         if (client.isConnected) {
             logger.info { "Connected successfully to IBKR" }
-            if (config.paperAccount && !config.useLiveMarketData) {
+            if (config.delayedMarketData) {
                 client.reqMarketDataType(3)
                 logger.info { "Paper account: requesting delayed market data (type 3)" }
             } else {

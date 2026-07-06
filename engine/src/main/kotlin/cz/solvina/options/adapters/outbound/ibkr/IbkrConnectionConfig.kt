@@ -23,6 +23,13 @@ data class IbkrConnectionConfig(
     /** EUREX leg-by-leg: how long to wait for each individual leg to fill before treating it as failed. */
     val legFillTimeoutSeconds: Long = 30,
 ) {
+    /**
+     * True when the session runs on delayed market data (reqMarketDataType(3), see IbkrConnection).
+     * Delayed mode has no tick-by-tick and only a short allow-list of generic ticks, so market-data
+     * adapters must pick the delayed-compatible request shape.
+     */
+    val delayedMarketData: Boolean get() = paperAccount && !useLiveMarketData
+
     override fun toString(): String =
         "IbkrConnectionConfig(host='$host', port=$port, clientId=$clientId, " +
             "useSSL=$useSSL, enabled=$enabled, autoReconnect=$autoReconnect, " +

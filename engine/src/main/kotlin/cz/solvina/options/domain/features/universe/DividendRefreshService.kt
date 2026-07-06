@@ -18,8 +18,9 @@ class DividendRefreshService(
     private val dividendDataPort: DividendDataPort,
     private val universePort: UniversePort,
 ) {
-    /** Daily pre-market refresh. */
-    @Scheduled(cron = "0 30 6 * * *")
+    /** Daily pre-market refresh. Paper deployments relaying from prod (dividends.remote) should
+     *  schedule this after prod's own refresh, e.g. "0 0 7 * * *". */
+    @Scheduled(cron = "\${dividends.refresh-cron:0 30 6 * * *}")
     fun scheduledRefresh() = runBlocking { refresh() }
 
     /** One-shot a few minutes after startup so a fresh deploy populates without waiting for the cron. */

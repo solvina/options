@@ -44,7 +44,9 @@ class IbkrContractCacheInFlightTest {
             client = client,
             contractFactory = contractFactory,
             rateLimiter = IbkrRateLimiter(IbkrRateLimitConfig(), java.time.Clock.systemUTC()),
-            tradingHoursCache = cz.solvina.options.adapters.outbound.ibkr.TradingHoursCache(),
+            tradingHoursCache =
+                cz.solvina.options.adapters.outbound.ibkr
+                    .TradingHoursCache(),
         )
 
     @BeforeEach

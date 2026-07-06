@@ -2,6 +2,7 @@ package cz.solvina.options.adapters.outbound.ibkr.market
 
 import com.ib.client.Contract
 import com.ib.client.EClientSocket
+import cz.solvina.options.adapters.outbound.ibkr.IbkrConnectionConfig
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.IbkrInstrumentsConfig
 import cz.solvina.options.adapters.outbound.ibkr.IbkrRateLimitConfig
@@ -35,7 +36,12 @@ import kotlin.test.assertEquals
 class IbkrMarketTickAdapterContractResolutionTest {
     private val registry: IbkrMarketDataRegistry = mockk(relaxed = true)
     private val client: EClientSocket = mockk(relaxed = true)
-    private val contractCache: IbkrContractCache = mockk()
+    private val contractCache: IbkrContractCache =
+        mockk {
+            // No recorded listing venue — contractForMktData falls back to the instrument def's
+            // optionExchange, which is what these tests assert on.
+            every { getCachedOptionConIdExchange(any()) } returns null
+        }
     private val optionParamsCache: IbkrOptionParamsCache = mockk()
     private val instrumentsConfig =
         IbkrInstrumentsConfig(
@@ -52,6 +58,7 @@ class IbkrMarketTickAdapterContractResolutionTest {
             contractCache = contractCache,
             optionParamsCache = optionParamsCache,
             rateLimiter = IbkrRateLimiter(IbkrRateLimitConfig(), java.time.Clock.systemUTC()),
+            connectionConfig = IbkrConnectionConfig(useLiveMarketData = true),
             // SupervisorJob (matching production) so a failed fetch surfaces only via await();
             // Unconfined runs the detached fetch inline so resolution completes deterministically
             // within runTest's virtual time (no real-thread dispatch).

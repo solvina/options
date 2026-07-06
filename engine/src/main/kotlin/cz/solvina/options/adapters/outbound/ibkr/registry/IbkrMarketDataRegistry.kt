@@ -37,6 +37,25 @@ internal data class PendingTickByTickRequest(
     val trySend: (TickByTickBidAsk) -> Boolean,
 )
 
+/**
+ * With reqMarketDataType(3) (paper without a live subscription) IBKR delivers the same callbacks
+ * under delayed tick IDs. Fold them onto the live IDs so the snapshot/stream handling below is
+ * mode-agnostic — without this every delayed tick fell through the field filters, snapshots never
+ * completed, and quotes degraded to the Black-Scholes synthetic fallback (which exit decisions
+ * deliberately refuse to act on).
+ */
+internal fun normalizeDelayedPriceField(field: Int): Int =
+    when (field) {
+        66 -> 1 // DELAYED_BID
+        67 -> 2 // DELAYED_ASK
+        68 -> 4 // DELAYED_LAST
+        75 -> 9 // DELAYED_CLOSE
+        else -> field
+    }
+
+/** Delayed bid/ask/last/model option computation (80–83) → live equivalents (10–13). */
+internal fun normalizeDelayedOptionComputationField(field: Int): Int = if (field in 80..83) field - 70 else field
+
 @Component
 class IbkrMarketDataRegistry(
     private val idCounter: IbkrIdCounter,
@@ -89,10 +108,11 @@ class IbkrMarketDataRegistry(
         field: Int,
         price: Double,
     ) {
+        val normalizedField = normalizeDelayedPriceField(field)
         val now = Instant.now()
         pendingMarketData[reqId]?.let { request ->
             request.snapshot =
-                when (field) {
+                when (normalizedField) {
                     1 -> request.snapshot.copy(bid = price, asOf = now)
                     2 -> request.snapshot.copy(ask = price, asOf = now)
                     4 -> request.snapshot.copy(last = price, asOf = now)
@@ -103,7 +123,7 @@ class IbkrMarketDataRegistry(
         }
         pendingContinuousMarketData[reqId]?.let { request ->
             val updated =
-                when (field) {
+                when (normalizedField) {
                     1 -> request.snapshot.copy(bid = price, asOf = now)
                     2 -> request.snapshot.copy(ask = price, asOf = now)
                     4 -> request.snapshot.copy(last = price, asOf = now)
@@ -124,7 +144,7 @@ class IbkrMarketDataRegistry(
         vega: Double,
         theta: Double,
     ) {
-        if (field !in 10..13) return
+        if (normalizeDelayedOptionComputationField(field) !in 10..13) return
         val sentinel = Double.MAX_VALUE
         val now = Instant.now()
 

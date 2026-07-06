@@ -99,6 +99,18 @@ scanner:
     time-profit-dte: 21            # manage/close at 21 DTE (tastytrade-style); was 14
     drift-protection-pct: 0.05     # Conservative: 0.01 → 0.05 (allow 5% movement, not 1%)
 
+# Dividend data: refreshed daily into instrument_universe (ex_dividend_date/next_dividend_amount).
+# Source is the IBKR IB_DIVIDENDS tick by default. On a paper deployment running on DELAYED market
+# data (ibkr.connection.use-live-market-data=false) that tick is unavailable — enable the remote
+# relay instead so this engine reads what the PROD engine's refresh stored in its own database.
+dividends:
+  refresh-cron: "0 30 6 * * *"   # paper+remote: set after prod's refresh, e.g. "0 0 7 * * *"
+  remote:
+    enabled: false
+    jdbc-url: ""                 # e.g. jdbc:postgresql://<prod-tailscale-ip>:5433/options
+    username: ${DIVIDENDS_REMOTE_DB_USER:options_user}
+    password: ${DIVIDENDS_REMOTE_DB_PASSWORD:}
+
 # Operational alerts (Telegram). Token/chat injected from env (same .env the bot uses).
 alerts:
   telegram:

@@ -70,4 +70,44 @@ class IbkrMarketDataRegistryTest {
 
         assertFalse(deferred.isCompleted, "sentinel greeks must not be treated as a live delta")
     }
+
+    /**
+     * Delayed mode (reqMarketDataType(3)) delivers the same callbacks under delayed tick IDs:
+     * bid/ask/last/close arrive as 66/67/68/75 and option computations as 80–83. Before the
+     * normalization these fell through the field filters, so no delayed snapshot ever completed and
+     * every quote degraded to the Black-Scholes synthetic fallback.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun `delayed tick fields resolve an option quote request`() {
+        val reqId = 42
+        val deferred = CompletableDeferred<MarketDataSnapshot>()
+        registry.pendingMarketData[reqId] = PendingMarketDataRequest(deferred, optionReady)
+
+        registry.onTickPrice(reqId, field = 66, price = 2.41) // DELAYED_BID
+        registry.onTickPrice(reqId, field = 67, price = 2.55) // DELAYED_ASK
+        assertFalse(deferred.isCompleted, "must not resolve before delayed greeks arrive")
+
+        // DELAYED_MODEL_OPTION_COMPUTATION
+        registry.onTickOptionComputation(reqId, field = 83, impliedVol = 0.64, delta = -0.12, gamma = 0.003, vega = 0.20, theta = -0.14)
+
+        assertTrue(deferred.isCompleted, "delayed bid/ask/greeks must complete the snapshot")
+        val snapshot = deferred.getCompleted()
+        assertEquals(2.41, snapshot.bid)
+        assertEquals(2.55, snapshot.ask)
+        assertEquals(-0.12, snapshot.delta)
+    }
+
+    @Test
+    fun `delayed last and close ticks update a continuous stream`() {
+        val reqId = 42
+        var latest: MarketDataSnapshot? = null
+        registry.pendingContinuousMarketData[reqId] = PendingContinuousMarketDataRequest(onUpdate = { latest = it })
+
+        registry.onTickPrice(reqId, field = 68, price = 101.5) // DELAYED_LAST
+        assertEquals(101.5, latest?.last)
+
+        registry.onTickPrice(reqId, field = 75, price = 99.0) // DELAYED_CLOSE
+        assertEquals(99.0, latest?.close)
+    }
 }

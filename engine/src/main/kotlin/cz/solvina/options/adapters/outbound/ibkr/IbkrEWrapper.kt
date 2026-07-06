@@ -89,6 +89,10 @@ private fun optFieldName(field: Int) =
         12 -> "LAST"
         13 -> "MODEL"
         53 -> "CUSTOM"
+        80 -> "DELAYED_BID"
+        81 -> "DELAYED_ASK"
+        82 -> "DELAYED_LAST"
+        83 -> "DELAYED_MODEL"
         else -> "FIELD_$field"
     }
 
