@@ -4,6 +4,29 @@ export type ClientOptions = {
     baseUrl: `${string}://${string}` | (string & {});
 };
 
+export type FatalStatus = {
+    /**
+     * True when the engine is in fatal lockout and order placement is blocked
+     */
+    fatal: boolean;
+    reasons: Array<FatalReason>;
+};
+
+export type FatalReason = {
+    /**
+     * Short cause, e.g. "IBKR account mismatch"
+     */
+    title: string;
+    /**
+     * Full explanation including what to fix
+     */
+    detail: string;
+    /**
+     * When the condition latched
+     */
+    at: string;
+};
+
 export type IbkrConnectionStatus = {
     /**
      * Whether the IBKR connection is currently active
@@ -71,6 +94,22 @@ export type GetIbkrConnectionStatusResponses = {
 };
 
 export type GetIbkrConnectionStatusResponse = GetIbkrConnectionStatusResponses[keyof GetIbkrConnectionStatusResponses];
+
+export type GetFatalStatusData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/health/fatal';
+};
+
+export type GetFatalStatusResponses = {
+    /**
+     * Fatal-lockout status
+     */
+    200: FatalStatus;
+};
+
+export type GetFatalStatusResponse = GetFatalStatusResponses[keyof GetFatalStatusResponses];
 
 export type GetMarketDataHealthData = {
     body?: never;

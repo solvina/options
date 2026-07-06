@@ -1,0 +1,37 @@
+databaseChangeLog:
+  - changeSet:
+      id: v23-dividend-sync-status
+      author: claude
+      comment: >-
+        Prod→paper dividend relay observability: one row per remote source recording every sync
+        attempt (last attempt/success timestamps, consecutive failures, last error). The local
+        instrument_universe stays the point of truth for dividend values; this table is the point
+        of truth for whether the relay is healthy.
+      changes:
+        - createTable:
+            tableName: dividend_sync_status
+            columns:
+              - column:
+                  name: source
+                  type: VARCHAR(32)
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: last_attempt_at
+                  type: TIMESTAMP WITH TIME ZONE
+              - column:
+                  name: last_success_at
+                  type: TIMESTAMP WITH TIME ZONE
+              - column:
+                  name: consecutive_failures
+                  type: INT
+                  defaultValueNumeric: 0
+                  constraints:
+                    nullable: false
+              - column:
+                  name: rows_loaded
+                  type: INT
+              - column:
+                  name: last_error
+                  type: TEXT

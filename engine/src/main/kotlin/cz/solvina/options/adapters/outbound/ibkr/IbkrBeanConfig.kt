@@ -4,6 +4,7 @@ import com.ib.client.EClientSocket
 import com.ib.client.EJavaSignal
 import com.ib.client.EReaderSignal
 import com.ib.client.EWrapper
+import cz.solvina.options.domain.features.fatal.FatalLockoutService
 import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
@@ -18,5 +19,6 @@ class IbkrBeanConfig {
     fun eClientSocket(
         wrapper: EWrapper,
         eReaderSignal: EReaderSignal,
-    ): EClientSocket = EClientSocket(wrapper, eReaderSignal)
+        fatalLockout: FatalLockoutService,
+    ): EClientSocket = GuardedEClientSocket(wrapper, eReaderSignal, fatalLockout)
 }

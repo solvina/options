@@ -5,6 +5,7 @@ import cz.solvina.options.adapters.outbound.ibkr.IbkrConnectionConfig
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrAccountRegistry
 import cz.solvina.options.domain.features.account.AccountDetail
 import cz.solvina.options.domain.features.account.AccountPort
+import cz.solvina.options.domain.features.fatal.FatalLockoutService
 import cz.solvina.options.domain.models.Money
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -20,6 +21,7 @@ private val logger = KotlinLogging.logger {}
 class IbkrAccountAdapter(
     private val client: EClientSocket,
     private val config: IbkrConnectionConfig,
+    private val fatalLockout: FatalLockoutService,
     accountRegistry: IbkrAccountRegistry,
 ) : AccountPort {
     private val _accountDetail = MutableStateFlow<AccountDetail?>(null)
@@ -38,9 +40,16 @@ class IbkrAccountAdapter(
             logger.warn { "No account configured (ibkr.connection.account). Skipping subscription." }
             return
         }
-        val accounts = accountsList.split(",").map { it.trim() }
-        if (config.account !in accounts) {
-            logger.warn { "Configured account ${config.account} not found in managed list $accounts" }
+        val accounts = accountsList.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+        if (accounts.isNotEmpty() && config.account !in accounts) {
+            // Wrong-account protection: the gateway is logged into a different account than this
+            // engine is configured to trade (e.g. live gateway + paper config or vice versa).
+            // Trading against the wrong account must be impossible, not a log line.
+            fatalLockout.trigger(
+                "IBKR account mismatch",
+                "Configured account ${config.account} is not in the gateway's managed list $accounts. " +
+                    "Check ibkr.connection.account vs the gateway login (paper vs live).",
+            )
             return
         }
         logger.info { "Subscribing to account updates for ${config.account}" }

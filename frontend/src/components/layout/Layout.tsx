@@ -3,6 +3,7 @@ import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { Menu, X } from 'lucide-react'
 import { ConnectionBadge } from './ConnectionBadge'
 import { DataFlowBadge } from './DataFlowBadge'
+import { FatalBanner } from './FatalBanner'
 import { cn } from '../../lib/utils'
 
 const navGroups = [
@@ -79,7 +80,9 @@ export function Layout() {
   }, [location.pathname])
 
   return (
-    <div className="min-h-screen bg-background text-foreground md:flex">
+    <div className="min-h-screen bg-background text-foreground">
+      <FatalBanner />
+      <div className="md:flex">
       {/* Mobile top bar — hamburger, brand, and the two status lights (dot-only) always visible. */}
       <header className="md:hidden sticky top-0 z-20 flex items-center gap-3 border-b border-border bg-background px-4 py-2">
         <button
@@ -167,6 +170,7 @@ export function Layout() {
       <main className="flex-1 min-w-0 p-4 md:p-6 overflow-x-auto">
         <Outlet />
       </main>
+      </div>
     </div>
   )
 }

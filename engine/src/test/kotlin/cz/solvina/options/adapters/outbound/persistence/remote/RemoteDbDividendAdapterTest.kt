@@ -1,10 +1,13 @@
 package cz.solvina.options.adapters.outbound.persistence.remote
 
+import cz.solvina.options.domain.features.alert.AlertPort
 import cz.solvina.options.domain.models.Symbol
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.verify
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
+import org.springframework.jdbc.core.JdbcTemplate
 import java.math.BigDecimal
 import java.sql.Connection
 import java.sql.PreparedStatement
@@ -45,10 +48,21 @@ class RemoteDbDividendAdapterTest {
     }
 
     @Test
-    fun `returns null instead of throwing when prod database is unreachable`() =
+    fun `unreachable prod returns null, records the attempt, and backs off instead of reconnecting per symbol`() =
         runTest {
-            val config = RemoteDividendConfig(enabled = true, jdbcUrl = "jdbc:postgresql://invalid-host:1/none?connectTimeout=1")
-            val adapter = RemoteDbDividendAdapter(config)
+            val jdbcTemplate = mockk<JdbcTemplate>(relaxed = true)
+            val alertPort = mockk<AlertPort>(relaxed = true)
+            val config =
+                RemoteDividendConfig(
+                    jdbcUrl = "jdbc:postgresql://127.0.0.1:1/none",
+                    connectTimeoutSeconds = 1,
+                )
+            val adapter = RemoteDbDividendAdapter(config, jdbcTemplate, alertPort)
+
             assertNull(adapter.fetchDividendInfo(Symbol("AAPL")))
+            // Second symbol during the same (failed) refresh run: served from the failure backoff —
+            // no second connection attempt, so exactly one status row was written.
+            assertNull(adapter.fetchDividendInfo(Symbol("MSFT")))
+            verify(exactly = 1) { jdbcTemplate.update(any<String>(), *anyVararg()) }
         }
 }

@@ -110,6 +110,9 @@ dividends:
     jdbc-url: ""                 # e.g. jdbc:postgresql://<prod-tailscale-ip>:5433/options
     username: ${DIVIDENDS_REMOTE_DB_USER:options_user}
     password: ${DIVIDENDS_REMOTE_DB_PASSWORD:}
+    # Relay health is recorded per attempt in dividend_sync_status (local DB).
+    # Tunables (defaults): cache-ttl-minutes: 15, failure-backoff-minutes: 10,
+    # connect-timeout-seconds: 10, alert-after-consecutive-failures: 3
 
 # Operational alerts (Telegram). Token/chat injected from env (same .env the bot uses).
 alerts:

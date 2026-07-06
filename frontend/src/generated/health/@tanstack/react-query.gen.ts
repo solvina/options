@@ -3,8 +3,8 @@
 import { type DefaultError, queryOptions } from '@tanstack/react-query';
 
 import { client } from '../client.gen';
-import { getIbkrConnectionStatus, getMarketDataHealth, type Options } from '../sdk.gen';
-import type { GetIbkrConnectionStatusData, GetIbkrConnectionStatusResponse, GetMarketDataHealthData, GetMarketDataHealthResponse } from '../types.gen';
+import { getFatalStatus, getIbkrConnectionStatus, getMarketDataHealth, type Options } from '../sdk.gen';
+import type { GetFatalStatusData, GetFatalStatusResponse, GetIbkrConnectionStatusData, GetIbkrConnectionStatusResponse, GetMarketDataHealthData, GetMarketDataHealthResponse } from '../types.gen';
 
 export type QueryKey<TOptions extends Options> = [
     Pick<TOptions, 'baseUrl' | 'body' | 'headers' | 'path' | 'query'> & {
@@ -55,6 +55,27 @@ export const getIbkrConnectionStatusOptions = (options?: Options<GetIbkrConnecti
         return data;
     },
     queryKey: getIbkrConnectionStatusQueryKey(options)
+});
+
+export const getFatalStatusQueryKey = (options?: Options<GetFatalStatusData>) => createQueryKey('getFatalStatus', options);
+
+/**
+ * Get fatal-lockout status
+ *
+ * Whether the engine has latched a FATAL condition (e.g. the connected IBKR account does not match the configured one). While fatal, order placement is blocked at the broker socket; the state clears only by fixing the cause and restarting the engine.
+ *
+ */
+export const getFatalStatusOptions = (options?: Options<GetFatalStatusData>) => queryOptions<GetFatalStatusResponse, DefaultError, GetFatalStatusResponse, ReturnType<typeof getFatalStatusQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await getFatalStatus({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: getFatalStatusQueryKey(options)
 });
 
 export const getMarketDataHealthQueryKey = (options?: Options<GetMarketDataHealthData>) => createQueryKey('getMarketDataHealth', options);

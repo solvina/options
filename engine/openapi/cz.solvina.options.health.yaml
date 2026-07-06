@@ -19,6 +19,24 @@ paths:
               schema:
                 $ref: '#/components/schemas/IbkrConnectionStatus'
 
+  /health/fatal:
+    get:
+      tags:
+        - Health
+      summary: Get fatal-lockout status
+      description: >
+        Whether the engine has latched a FATAL condition (e.g. the connected IBKR account does not
+        match the configured one). While fatal, order placement is blocked at the broker socket;
+        the state clears only by fixing the cause and restarting the engine.
+      operationId: getFatalStatus
+      responses:
+        '200':
+          description: Fatal-lockout status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FatalStatus'
+
   /health/market-data:
     get:
       tags:
@@ -39,6 +57,38 @@ paths:
 
 components:
   schemas:
+    FatalStatus:
+      type: object
+      required:
+        - fatal
+        - reasons
+      properties:
+        fatal:
+          type: boolean
+          description: True when the engine is in fatal lockout and order placement is blocked
+        reasons:
+          type: array
+          items:
+            $ref: '#/components/schemas/FatalReason'
+
+    FatalReason:
+      type: object
+      required:
+        - title
+        - detail
+        - at
+      properties:
+        title:
+          type: string
+          description: Short cause, e.g. "IBKR account mismatch"
+        detail:
+          type: string
+          description: Full explanation including what to fix
+        at:
+          type: string
+          format: date-time
+          description: When the condition latched
+
     IbkrConnectionStatus:
       type: object
       required:

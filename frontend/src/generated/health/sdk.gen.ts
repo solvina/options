@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { GetIbkrConnectionStatusData, GetIbkrConnectionStatusResponses, GetMarketDataHealthData, GetMarketDataHealthResponses } from './types.gen';
+import type { GetFatalStatusData, GetFatalStatusResponses, GetIbkrConnectionStatusData, GetIbkrConnectionStatusResponses, GetMarketDataHealthData, GetMarketDataHealthResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean> = Options2<TData, ThrowOnError> & {
     /**
@@ -22,6 +22,14 @@ export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends 
  * Get IBKR connection status
  */
 export const getIbkrConnectionStatus = <ThrowOnError extends boolean = false>(options?: Options<GetIbkrConnectionStatusData, ThrowOnError>) => (options?.client ?? client).get<GetIbkrConnectionStatusResponses, unknown, ThrowOnError>({ url: '/health/ibkr', ...options });
+
+/**
+ * Get fatal-lockout status
+ *
+ * Whether the engine has latched a FATAL condition (e.g. the connected IBKR account does not match the configured one). While fatal, order placement is blocked at the broker socket; the state clears only by fixing the cause and restarting the engine.
+ *
+ */
+export const getFatalStatus = <ThrowOnError extends boolean = false>(options?: Options<GetFatalStatusData, ThrowOnError>) => (options?.client ?? client).get<GetFatalStatusResponses, unknown, ThrowOnError>({ url: '/health/fatal', ...options });
 
 /**
  * Get live market-data flow status

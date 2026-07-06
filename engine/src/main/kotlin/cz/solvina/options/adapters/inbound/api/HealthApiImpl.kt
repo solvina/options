@@ -1,14 +1,18 @@
 package cz.solvina.options.adapters.inbound.api
 
 import cz.solvina.options.domain.features.connection.status.ConnectionStatusPort
+import cz.solvina.options.domain.features.fatal.FatalLockoutService
 import cz.solvina.options.domain.features.market.MarketDataHealthTracker
 import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.health.api.HealthApi
+import cz.solvina.options.health.dto.FatalReason
+import cz.solvina.options.health.dto.FatalStatus
 import cz.solvina.options.health.dto.IbkrConnectionStatus
 import cz.solvina.options.health.dto.MarketDataHealth
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
+import java.time.ZoneOffset
 
 @RestController
 @RequestMapping
@@ -16,7 +20,19 @@ class HealthApiImpl(
     private val connectionStatusPort: ConnectionStatusPort,
     private val marketDataHealthTracker: MarketDataHealthTracker,
     private val universePort: UniversePort,
+    private val fatalLockoutService: FatalLockoutService,
 ) : HealthApi {
+    override suspend fun getFatalStatus(): ResponseEntity<FatalStatus> =
+        ResponseEntity.ok(
+            FatalStatus(
+                fatal = fatalLockoutService.isFatal,
+                reasons =
+                    fatalLockoutService.reasons.map {
+                        FatalReason(title = it.title, detail = it.detail, at = it.at.atOffset(ZoneOffset.UTC))
+                    },
+            ),
+        )
+
     override suspend fun getIbkrConnectionStatus(): ResponseEntity<IbkrConnectionStatus> {
         val status = connectionStatusPort.getConnectionStatus()
         return ResponseEntity.ok(

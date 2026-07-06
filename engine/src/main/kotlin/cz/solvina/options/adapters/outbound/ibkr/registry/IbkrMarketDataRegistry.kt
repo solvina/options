@@ -37,6 +37,14 @@ internal data class PendingTickByTickRequest(
     val trySend: (TickByTickBidAsk) -> Boolean,
 )
 
+/** Active reqRealTimeBars subscription. [onError] receives per-request IBKR errors (e.g. rejection
+ *  for missing live subscription) — without it a failed bars subscription is indistinguishable from
+ *  a quiet market and the flag strategy goes silently inert. */
+internal data class PendingRealTimeBarsRequest(
+    val onBar: (RealTimeBar) -> Unit,
+    val onError: (Int, String) -> Unit = { _, _ -> },
+)
+
 /**
  * With reqMarketDataType(3) (paper without a live subscription) IBKR delivers the same callbacks
  * under delayed tick IDs. Fold them onto the live IDs so the snapshot/stream handling below is
@@ -64,8 +72,8 @@ class IbkrMarketDataRegistry(
     internal val pendingContinuousMarketData = ConcurrentHashMap<Int, PendingContinuousMarketDataRequest>()
     internal val pendingTickByTick = ConcurrentHashMap<Int, PendingTickByTickRequest>()
 
-    /** Active reqRealTimeBars subscriptions. Callback invoked on every 5-second bar. */
-    internal val pendingRealTimeBars = ConcurrentHashMap<Int, (RealTimeBar) -> Unit>()
+    /** Active reqRealTimeBars subscriptions. */
+    internal val pendingRealTimeBars = ConcurrentHashMap<Int, PendingRealTimeBarsRequest>()
 
     fun onRealtimeBar(
         reqId: Int,
@@ -87,7 +95,7 @@ class IbkrMarketDataRegistry(
                 volume = volume,
                 wap = wap,
             )
-        pendingRealTimeBars[reqId]?.invoke(bar)
+        pendingRealTimeBars[reqId]?.onBar?.invoke(bar)
     }
 
     fun nextReqId(): Int = idCounter.next()
@@ -186,11 +194,20 @@ class IbkrMarketDataRegistry(
         code: Int,
         msg: String,
     ) {
+        // Real-time bars first: the graceful branches below return unconditionally and would swallow
+        // a bars rejection (e.g. 354/10195 for missing live subscription), leaving the flag strategy
+        // silently bar-less. The subscriber decides how loudly to surface it.
+        pendingRealTimeBars[id]?.let { request ->
+            request.onError(code, msg)
+            return
+        }
         // 200 = no security definition / ambiguous — could indicate options not authorized on the account.
         // 354 = no live subscription, 10197 = competing live session.
+        // 10168 = delayed market data not enabled/available for this venue (delayed-mode paper hits
+        // this on exchanges without delayed permission) — same safe degradation as 354.
         // IBKR does NOT send tickSnapshotEnd in any of these cases, so complete the deferred ourselves.
         // The caller sees an empty snapshot (delta=NaN) and falls back to analytical pricing.
-        if (code == 200 || code == 354 || code == 10197) {
+        if (code == 200 || code == 354 || code == 10197 || code == 10168) {
             pendingMarketData.remove(id)?.let { request ->
                 // 200 at WARN: repeated 200s on option market data may indicate account permissions issue.
                 if (code == 200) {
