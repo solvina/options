@@ -1,5 +1,6 @@
 package cz.solvina.options.adapters.inbound.api
 
+import cz.solvina.options.domain.features.scanner.ScannerConfig
 import cz.solvina.options.domain.features.scanner.ScannerPort
 import cz.solvina.options.domain.features.scanner.ScannerService
 import cz.solvina.options.domain.features.scanner.TradingKillSwitch
@@ -26,6 +27,7 @@ class ScannerApiImpl(
     private val scannerService: ScannerService,
     private val spreadPort: BullPutSpreadPort,
     private val killSwitch: TradingKillSwitch,
+    private val scannerConfig: ScannerConfig,
 ) : ScannerApi,
     MonitorApi {
     private val backgroundScope = CoroutineScope(Dispatchers.Default)
@@ -45,6 +47,7 @@ class ScannerApiImpl(
             ScannerStatusDto(
                 lastRunAt = scannerService.getLastRunAt()?.atOffset(ZoneOffset.UTC),
                 openSpreadCount = openCount,
+                maxOpenSpreads = scannerConfig.maxOpenSpreads,
                 ivRanks = scannerService.getIvRanksSnapshot().mapValues { it.value.toBigDecimal() },
                 scannerPaused = killSwitch.scannerPaused,
                 monitorPaused = killSwitch.monitorPaused,

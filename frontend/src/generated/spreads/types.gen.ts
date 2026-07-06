@@ -85,6 +85,10 @@ export type PnlTimelinePointDto = {
 export type ScannerStatusDto = {
     lastRunAt?: string | null;
     openSpreadCount: number;
+    /**
+     * Configured portfolio cap (scanner.max-open-spreads) shared across strategies
+     */
+    maxOpenSpreads: number;
     ivRanks: {
         [key: string]: number;
     };

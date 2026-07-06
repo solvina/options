@@ -1,15 +1,13 @@
 import type { ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { getSpreadAnalyticsOptions, listSpreadsOptions } from '../generated/spreads/@tanstack/react-query.gen'
+import { getScannerStatusOptions, getSpreadAnalyticsOptions, listSpreadsOptions } from '../generated/spreads/@tanstack/react-query.gen'
 import {
   listBearCallSpreadsOptions,
   listBearCallDividendRiskOptions,
 } from '../generated/bearcall/@tanstack/react-query.gen'
 import type { SpreadAnalyticsDto, PagedSpreadsDto } from '../generated/spreads/types.gen'
 import type { PagedBearCallSpreadsDto, BearCallSpreadDto } from '../generated/bearcall/types.gen'
-
-const MAX_OPEN_SPREADS = 5 // shared portfolio cap across both strategies
 
 function StatCard({ label, value, sub, accent }: { label: string; value: ReactNode; sub?: string; accent?: string }) {
   return (
@@ -46,6 +44,9 @@ export function DashboardPage() {
     ...listBearCallDividendRiskOptions(),
     refetchInterval: 60_000,
   })
+  // Portfolio cap comes from engine config (scanner.max-open-spreads) — never hardcode it here.
+  const scannerStatus = useQuery({ ...getScannerStatusOptions(), refetchInterval: 60_000 })
+  const maxOpenSpreads = scannerStatus.data?.maxOpenSpreads
 
   const bull = bullAnalytics.data as SpreadAnalyticsDto | undefined
   const bullOpenCount = (bullOpen.data as PagedSpreadsDto | undefined)?.totalElements ?? 0
@@ -70,9 +71,9 @@ export function DashboardPage() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <StatCard
             label="Active spreads"
-            value={`${activeTotal} / ${MAX_OPEN_SPREADS}`}
+            value={`${activeTotal} / ${maxOpenSpreads ?? '…'}`}
             sub="shared cap across strategies"
-            accent={activeTotal >= MAX_OPEN_SPREADS ? 'text-amber-500' : undefined}
+            accent={maxOpenSpreads != null && activeTotal >= maxOpenSpreads ? 'text-amber-500' : undefined}
           />
           <StatCard label="Bull put open" value={bullOpenCount} />
           <StatCard label="Bear call open" value={bearOpenCount} />

@@ -23,13 +23,18 @@ function fmt(val: number | null | undefined, decimals = 2) {
   return val == null ? '—' : val.toFixed(decimals)
 }
 
-function PnlCell({ pnl, credit }: { pnl: number | null | undefined; credit: number | null | undefined }) {
+function PnlCell({ pnl, credit, quantity }: { pnl: number | null | undefined; credit: number | null | undefined; quantity?: number | null }) {
   if (pnl == null || credit == null || credit === 0) return <td className="px-3 py-2 text-muted-foreground tabular-nums">—</td>
   const pct = (pnl / credit) * 100
+  // Actual position P&L in dollars: per-share P&L × contract multiplier (100) × contracts.
+  const dollars = pnl * 100 * (quantity ?? 1)
   const color = pnl >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'
   return (
-    <td className={`px-3 py-2 tabular-nums font-medium ${color}`}>
-      {pnl >= 0 ? '+' : ''}{pnl.toFixed(4)} ({pct >= 0 ? '+' : ''}{pct.toFixed(0)}%)
+    <td
+      className={`px-3 py-2 tabular-nums font-medium ${color}`}
+      title={`${pnl >= 0 ? '+' : ''}${pnl.toFixed(4)} per share`}
+    >
+      {dollars >= 0 ? '+' : '−'}${Math.abs(dollars).toFixed(2)} ({pct >= 0 ? '+' : ''}{pct.toFixed(0)}%)
     </td>
   )
 }
@@ -79,7 +84,7 @@ function BearCallRow({ spread }: { spread: BearCallSpreadDto }) {
       <td className="px-3 py-2">
         <SpreadStatusBadge status={spread.status ?? ''} />
       </td>
-      <PnlCell pnl={spread.currentPnl != null ? Number(spread.currentPnl) : null} credit={Number(spread.creditPerShare)} />
+      <PnlCell pnl={spread.currentPnl != null ? Number(spread.currentPnl) : null} credit={Number(spread.creditPerShare)} quantity={spread.quantity} />
       <td className="px-3 py-2 text-muted-foreground text-xs">
         {spread.openedAt ? new Date(spread.openedAt).toLocaleDateString() : '—'}
       </td>

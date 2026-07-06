@@ -64,7 +64,7 @@ ibkr:
 scanner:
   # ---- Shared across all strategies (bull put + bear call) ----
   trading-enabled: true            # paper trading active with live data subscription
-  max-open-spreads: 5              # portfolio cap across bull put + bear call combined
+  max-open-spreads: 30              # portfolio cap across bull put + bear call combined
   execution-timeout-minutes: 15
   ticks-before-price-adjust: 5
   price-adjust-interval-seconds: 30

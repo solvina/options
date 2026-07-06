@@ -400,6 +400,7 @@ components:
       type: object
       required:
         - openSpreadCount
+        - maxOpenSpreads
         - ivRanks
         - scannerPaused
         - monitorPaused
@@ -411,6 +412,9 @@ components:
         openSpreadCount:
           type: integer
           format: int64
+        maxOpenSpreads:
+          type: integer
+          description: Configured portfolio cap (scanner.max-open-spreads) shared across strategies
         ivRanks:
           type: object
           additionalProperties:
