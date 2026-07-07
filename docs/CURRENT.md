@@ -42,10 +42,12 @@ rejected ("multiple Paper Trading users"). Credentials must be correct in **both
    ALV have no ex-div data for bear-call protection. One-line change if wanted. (decision)
 6. **Flag EOD liquidation uses fixed ET windows** — misses half-day 13:00 closes (Nov 27,
    Dec 24). Calendar infra (liquidHours) now exists to fix it. (before those dates)
-7. **max-open-spreads sizing** — currently 500 (experiment; 21 spreads opened 2026-07-06).
-   Resource ceiling with the sequential 60s exit monitor is ~15–20 open spreads; the canary is
-   the "Spread monitor skipped: previous run still in progress" log. Dial down or parallelize
-   the monitor sweep. (decision)
+7. **max-open-spreads sizing** — set to 30 (2026-07-06 evening, deployed 2026-07-07 morning;
+   the 500 experiment opened 21 spreads on 2026-07-06). Resource ceiling with the sequential 60s
+   exit monitor is ~15–20 open spreads, so 30 can outrun it if the slots actually fill; the
+   canary is the "Spread monitor skipped: previous run still in progress" log **during market
+   hours** (overnight skips are normal — dead quotes make every snapshot wait out its timeout).
+   Dial down or parallelize the monitor sweep if it fires intraday. (watch)
 8. **Consolidate deploy env files** — `.env` vs `.env.rpi` duplication caused a real outage
    (2026-07-06); deploy.sh should use one file. (cleanup)
 
