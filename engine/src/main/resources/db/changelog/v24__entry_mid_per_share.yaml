@@ -1,0 +1,26 @@
+databaseChangeLog:
+  - changeSet:
+      id: v24__entry_mid_per_share
+      author: solvina
+      comment: >
+        Fair value (mid) of the spread at fill time. Stop-loss thresholds are computed off this
+        instead of credit_per_share so a fill below mid does not mechanically tighten the stop.
+        Nullable: rows persisted before this migration have no recorded entry mid and fall back
+        to credit_per_share.
+      changes:
+        - addColumn:
+            tableName: bull_put_spreads
+            columns:
+              - column:
+                  name: entry_mid_per_share
+                  type: DECIMAL(10,4)
+                  constraints:
+                    nullable: true
+        - addColumn:
+            tableName: bear_call_spreads
+            columns:
+              - column:
+                  name: entry_mid_per_share
+                  type: DECIMAL(10,4)
+                  constraints:
+                    nullable: true

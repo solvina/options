@@ -30,9 +30,12 @@ data class BearCallScannerConfig(
     val candidateStrikeCount: Int = 7,
     val spreadWidthUsd: BigDecimal = BigDecimal("5.0"),
     val minCreditPerShare: BigDecimal = BigDecimal("0.40"),
+    val maxCreditPctOfWidth: Double = 0.40,
     val maxRiskPercent: Double = 0.025,
     val takeProfitPercent: Double = 0.50,
-    val stopLossPercent: Double = 2.00,
+    // Basis is the ENTRY MID (fair value at fill), not the fill credit — 1.00 = exit when the
+    // spread is worth 2× what it was at entry. See SpreadManagementService SL threshold.
+    val stopLossPercent: Double = 1.00,
     val timeProfitDte: Int = 21,
     val driftProtectionPct: Double = 0.05,
     // Dividend assignment protection (US/American-style only; wired in Phase 3 with the data pipeline)
@@ -54,6 +57,7 @@ data class BearCallScannerConfig(
             candidateStrikeCount = candidateStrikeCount,
             spreadWidthUsd = spreadWidthUsd,
             minCreditPerShare = minCreditPerShare,
+            maxCreditPctOfWidth = maxCreditPctOfWidth,
             maxRiskPercent = maxRiskPercent,
             takeProfitPercent = takeProfitPercent,
             stopLossPercent = stopLossPercent,

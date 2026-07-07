@@ -36,4 +36,14 @@ enum class SpreadStatus {
      * Surfaced for manual handling; not a clean spread.
      */
     BROKEN_LONG_ONLY,
+    ;
+
+    companion object {
+        /**
+         * Statuses under which no position ever existed (or does not exist yet, for PENDING).
+         * The complement is "a fill happened" — used e.g. by the daily entry throttle and by
+         * analytics that must not count entry attempts as trades.
+         */
+        val NOT_FILLED = setOf(PENDING, CLOSED_TIMEOUT, CLOSED_REJECTED, CLOSED_RECOVERY_UNKNOWN)
+    }
 }

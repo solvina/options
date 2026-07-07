@@ -15,6 +15,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
+import java.time.Instant
 import java.util.UUID
 
 @Component
@@ -52,6 +53,11 @@ class BearCallSpreadPersistenceAdapter(
             repository.countByStatus(status.name)
         }
 
+    override suspend fun countFilledSince(since: Instant): Long =
+        withContext(Dispatchers.IO) {
+            repository.countByOpenedAtGreaterThanEqualAndStatusNotIn(since, SpreadStatus.NOT_FILLED.map { it.name })
+        }
+
     override suspend fun findByStatus(status: SpreadStatus): List<BearCallSpread> =
         withContext(Dispatchers.IO) {
             repository.findByStatusOrderByOpenedAtDesc(status.name).map { it.toDomain() }
@@ -71,6 +77,7 @@ class BearCallSpreadPersistenceAdapter(
             boughtStrike = boughtLeg.contract.strike,
             expiryDate = soldLeg.contract.expiry,
             creditPerShare = creditPerShare,
+            entryMidPerShare = entryMidPerShare,
             maxRiskPerShare = maxRiskPerShare,
             quantity = quantity,
             soldOrderId = soldLeg.orderId,
@@ -99,6 +106,7 @@ class BearCallSpreadPersistenceAdapter(
             soldLeg = SpreadLeg(soldContract, LegAction.SELL, Money(BigDecimal.ZERO), soldOrderId ?: 0),
             boughtLeg = SpreadLeg(boughtContract, LegAction.BUY, Money(BigDecimal.ZERO), boughtOrderId ?: 0),
             creditPerShare = creditPerShare,
+            entryMidPerShare = entryMidPerShare,
             maxRiskPerShare = maxRiskPerShare,
             quantity = quantity,
             status = SpreadStatus.valueOf(status),

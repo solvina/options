@@ -9,6 +9,7 @@ import org.springframework.data.jpa.repository.Lock
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
 import org.springframework.lang.NonNull
+import java.time.Instant
 import java.util.UUID
 
 interface BullPutSpreadRepository : JpaRepository<BullPutSpreadEntity, UUID> {
@@ -24,6 +25,11 @@ interface BullPutSpreadRepository : JpaRepository<BullPutSpreadEntity, UUID> {
     fun findAllBy(pageable: Pageable): Page<BullPutSpreadEntity>
 
     fun countByStatus(status: String): Long
+
+    fun countByOpenedAtGreaterThanEqualAndStatusNotIn(
+        openedAt: Instant,
+        statuses: Collection<String>,
+    ): Long
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT s FROM BullPutSpreadEntity s WHERE s.symbol = :symbol")

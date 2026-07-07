@@ -136,6 +136,22 @@ class BearCallCandidateSelector(
             return null
         }
 
+        // Crash-pricing guard — see BullPutCandidateSelector: a mid above this fraction of width
+        // means the market prices near-even ITM odds and the delta band was vol-spike-distorted.
+        val creditPctOfWidth = midCredit.divide(actualSpreadWidth, 4, RoundingMode.HALF_UP).toDouble()
+        if (creditPctOfWidth > config.maxCreditPctOfWidth) {
+            logger.info {
+                "[$symbol] (bear-call) Credit \$$midCredit is ${"%.0f".format(creditPctOfWidth * 100)}% of width " +
+                    "\$$actualSpreadWidth (max ${"%.0f".format(config.maxCreditPctOfWidth * 100)}%) — crash-priced, skipping"
+            }
+            tradeLogger.info {
+                "SKIP   $symbol  (bear-call) credit/width=${"%.0f".format(creditPctOfWidth * 100)}% > ${"%.0f".format(
+                    config.maxCreditPctOfWidth * 100,
+                )}%  (crash-priced)"
+            }
+            return null
+        }
+
         // 6. Money management check
         val maxRiskPerContract = maxRiskPerShare.multiply(BigDecimal("100"))
         val allowedRiskPerTrade = totalCapital.amount.multiply(BigDecimal(config.maxRiskPercent))

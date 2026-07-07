@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Lock
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
 import org.springframework.lang.NonNull
+import java.time.Instant
 import java.util.UUID
 
 interface BearCallSpreadRepository : JpaRepository<BearCallSpreadEntity, UUID> {
@@ -15,6 +16,11 @@ interface BearCallSpreadRepository : JpaRepository<BearCallSpreadEntity, UUID> {
     fun findAllByOrderByOpenedAtDesc(): List<BearCallSpreadEntity>
 
     fun countByStatus(status: String): Long
+
+    fun countByOpenedAtGreaterThanEqualAndStatusNotIn(
+        openedAt: Instant,
+        statuses: Collection<String>,
+    ): Long
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT s FROM BearCallSpreadEntity s WHERE s.symbol = :symbol")

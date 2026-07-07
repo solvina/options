@@ -64,10 +64,11 @@ class BearCallSpreadEntryWriterTest {
             val writer = BearCallSpreadEntryWriter(InMemoryBearCallSpreadPort(), clock)
             val pending = writer.persistPending(request(), BigDecimal("1.00"))
 
-            val filled = writer.markFilled(pending, orderId = 77, netCredit = BigDecimal("0.95"))
+            val filled = writer.markFilled(pending, orderId = 77, netCredit = BigDecimal("0.95"), entryMid = BigDecimal("1.10"))
 
             assertEquals(SpreadStatus.OPEN, filled.status)
             assertEquals(0, BigDecimal("0.95").compareTo(filled.creditPerShare))
+            assertEquals(0, BigDecimal("1.10").compareTo(filled.entryMidPerShare ?: BigDecimal.ZERO))
             assertEquals(77, filled.soldLeg.orderId)
             assertEquals(77, filled.boughtLeg.orderId)
         }

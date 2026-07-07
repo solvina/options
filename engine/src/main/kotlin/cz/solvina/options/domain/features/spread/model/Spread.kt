@@ -18,6 +18,15 @@ sealed interface Spread {
     val soldLeg: SpreadLeg
     val boughtLeg: SpreadLeg
     val creditPerShare: BigDecimal
+
+    /**
+     * Fair value (mid) of the spread at fill time. The stop-loss threshold is computed off this,
+     * not [creditPerShare]: a fill below mid must not mechanically tighten the stop (a spread
+     * filled at 50% of mid with a credit-based 3× stop starts life already at its stop — LITE
+     * was stopped 29 s after entry this way). Null on rows persisted before 2026-07 (v24);
+     * consumers fall back to [creditPerShare].
+     */
+    val entryMidPerShare: BigDecimal?
     val maxRiskPerShare: BigDecimal
     val quantity: Int
     val status: SpreadStatus

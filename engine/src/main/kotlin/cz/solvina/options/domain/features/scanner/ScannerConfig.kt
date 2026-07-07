@@ -26,6 +26,21 @@ data class ScannerConfig(
     // Fresh-credit safety abort: a flat $0.10 is ~30% of a $0.35 credit but ~3% of a $3.00 one, so the
     // effective threshold is percentage-of-target, floored at $0.05 for very small target credits.
     val freshCreditMaxDriftPct: Double = 0.20,
+    // Entry fill-quality floor: never let the ladder rest below this fraction of the FRESH mid.
+    // Jul 6–7 fills averaged 68% of mid (≈$84/spread donated to the book) because entries started
+    // at the natural cross (soldBid − boughtAsk) — the worst immediately-fillable price.
+    val entryMinFillPctOfMid: Double = 0.85,
+    // Daily entry throttle: max spreads FILLED per calendar day (app timezone) across strategies.
+    // Caps single-day correlation risk — 2026-07-06 opened 21 tech bull puts into a vol spike.
+    val maxNewEntriesPerDay: Int = 4,
+    // Stop-loss quality gates (see SpreadManagementService):
+    // SL fires only after this many CONSECUTIVE monitor cycles breach the threshold — one bad
+    // mid (wide/garbage quote) must not market-out a position (LITE stopped 29s after entry).
+    val stopLossConfirmCycles: Int = 2,
+    // No SL evaluation in the first minutes after entry (fill-time quotes still settling) …
+    val stopLossGraceMinutesAfterEntry: Long = 15,
+    // … nor in the first minutes of the regular session (opening-rotation quotes are junk-wide).
+    val stopLossSkipFirstRthMinutes: Long = 30,
     // Order chase (used by SpreadManagementService close orders)
     val orderChaseTimeoutMinutes: Long = 5,
     val orderChaseMaxRetries: Int = 3,

@@ -68,6 +68,7 @@ class BullPutSpreadEntryWriter(
         spread: Spread,
         orderId: Int,
         netCredit: BigDecimal,
+        entryMid: BigDecimal?,
     ): Spread {
         val s = spread as BullPutSpread
         return spreadPort.update(
@@ -75,6 +76,7 @@ class BullPutSpreadEntryWriter(
                 soldLeg = s.soldLeg.copy(orderId = orderId),
                 boughtLeg = s.boughtLeg.copy(orderId = orderId),
                 creditPerShare = netCredit,
+                entryMidPerShare = entryMid,
                 status = SpreadStatus.OPEN,
             ),
         )

@@ -31,6 +31,11 @@ data class StrategyParams(
     val candidateStrikeCount: Int,
     val spreadWidthUsd: BigDecimal,
     val minCreditPerShare: BigDecimal,
+    // Crash-pricing guard: reject candidates whose MID credit exceeds this fraction of the actual
+    // width. A true ~30-delta spread prices ~15–30% of width; 45%+ means the market prices roughly
+    // even odds of finishing ITM regardless of what the (vol-spike-distorted) greeks claim — NBIS
+    // sold at 49.5% of width and a BE candidate hit 90% during the 2026-07-06/07 spike.
+    val maxCreditPctOfWidth: Double,
     val maxRiskPercent: Double,
     // ---- Exit rules ----
     val takeProfitPercent: Double,

@@ -3,6 +3,7 @@ package cz.solvina.options.domain.features.spread
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
 import cz.solvina.options.domain.models.Symbol
 import org.springframework.stereotype.Component
+import java.time.Instant
 
 /**
  * Cross-strategy read aggregation over every spread port. This is the single place the shared
@@ -30,6 +31,13 @@ class SpreadQueryFacade(
 
     /** Symbols mid-close (CLOSING) of any strategy (pre-trade CLOSING freeze). */
     suspend fun symbolsWithClosingSpread(): Set<Symbol> = symbolsInStatuses(SpreadStatus.CLOSING)
+
+    /**
+     * Spreads FILLED (a real position existed, whatever its state now) opened at/after [since],
+     * across strategies — backs the daily entry throttle. Excludes PENDING and the never-filled
+     * terminal statuses (CLOSED_TIMEOUT / CLOSED_REJECTED / CLOSED_RECOVERY_UNKNOWN).
+     */
+    suspend fun filledSpreadCountSince(since: Instant): Long = bullPutPort.countFilledSince(since) + bearCallPort.countFilledSince(since)
 
     private suspend fun countActive(status: SpreadStatus): Long = bullPutPort.countByStatus(status) + bearCallPort.countByStatus(status)
 

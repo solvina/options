@@ -3,6 +3,7 @@ package cz.solvina.options.domain.features.spread
 import cz.solvina.options.domain.features.account.AccountPosition
 import cz.solvina.options.domain.features.execution.TradeExecutionPort
 import cz.solvina.options.domain.features.market.MarketDataPort
+import cz.solvina.options.domain.features.market.MarketTickPort
 import cz.solvina.options.domain.features.order.LegAction
 import cz.solvina.options.domain.features.order.OrderPort
 import cz.solvina.options.domain.features.order.OrderStatus
@@ -20,15 +21,20 @@ import cz.solvina.options.domain.models.OptionContract
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.Clock
 import java.time.Duration
+import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalTime
 import java.time.temporal.ChronoUnit
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 private val logger = KotlinLogging.logger {}
 private val tradeLogger = KotlinLogging.logger("TRADES")
@@ -53,7 +59,14 @@ class SpreadManagementService(
     private val strategyRegistry: SpreadStrategyRegistry,
     private val strategyParams: StrategyParamsRegistry,
     private val positionsPort: cz.solvina.options.domain.features.account.PositionsPort? = null,
+    // Optional like positionsPort: injected in prod, absent in unit tests. Without it, stop-loss
+    // closes fall back to plain market orders (the pre-2026-07 behaviour).
+    private val marketTickPort: MarketTickPort? = null,
 ) {
+    // Consecutive SL-breach observations per spread (in-memory: a restart resets the count, which
+    // only delays a stop by one extra monitor cycle). One garbage mid must never market-out a
+    // position — LITE was stopped 29 s after entry on a single wide-book observation.
+    private val slBreachCounts = ConcurrentHashMap<UUID, Int>()
     sealed interface ManualCloseResult {
         data class Closed(
             val spread: Spread,
@@ -321,7 +334,9 @@ class SpreadManagementService(
         val takeProfitPercent = inst?.takeProfitPercent ?: strat.takeProfitPercent
         val stopLossPercent = inst?.stopLossPercent ?: strat.stopLossPercent
         val tpThreshold = spread.creditPerShare.multiply(BigDecimal.ONE.subtract(BigDecimal(takeProfitPercent)))
-        val slThreshold = spread.creditPerShare.add(spread.creditPerShare.multiply(BigDecimal(stopLossPercent)))
+        // SL basis is the entry MID, mirroring checkSpreadExit (see comment there).
+        val slBasis = spread.entryMidPerShare ?: spread.creditPerShare
+        val slThreshold = slBasis.add(slBasis.multiply(BigDecimal(stopLossPercent)))
 
         val originalStatus =
             spread.closeReason
@@ -334,6 +349,12 @@ class SpreadManagementService(
                 currentSpreadValue == null -> originalStatus
                 currentSpreadValue <= tpThreshold -> SpreadStatus.CLOSED_PROFIT
                 currentSpreadValue >= slThreshold -> SpreadStatus.CLOSED_STOP
+                // Between the thresholds, a preserved PROFIT/STOP intent can contradict the realized
+                // sign (an AVGO spread closed −$263 as CLOSED_PROFIT this way) — relabel by whether
+                // the buy-back costs more than the credit received. TIME/MANUAL intents stay: they
+                // describe WHY the close happened, not its sign.
+                originalStatus == SpreadStatus.CLOSED_PROFIT || originalStatus == SpreadStatus.CLOSED_STOP ->
+                    if (currentSpreadValue > spread.creditPerShare) SpreadStatus.CLOSED_STOP else SpreadStatus.CLOSED_PROFIT
                 else -> originalStatus
             }
 
@@ -379,19 +400,32 @@ class SpreadManagementService(
         val stopLossPercent = inst?.stopLossPercent ?: strat.stopLossPercent
         val timeProfitDte = inst?.timeProfitDte ?: strat.timeProfitDte
 
+        // TP is anchored to the FILL credit (locking in a fraction of what was actually received);
+        // SL is anchored to the ENTRY MID (fair value at fill). Anchoring the stop to the fill
+        // credit let a below-mid fill mechanically tighten the stop — a spread filled at 50% of
+        // mid with a credit-multiple stop starts life already stopped out (LITE, NBIS 2026-07-06/07).
+        // Rows persisted before entry mids were recorded fall back to the credit.
         val tpThreshold = spread.creditPerShare.multiply(BigDecimal.ONE.subtract(BigDecimal(takeProfitPercent)))
-        val slThreshold = spread.creditPerShare.add(spread.creditPerShare.multiply(BigDecimal(stopLossPercent)))
+        val slBasis = spread.entryMidPerShare ?: spread.creditPerShare
+        val slThreshold = slBasis.add(slBasis.multiply(BigDecimal(stopLossPercent)))
 
         logger.debug {
             "[${spread.symbol}] spread value=\$${currentSpreadValue ?: "n/a"} credit=\$${"%.4f".format(spread.creditPerShare)} " +
-                "TP≤\$${"%.4f".format(tpThreshold)} SL≥\$${"%.4f".format(slThreshold)} DTE=$dte quote=$quoteStatus"
+                "TP≤\$${"%.4f".format(tpThreshold)} SL≥\$${"%.4f".format(slThreshold)} " +
+                "(basis=\$${"%.4f".format(slBasis)}) DTE=$dte quote=$quoteStatus"
+        }
+
+        val slBreached = currentSpreadValue != null && currentSpreadValue >= slThreshold
+        if (!slBreached) {
+            // Breaches must be CONSECUTIVE — any non-breaching observation resets the count.
+            spread.id?.let { slBreachCounts.remove(it) }
         }
 
         val genericExit: Pair<SpreadStatus, String>? =
             when {
                 currentSpreadValue != null && currentSpreadValue <= tpThreshold ->
                     SpreadStatus.CLOSED_PROFIT to "TP: spread value \$$currentSpreadValue ≤ \$$tpThreshold"
-                currentSpreadValue != null && currentSpreadValue >= slThreshold ->
+                slBreached && stopLossConfirmed(spread) ->
                     SpreadStatus.CLOSED_STOP to "SL: spread value \$$currentSpreadValue ≥ \$$slThreshold"
                 dte <= timeProfitDte ->
                     SpreadStatus.CLOSED_TIME to "DTE: $dte ≤ $timeProfitDte"
@@ -419,13 +453,30 @@ class SpreadManagementService(
 
         val (closeStatus, reason) = exitSignal
         val exitContext = captureExitContext(spread)
+        spread.id?.let { slBreachCounts.remove(it) }
 
-        // Take-profit and time exits are not urgent — chase a limit at the mid first to capture the
-        // edge a market order would give away, escalating to market only if the limit chase fails
-        // (closeSpread leaves the spread CLOSING and retryClose escalates next cycle). Stop-loss and
-        // any strategy-specific exit (e.g. bear-call dividend-assignment protection) need certainty
-        // of execution over price, so they always go straight to market — as does a time exit when
-        // quotes are BLIND, since there is no live mid to price a limit off of.
+        // Exit routing by urgency:
+        //  - TP / time exits are not urgent — chase a limit at the MID to capture the edge a market
+        //    order would give away (closeSpread leaves the spread CLOSING and retryClose escalates
+        //    next cycle if the chase fails).
+        //  - Stop-loss closes at a MARKETABLE limit (buy the short back at its ask, sell the long at
+        //    its bid): fills immediately against a normal book but is bounded in a blown-out one —
+        //    the raw MKT exits crossed junk-wide books (NBIS recorded $3.575, broker filled $3.95).
+        //    If the chase fails, retryClose escalates to market within one monitor cycle, so
+        //    certainty of execution is preserved.
+        //  - Strategy-specific exits (bear-call dividend-assignment protection) and any exit with
+        //    no usable NBBO go straight to market: certainty over price.
+        val tickPort = marketTickPort
+        val stopNbbo =
+            if (closeStatus == SpreadStatus.CLOSED_STOP && tickPort != null) {
+                runCatching {
+                    withTimeout(3_000L) {
+                        tickPort.streamSpreadCredit(spread.soldLeg.contract, spread.boughtLeg.contract).first()
+                    }
+                }.getOrNull()?.takeIf { it.soldAsk > 0.0 && it.boughtBid > 0.0 }
+            } else {
+                null
+            }
         if (soldMidLive != null &&
             boughtMidLive != null &&
             (closeStatus == SpreadStatus.CLOSED_PROFIT || closeStatus == SpreadStatus.CLOSED_TIME)
@@ -433,6 +484,15 @@ class SpreadManagementService(
             logger.info { "[${spread.symbol}] Closing spread via limit chase — $reason" }
             val spreadValue = soldMidLive.amount.subtract(boughtMidLive.amount)
             closeSpread(spread, closeStatus, soldMidLive, boughtMidLive, spreadValue, exitContext, closeReason = reason)
+        } else if (closeStatus == SpreadStatus.CLOSED_STOP && stopNbbo != null) {
+            val buyBackLimit = Money(stopNbbo.soldAsk.toBigDecimal().setScale(4, RoundingMode.HALF_UP))
+            val sellBackLimit = Money(stopNbbo.boughtBid.toBigDecimal().setScale(4, RoundingMode.HALF_UP))
+            logger.info {
+                "[${spread.symbol}] Closing spread via marketable limits (buy@ask=\$${buyBackLimit.amount} " +
+                    "sell@bid=\$${sellBackLimit.amount}) — $reason"
+            }
+            val recordedValue = currentSpreadValue ?: spread.lastSpreadValue ?: BigDecimal.ZERO
+            closeSpread(spread, closeStatus, buyBackLimit, sellBackLimit, recordedValue, exitContext, closeReason = reason)
         } else {
             // Time exit may fire without a live quote; record the last known spread value for P&L.
             val recordedValue = currentSpreadValue ?: spread.lastSpreadValue ?: BigDecimal.ZERO
@@ -443,6 +503,61 @@ class SpreadManagementService(
         if (closeStatus == SpreadStatus.CLOSED_STOP) {
             executionPort.blockEntry(spread.symbol, Duration.ofHours(config.stopLossCooldownHours))
         }
+    }
+
+    /**
+     * Quality gates a breaching stop-loss observation must pass before it may close a position:
+     *
+     * 1. Entry grace — no SL in the first [ScannerConfig.stopLossGraceMinutesAfterEntry] minutes
+     *    after the fill: quotes around a fresh fill are still settling and LITE was stopped 29 s
+     *    after entry with the underlying flat.
+     * 2. Opening rotation — no SL in the first [ScannerConfig.stopLossSkipFirstRthMinutes] minutes
+     *    of the exchange session: opening books are junk-wide (NBIS was stopped at 9:59 ET on an
+     *    opening-width mid while the underlying was UP).
+     * 3. Hysteresis — the breach must persist [ScannerConfig.stopLossConfirmCycles] CONSECUTIVE
+     *    monitor cycles (~1 min apart); the caller resets the count on any non-breaching cycle.
+     *
+     * TP and DTE exits are not gated: they are non-urgent limit chases, not market-outs, so a
+     * false positive costs nothing irreversible. A genuinely crashing position still exits — one
+     * extra cycle (~1 min) after grace, which raw market data noise cannot distinguish from anyway.
+     */
+    private fun stopLossConfirmed(spread: Spread): Boolean {
+        // `in 0 until …`: a negative age (clock skew / replay) must not silently disable the stop.
+        val minutesSinceEntry = Duration.between(spread.openedAt, Instant.now(clock)).toMinutes()
+        if (minutesSinceEntry in 0 until config.stopLossGraceMinutesAfterEntry) {
+            logger.warn {
+                "[${spread.symbol}] SL breach ignored — entry grace period " +
+                    "($minutesSinceEntry min since fill < ${config.stopLossGraceMinutesAfterEntry} min)"
+            }
+            return false
+        }
+
+        // Any failure to resolve the schedule means "no gate": an unknown session must never
+        // suppress a stop.
+        val inOpeningRotation =
+            runCatching {
+                val schedule = universePort.getMarketSchedule(spread.symbol)
+                val nowAtExchange = LocalTime.now(clock.withZone(schedule.zone))
+                val minutesSinceOpen = Duration.between(schedule.open, nowAtExchange).toMinutes()
+                minutesSinceOpen in 0 until config.stopLossSkipFirstRthMinutes
+            }.getOrDefault(false)
+        if (inOpeningRotation) {
+            logger.warn {
+                "[${spread.symbol}] SL breach ignored — opening rotation " +
+                    "(first ${config.stopLossSkipFirstRthMinutes} min of the session)"
+            }
+            return false
+        }
+
+        val id = spread.id ?: return true
+        val breaches = slBreachCounts.merge(id, 1, Int::plus) ?: 1
+        if (breaches < config.stopLossConfirmCycles) {
+            logger.warn {
+                "[${spread.symbol}] SL breach $breaches/${config.stopLossConfirmCycles} — awaiting consecutive confirmation"
+            }
+            return false
+        }
+        return true
     }
 
     private suspend fun captureExitContext(spread: Spread): Pair<BigDecimal?, BigDecimal?> {

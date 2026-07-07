@@ -5,6 +5,7 @@ import cz.solvina.options.domain.features.spread.SpreadPage
 import cz.solvina.options.domain.features.spread.model.BullPutSpread
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
 import cz.solvina.options.domain.models.Symbol
+import java.time.Instant
 import java.util.UUID
 
 /**
@@ -48,6 +49,9 @@ class BacktestSpreadAdapter : BullPutSpreadPort {
     }
 
     override suspend fun countByStatus(status: SpreadStatus): Long = store.count { it.status == status }.toLong()
+
+    override suspend fun countFilledSince(since: Instant): Long =
+        store.count { it.openedAt >= since && it.status !in SpreadStatus.NOT_FILLED }.toLong()
 
     override suspend fun findByStatus(status: SpreadStatus): List<BullPutSpread> = store.filter { it.status == status }
 

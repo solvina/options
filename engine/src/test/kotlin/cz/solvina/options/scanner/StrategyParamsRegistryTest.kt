@@ -26,7 +26,8 @@ class StrategyParamsRegistryTest {
         val p = registry.forStrategy(StrategyId.BEAR_CALL)
         assertEquals(OptionType.CALL, p.optionType)
         // These are the values that were declared but never applied before the seam (B2/B3).
-        assertEquals(2.00, p.stopLossPercent)
+        // 2026-07-07: stop-loss default 2.00 → 1.00, and its basis moved to the entry mid.
+        assertEquals(1.00, p.stopLossPercent)
         assertEquals(21, p.timeProfitDte)
         assertEquals(0.05, p.driftProtectionPct)
         assertEquals(BigDecimal("0.40"), p.minCreditPerShare)

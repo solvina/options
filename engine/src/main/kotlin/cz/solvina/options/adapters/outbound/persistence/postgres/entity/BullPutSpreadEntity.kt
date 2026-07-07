@@ -29,6 +29,8 @@ class BullPutSpreadEntity(
     var expiryDate: LocalDate = LocalDate.EPOCH,
     @Column(name = "credit_per_share", nullable = false, precision = 10, scale = 4)
     var creditPerShare: BigDecimal = BigDecimal.ZERO,
+    @Column(name = "entry_mid_per_share", precision = 10, scale = 4)
+    var entryMidPerShare: BigDecimal? = null,
     @Column(name = "max_risk_per_share", nullable = false, precision = 10, scale = 4)
     var maxRiskPerShare: BigDecimal = BigDecimal.ZERO,
     @Column(nullable = false)

@@ -3,6 +3,7 @@ package cz.solvina.options.domain.features.spread
 import cz.solvina.options.domain.features.spread.model.BearCallSpread
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
 import cz.solvina.options.domain.models.Symbol
+import java.time.Instant
 import java.util.UUID
 
 /**
@@ -22,6 +23,9 @@ interface BearCallSpreadPort {
     suspend fun findAll(): List<BearCallSpread>
 
     suspend fun countByStatus(status: SpreadStatus): Long
+
+    /** Spreads that actually FILLED (status outside [SpreadStatus.NOT_FILLED]) opened at/after [since]. */
+    suspend fun countFilledSince(since: Instant): Long
 
     suspend fun findByStatus(status: SpreadStatus): List<BearCallSpread>
 

@@ -10,6 +10,7 @@ import cz.solvina.options.domain.features.order.OrderExecutionPort
 import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.features.order.StrandedLongLegException
 import cz.solvina.options.domain.features.order.optionTickFor
+import cz.solvina.options.domain.features.order.roundToOptionTick
 import cz.solvina.options.domain.features.scanner.ScannerConfig
 import cz.solvina.options.domain.features.scanner.StrategyParamsRegistry
 import cz.solvina.options.domain.features.spread.SpreadQueryFacade
@@ -37,6 +38,7 @@ import java.math.RoundingMode
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
+import java.time.LocalDate
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 
@@ -102,8 +104,15 @@ class TradeExecutionService(
                     ExecutionOutcome.EXPOSURE_REJECTED
                 } else {
                     val active = spreadQuery.establishedSpreadCount() + inFlightSymbols.size
+                    // Daily correlation throttle: fills, not attempts — one scan day must not be able
+                    // to fill the whole book with a single macro bet (2026-07-06 opened 21 correlated
+                    // tech bull puts into a vol spike). In-flight entries count as prospective fills.
+                    val startOfDay = LocalDate.now(clock).atStartOfDay(clock.zone).toInstant()
+                    val filledToday = spreadQuery.filledSpreadCountSince(startOfDay) + inFlightSymbols.size
                     if (active >= config.maxOpenSpreads) {
                         ExecutionOutcome.CAP_REACHED
+                    } else if (filledToday >= config.maxNewEntriesPerDay) {
+                        ExecutionOutcome.DAILY_LIMIT_REACHED
                     } else {
                         inFlightSymbols[request.underlyingSymbol] = Unit
                         null
@@ -117,6 +126,15 @@ class TradeExecutionService(
                 }
                 tradeLogger.info {
                     "REJECT ${request.underlyingSymbol}  ${request.legsLabel}  reason=CAP_REACHED"
+                }
+            }
+            if (reservation == ExecutionOutcome.DAILY_LIMIT_REACHED) {
+                logger.info {
+                    "[${request.underlyingSymbol}] DAILY_LIMIT_REACHED — " +
+                        "already filled maxNewEntriesPerDay=${config.maxNewEntriesPerDay} today, skipping entry"
+                }
+                tradeLogger.info {
+                    "REJECT ${request.underlyingSymbol}  ${request.legsLabel}  reason=DAILY_LIMIT_REACHED"
                 }
             }
             return TradeExecutionResult(reservation)
@@ -166,6 +184,30 @@ class TradeExecutionService(
             writer.markStatus(pendingSpread, SpreadStatus.CLOSED_TIMEOUT, stalePriceResult.outcome.name.lowercase())
             return TradeExecutionResult(stalePriceResult.outcome)
         }
+
+        // Fair value at submission — persisted with the fill so exit thresholds are computed off
+        // it, and used to raise the ladder floor: never rest below entryMinFillPctOfMid × mid.
+        // A fill at 50% of mid starts life at (or past) a credit-based stop — see LITE/NBIS.
+        val entryMid =
+            freshTick?.let {
+                ((it.soldBid + it.soldAsk) / 2.0 - (it.boughtBid + it.boughtAsk) / 2.0)
+                    .toBigDecimal()
+                    .setScale(4, RoundingMode.HALF_UP)
+            }
+        val qualityFloor =
+            entryMid
+                ?.multiply(BigDecimal(config.entryMinFillPctOfMid))
+                ?.roundToOptionTick()
+        val effectiveRequest =
+            if (qualityFloor != null && qualityFloor > request.floorCredit) {
+                logger.info {
+                    "[${request.underlyingSymbol}] Fill-quality floor \$$qualityFloor " +
+                        "(${(config.entryMinFillPctOfMid * 100).toInt()}% of mid \$$entryMid) raises scanner floor \$${request.floorCredit}"
+                }
+                request.copy(floorCredit = qualityFloor)
+            } else {
+                request
+            }
 
         // Forward fresh per-leg NBBO so leg-by-leg exchanges (EUREX) price each leg off its own book.
         // Atomic-combo (US) exchanges ignore this and price off netCredit.
@@ -259,7 +301,7 @@ class TradeExecutionService(
         // current order filled instead of cancelling, it returns the SAME order id with the credit
         // unchanged — no new fill watcher is needed; the pending Fill event completes the loop.
         suspend fun ladderStep(): Boolean {
-            val stepped = ladder(request, currentOrderId, currentCredit) ?: return false
+            val stepped = ladder(effectiveRequest, currentOrderId, currentCredit) ?: return false
             currentCredit = stepped.first
             if (stepped.second != currentOrderId) {
                 currentOrderId = stepped.second
@@ -425,7 +467,7 @@ class TradeExecutionService(
             val reportedFill = orderExecutionPort.consumeFillPrice(currentOrderId)?.abs()
             val grossCredit =
                 if (reportedFill != null &&
-                    reportedFill >= request.floorCredit &&
+                    reportedFill >= effectiveRequest.floorCredit &&
                     reportedFill <= request.targetCredit.add(BigDecimal("0.10"))
                 ) {
                     reportedFill
@@ -433,7 +475,7 @@ class TradeExecutionService(
                     if (reportedFill != null) {
                         logger.warn {
                             "[${request.underlyingSymbol}] Reported fill price \$$reportedFill outside expected range " +
-                                "[\$${request.floorCredit}, \$${request.targetCredit.add(BigDecimal("0.10"))}] — " +
+                                "[\$${effectiveRequest.floorCredit}, \$${request.targetCredit.add(BigDecimal("0.10"))}] — " +
                                 "using last ladder limit \$$currentCredit instead"
                         }
                     }
@@ -445,10 +487,11 @@ class TradeExecutionService(
                     .multiply(BigDecimal("2"))
                     .divide(config.contractMultiplier, 6, RoundingMode.HALF_UP)
             val netCredit = grossCredit.subtract(feePerShare).setScale(4, RoundingMode.HALF_UP)
-            writer.markFilled(pendingSpread, currentOrderId, netCredit)
+            writer.markFilled(pendingSpread, currentOrderId, netCredit, entryMid)
             logger.info {
                 "[${request.underlyingSymbol}] FILLED — " +
-                    "gross=\$$grossCredit fees=\$$feePerShare net=\$$netCredit orderId=$currentOrderId spread saved"
+                    "gross=\$$grossCredit fees=\$$feePerShare net=\$$netCredit entryMid=\$$entryMid " +
+                    "orderId=$currentOrderId spread saved"
             }
             tradeLogger.info {
                 "ENTRY  ${request.underlyingSymbol}  ${request.legsLabel}" +
@@ -544,13 +587,40 @@ class TradeExecutionService(
                     "sold=${tick.soldBid}/${tick.soldAsk} bought=${tick.boughtBid}/${tick.boughtAsk} net=${tick.netCredit}"
             }
 
-            // Use bid side for entry: short leg's bid minus long leg's ask (widest spread, safest)
+            // Liquidity re-check on the FRESH tick — the PreTradeValidator ran on scan-time quotes,
+            // which can be minutes old by now. LITE (2026-07-06) passed the scan-time check, then
+            // filled into a $6.90-wide book at execution: natural $0.49 vs mid $3.95, an instant
+            // −$346. If either leg's book has blown out since the scan, abort instead of filling.
+            fun legTooWide(
+                bid: Double,
+                ask: Double,
+            ): Boolean {
+                val legMid = (bid + ask) / 2.0
+                return legMid > 0 && (ask - bid) / legMid > config.maxLegBidAskSpreadPct
+            }
+            if (legTooWide(tick.soldBid, tick.soldAsk) || legTooWide(tick.boughtBid, tick.boughtAsk)) {
+                logger.warn {
+                    "[${request.underlyingSymbol}] Fresh quote too wide at execution: " +
+                        "sold=${tick.soldBid}/${tick.soldAsk} bought=${tick.boughtBid}/${tick.boughtAsk} " +
+                        "(max ${config.maxLegBidAskSpreadPct * 100}% of leg mid) — aborting entry"
+                }
+                return Triple(
+                    BigDecimal.ZERO,
+                    QuoteFreshnessResult(
+                        outcome = ExecutionOutcome.LIQUIDITY_REJECTED,
+                        message = "[${request.underlyingSymbol}] Fresh leg quotes wider than maxLegBidAskSpreadPct; aborting entry",
+                    ),
+                    null,
+                )
+            }
+
+            // Natural cross (immediately fillable): kept for logging/floor context only.
             val bidCredit =
                 (tick.soldBid - tick.boughtAsk)
                     .toBigDecimal()
                     .setScale(4, RoundingMode.HALF_UP)
 
-            // Also check mid to measure how much the market has moved
+            // Fair value — the entry ladder STARTS here (see below) and drift is measured off it
             val soldMid = (tick.soldBid + tick.soldAsk) / 2.0
             val boughtMid = (tick.boughtBid + tick.boughtAsk) / 2.0
             val currentMid =
@@ -592,12 +662,16 @@ class TradeExecutionService(
                 )
             }
 
-            // Use bid side if available, but don't go below floor.
+            // Start the ladder AT the fresh mid (fair value), never at the natural cross. Submitting
+            // at soldBid − boughtAsk donated the full displayed spread on every fill — the Jul 6–7
+            // batch averaged 68% of mid (≈$84/spread) and those giveaways were the bulk of the open
+            // book's mark-to-mid loss. The ladder walks DOWN from here; executeInternal raises the
+            // floor to entryMinFillPctOfMid × mid so the worst acceptable fill is bounded too.
             // Retain the fresh per-leg NBBO for leg-by-leg pricing (LegQuotes).
-            val freshCredit = bidCredit.coerceAtLeast(request.floorCredit)
+            val freshCredit = currentMid.roundToOptionTick().coerceAtLeast(request.floorCredit)
             logger.info {
                 "[${request.underlyingSymbol}] Fresh quotes: mid=\$$currentMid bid=\$$bidCredit floor=\$${request.floorCredit} " +
-                    "using=\$$freshCredit"
+                    "using=\$$freshCredit (ladder starts at mid)"
             }
             Triple(freshCredit, null, tick)
         } catch (e: TimeoutCancellationException) {

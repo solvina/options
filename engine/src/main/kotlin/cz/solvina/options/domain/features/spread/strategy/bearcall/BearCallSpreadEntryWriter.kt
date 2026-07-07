@@ -71,6 +71,7 @@ class BearCallSpreadEntryWriter(
         spread: Spread,
         orderId: Int,
         netCredit: BigDecimal,
+        entryMid: BigDecimal?,
     ): Spread {
         val s = spread as BearCallSpread
         return spreadPort.update(
@@ -78,6 +79,7 @@ class BearCallSpreadEntryWriter(
                 soldLeg = s.soldLeg.copy(orderId = orderId),
                 boughtLeg = s.boughtLeg.copy(orderId = orderId),
                 creditPerShare = netCredit,
+                entryMidPerShare = entryMid,
                 status = SpreadStatus.OPEN,
             ),
         )

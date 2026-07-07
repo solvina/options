@@ -128,6 +128,23 @@ class BullPutCandidateSelector(
             return null
         }
 
+        // Crash-pricing guard: a true ~30-delta spread prices ~15–30% of width. A higher ratio means
+        // the market prices near-even odds of finishing ITM — the greeks that passed the delta band
+        // are vol-spike-distorted (NBIS sold at 49.5% of width, a BE candidate hit 90%, 2026-07-06/07).
+        val creditPctOfWidth = midCredit.divide(actualSpreadWidth, 4, RoundingMode.HALF_UP).toDouble()
+        if (creditPctOfWidth > config.maxCreditPctOfWidth) {
+            logger.info {
+                "[$symbol] Credit \$$midCredit is ${"%.0f".format(creditPctOfWidth * 100)}% of width \$$actualSpreadWidth " +
+                    "(max ${"%.0f".format(config.maxCreditPctOfWidth * 100)}%) — crash-priced spread, skipping"
+            }
+            tradeLogger.info {
+                "SKIP   $symbol  credit/width=${"%.0f".format(creditPctOfWidth * 100)}% > ${"%.0f".format(
+                    config.maxCreditPctOfWidth * 100,
+                )}%  (crash-priced)"
+            }
+            return null
+        }
+
         // 6. Money management check
         val maxRiskPerContract = maxRiskPerShare.multiply(BigDecimal("100"))
         val allowedRiskPerTrade = totalCapital.amount.multiply(BigDecimal(maxRiskPercent))

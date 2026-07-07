@@ -30,6 +30,9 @@ enum class ExecutionOutcome {
     /** Pre-trade check: total active spreads (OPEN+CLOSING+in-flight) would exceed maxOpenSpreads. */
     CAP_REACHED,
 
+    /** Pre-trade check: spreads already FILLED today reached maxNewEntriesPerDay (correlation throttle). */
+    DAILY_LIMIT_REACHED,
+
     /** Pre-trade check: available funds < maxRiskPerContract. */
     CAPITAL_REJECTED,
 

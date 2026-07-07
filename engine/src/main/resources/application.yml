@@ -64,14 +64,24 @@ ibkr:
 scanner:
   # ---- Shared across all strategies (bull put + bear call) ----
   trading-enabled: true            # paper trading active with live data subscription
-  max-open-spreads: 30              # portfolio cap across bull put + bear call combined
+  # 2026-07-07: 30 → 5 after the P&L review. The 30-cap experiment filled 21 correlated tech bull
+  # puts into the Jul 6 vol spike AND saturated the 60s exit monitor (skip canary fired intraday).
+  max-open-spreads: 5              # portfolio cap across bull put + bear call combined
+  max-new-entries-per-day: 4       # fills per day across strategies — one scan day can't fill the book
   execution-timeout-minutes: 15
   ticks-before-price-adjust: 5
   price-adjust-interval-seconds: 30
-  max-leg-bid-ask-spread-pct: 0.15 # Conservative: 0.30 → 0.15 (only liquid options)
+  max-leg-bid-ask-spread-pct: 0.15 # Conservative: 0.30 → 0.15 (only liquid options); re-checked on the fresh tick at execution
+  entry-min-fill-pct-of-mid: 0.85  # ladder floor: never rest below 85% of fresh mid (Jul 6–7 fills averaged 68% of mid)
   order-chase-timeout-minutes: 3   # Conservative: 5 → 3 (give up sooner, retry next scan)
   order-chase-max-retries: 1       # Conservative: 3 → 1 (one attempt per order, not aggressive chasing)
   order-chase-price-step: 0.01     # Conservative: 0.03 → 0.01 (gradual adjustments, avoid floor hits)
+  # Stop-loss quality gates (2026-07-07): SL needs 2 consecutive breaching cycles, never fires in
+  # the first 15 min after entry nor the first 30 min of the session (LITE stopped 29s after entry,
+  # NBIS at 9:59 ET on opening-width quotes — both pure quote artifacts).
+  stop-loss-confirm-cycles: 2
+  stop-loss-grace-minutes-after-entry: 15
+  stop-loss-skip-first-rth-minutes: 30
   # Cron: Every 15 minutes, 9 AM - 10:59 PM (server timezone CEST)
   # Covers: EU 9:00-17:30 + US 9:30-16:00 (converted to CEST)
   # Format: seconds minutes hours day-of-month month day-of-week
@@ -86,16 +96,23 @@ scanner:
     min-dte: 30
     max-dte: 50
     preferred-dte: 45
-    target-delta: 0.30             # short put ~30-delta (more premium); was 0.15
-    delta-min: 0.25                # accept short-put delta band 0.25–0.30; was 0.10
-    delta-max: 0.30                # was 0.20
+    # 2026-07-07: 0.30 → 0.25. At TP 50% / SL 100%-of-mid the break-even win rate is ~67%; a
+    # 30-delta short (~70% POP) left almost no edge, 25-delta (~75%) restores a cushion.
+    target-delta: 0.25
+    delta-min: 0.20                # accept short-put delta band 0.20–0.30
+    delta-max: 0.30
     strike-band-percent: 0.20
     candidate-strike-count: 7
     spread-width-usd: 5.0
     min-credit-per-share: 0.35     # Conservative: 0.50 → 0.35 for better fill rates
+    max-credit-pct-of-width: 0.40  # crash-pricing guard: mid > 40% of width = near-even ITM odds, skip
     max-risk-percent: 0.025
     take-profit-percent: 0.50
-    stop-loss-percent: 2.00        # exit when buyback ≥ 3× credit (loss = 200% of credit); was 1.00
+    # 2026-07-07: 2.00 → 1.00 AND the basis changed from fill credit to ENTRY MID (fair value at
+    # fill): exit when the spread is worth 2× its entry mid. The old 3×-fill-credit stop plus fills
+    # far below mid meant positions could be born already stopped out (LITE, NBIS). At TP 50% /
+    # SL 100% the break-even win rate is ~67%; the old 50%/200% needed ~80% (realized: 35%).
+    stop-loss-percent: 1.00
     time-profit-dte: 21            # manage/close at 21 DTE (tastytrade-style); was 14
     drift-protection-pct: 0.05     # Conservative: 0.01 → 0.05 (allow 5% movement, not 1%)
 

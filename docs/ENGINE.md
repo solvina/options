@@ -140,18 +140,28 @@ When quotes are BLIND (> 5 min stale) but underlying is fresh:
 
 ## Price Execution Logic
 
-### Quote Freshness Validation
+### Quote Freshness Validation (revised 2026-07-07)
 
 Before submitting any order, the engine validates market prices:
 
 1. **Capture target credit** from scanner's IV analysis
 2. **Wait 500ms** for fresh market data to settle
-3. **Take the first fresh quote tick** — up to a 3s wait; if no tick arrives, abort `MARKET_MOVED_TOO_FAR`
-4. **Check drift**: If mid-credit drifted >$0.10 from target, abort with `MARKET_MOVED_TOO_FAR`
-5. **Calculate bid credit**: `soldBid - boughtAsk` (widest spread, safest entry)
-6. **Compare to floor**: Use max(bidCredit, floorCredit) as submission price
+3. **Take the first fresh quote tick** — up to a 3s wait; if no tick arrives, abort `NO_MARKET_DATA`
+4. **Re-check per-leg bid-ask width** on that fresh tick (`max-leg-bid-ask-spread-pct`) — a book
+   that blew out since the scan aborts `LIQUIDITY_REJECTED` instead of filling into it
+5. **Check drift**: if the fresh mid drifted more than `fresh-credit-max-drift-pct` of the target,
+   abort with `MARKET_MOVED_TOO_FAR`
+6. **Submit at the fresh mid** (fair value), tick-rounded; the ladder walks down from there
+7. **Fill-quality floor**: the ladder never rests below
+   `max(scanner floor, entry-min-fill-pct-of-mid × mid)` — the worst acceptable fill is 85% of
+   fair value. The fill's entry mid is persisted (`entry_mid_per_share`) for exit-threshold math.
 
-**Why this matters**: Prevents submitting orders at stale prices that IBKR will reject
+**Why this matters**: entries used to submit at the natural cross (`soldBid − boughtAsk`) — the
+Jul 6–7 fills averaged 68% of mid, ≈$84/spread donated at entry (see
+`POSTMORTEM_2026-07-06_SPREADS.md`). Stop-loss thresholds are keyed to the stored entry mid, TP
+to the fill credit; SL additionally requires 2 consecutive breaching cycles and respects
+post-entry / opening-rotation windows, and stop closes go out as marketable limits with
+retryClose market escalation.
 
 **Code**: `TradeExecutionService.calculateFreshCredit()` — consumes the first usable tick via
 `stream.first()`. (Until 2026-06-14 it collected the hot quote stream inside a 3s `withTimeout`

@@ -3,6 +3,7 @@ package cz.solvina.options.domain.features.spread
 import cz.solvina.options.domain.features.spread.model.BullPutSpread
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
 import cz.solvina.options.domain.models.Symbol
+import java.time.Instant
 import java.util.UUID
 
 interface BullPutSpreadPort {
@@ -23,6 +24,9 @@ interface BullPutSpreadPort {
     ): SpreadPage
 
     suspend fun countByStatus(status: SpreadStatus): Long
+
+    /** Spreads that actually FILLED (status outside [SpreadStatus.NOT_FILLED]) opened at/after [since]. */
+    suspend fun countFilledSince(since: Instant): Long
 
     suspend fun findByStatus(status: SpreadStatus): List<BullPutSpread>
 

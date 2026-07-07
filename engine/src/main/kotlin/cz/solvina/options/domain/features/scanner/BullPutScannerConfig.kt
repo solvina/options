@@ -32,6 +32,7 @@ data class BullPutScannerConfig(
     val spreadWidthUsd: BigDecimal = BigDecimal("5.0"),
     // Entry risk filters
     val minCreditPerShare: BigDecimal = BigDecimal("0.30"),
+    val maxCreditPctOfWidth: Double = 0.40,
     val maxRiskPercent: Double = 0.025,
     // Exit rules
     val takeProfitPercent: Double = 0.50,
@@ -55,6 +56,7 @@ data class BullPutScannerConfig(
             candidateStrikeCount = candidateStrikeCount,
             spreadWidthUsd = spreadWidthUsd,
             minCreditPerShare = minCreditPerShare,
+            maxCreditPctOfWidth = maxCreditPctOfWidth,
             maxRiskPercent = maxRiskPercent,
             takeProfitPercent = takeProfitPercent,
             stopLossPercent = stopLossPercent,

@@ -84,7 +84,15 @@ class SpreadManagementServiceTest {
             java.time.ZoneOffset.UTC,
         )
 
-    private val config = ScannerConfig(watchlist = listOf("SPY"))
+    // SL quality gates (confirm cycles / entry grace / opening-rotation skip) are disabled here so
+    // the threshold rules can be tested in a single sweep; the gates have their own tests below.
+    private val config =
+        ScannerConfig(
+            watchlist = listOf("SPY"),
+            stopLossConfirmCycles = 1,
+            stopLossGraceMinutesAfterEntry = 0,
+            stopLossSkipFirstRthMinutes = 0,
+        )
     private val strategyParams = StrategyParamsRegistry(listOf(BullPutScannerConfig(), BearCallScannerConfig()))
 
     // Real registry with the bull put strategy — exercises the actual seam dispatch (bull put adds
@@ -138,6 +146,7 @@ class SpreadManagementServiceTest {
         executionPort: TradeExecutionPort = mockk(relaxed = true),
         clock: Clock = clockAtEntry,
         positionsPort: cz.solvina.options.domain.features.account.PositionsPort? = null,
+        config: ScannerConfig = this.config,
     ) = SpreadManagementService(
         closers = buildClosers(spreadPort),
         marketDataPort = marketDataPort,
@@ -396,6 +405,102 @@ class SpreadManagementServiceTest {
             assertEquals(1, executionPort.blockedEntries.size, "blockEntry should have been called exactly once")
             assertEquals(symbol, executionPort.blockedEntries.first().symbol)
             assertEquals(Duration.ofHours(config.stopLossCooldownHours), executionPort.blockedEntries.first().duration)
+        }
+
+    @Test
+    fun `stop loss threshold is keyed to the entry mid, not the fill credit`() =
+        runTest {
+            // Fill credit $1.00 but fair value at fill (entry mid) was $2.00 — a below-mid fill.
+            // Old behaviour: SL threshold = credit × 1.5 = $1.50 → value $1.60 stops out.
+            // New behaviour: SL threshold = entryMid × 1.5 = $3.00 → value $1.60 must HOLD.
+            val spreadPort = mockk<BullPutSpreadPort>()
+            val marketDataPort = mockk<MarketDataPort>()
+            val orderPort = mockk<OrderPort>(relaxed = true)
+
+            val spread = buildOpenSpread().copy(entryMidPerShare = BigDecimal("2.00"))
+            coEvery { spreadPort.findOpen() } returns listOf(spread)
+            coEvery { spreadPort.findByStatus(SpreadStatus.CLOSING) } returns emptyList()
+            coEvery { spreadPort.update(any()) } answers { firstArg() }
+            coEvery { marketDataPort.getOptionMidLive(soldContract) } returns Money(BigDecimal("1.70"))
+            coEvery { marketDataPort.getOptionMidLive(boughtContract) } returns Money(BigDecimal("0.10"))
+            coEvery { marketDataPort.getUnderlyingPrice(any()) } returns Money(BigDecimal("500"))
+
+            val updated = slot<BullPutSpread>()
+            coEvery { spreadPort.update(capture(updated)) } answers { firstArg() }
+
+            buildService(spreadPort, marketDataPort, orderPort).checkExits()
+
+            // No close: the only update is recordLastValue, which keeps the spread OPEN.
+            assertEquals(SpreadStatus.OPEN, updated.captured.status)
+            coVerify(exactly = 0) { orderPort.placeMarketOrder(any(), any(), any()) }
+        }
+
+    @Test
+    fun `stop loss needs consecutive breaching cycles before it fires`() =
+        runTest {
+            // stopLossConfirmCycles = 2: the first breaching sweep must only arm the stop
+            // (LITE was market-ordered out on a single wide-book observation); the second
+            // consecutive breach closes.
+            val gatedConfig =
+                ScannerConfig(
+                    watchlist = listOf("SPY"),
+                    stopLossConfirmCycles = 2,
+                    stopLossGraceMinutesAfterEntry = 0,
+                    stopLossSkipFirstRthMinutes = 0,
+                )
+            val spreadPort = mockk<BullPutSpreadPort>()
+            val marketDataPort = mockk<MarketDataPort>()
+            val orderPort = mockk<OrderPort>()
+
+            coEvery { spreadPort.findOpen() } returns listOf(buildOpenSpread())
+            coEvery { spreadPort.findByStatus(SpreadStatus.CLOSING) } returns emptyList()
+            coEvery { marketDataPort.getOptionMidLive(soldContract) } returns Money(BigDecimal("1.70"))
+            coEvery { marketDataPort.getOptionMidLive(boughtContract) } returns Money(BigDecimal("0.10"))
+            coEvery { marketDataPort.getUnderlyingPrice(any()) } returns Money(BigDecimal("500"))
+            coEvery { orderPort.placeMarketOrder(any(), any(), any()) } returns filledOrder
+
+            val updated = slot<BullPutSpread>()
+            coEvery { spreadPort.update(capture(updated)) } answers { firstArg() }
+
+            val service = buildService(spreadPort, marketDataPort, orderPort, config = gatedConfig)
+
+            service.checkExits()
+            assertEquals(SpreadStatus.OPEN, updated.captured.status, "first breach must only arm the stop")
+            coVerify(exactly = 0) { orderPort.placeMarketOrder(any(), any(), any()) }
+
+            service.checkExits()
+            assertEquals(SpreadStatus.CLOSED_STOP, updated.captured.status, "second consecutive breach must close")
+        }
+
+    @Test
+    fun `stop loss is suppressed during the post-entry grace period`() =
+        runTest {
+            // Spread opened at the (fixed) clock instant → age 0 min < 15 min grace → the breach
+            // must be ignored even with confirm cycles at 1 (LITE was stopped 29 s after entry).
+            val gatedConfig =
+                ScannerConfig(
+                    watchlist = listOf("SPY"),
+                    stopLossConfirmCycles = 1,
+                    stopLossGraceMinutesAfterEntry = 15,
+                    stopLossSkipFirstRthMinutes = 0,
+                )
+            val spreadPort = mockk<BullPutSpreadPort>()
+            val marketDataPort = mockk<MarketDataPort>()
+            val orderPort = mockk<OrderPort>(relaxed = true)
+
+            coEvery { spreadPort.findOpen() } returns listOf(buildOpenSpread().copy(openedAt = clockAtEntry.instant()))
+            coEvery { spreadPort.findByStatus(SpreadStatus.CLOSING) } returns emptyList()
+            coEvery { marketDataPort.getOptionMidLive(soldContract) } returns Money(BigDecimal("1.70"))
+            coEvery { marketDataPort.getOptionMidLive(boughtContract) } returns Money(BigDecimal("0.10"))
+            coEvery { marketDataPort.getUnderlyingPrice(any()) } returns Money(BigDecimal("500"))
+
+            val updated = slot<BullPutSpread>()
+            coEvery { spreadPort.update(capture(updated)) } answers { firstArg() }
+
+            buildService(spreadPort, marketDataPort, orderPort, config = gatedConfig).checkExits()
+
+            assertEquals(SpreadStatus.OPEN, updated.captured.status, "SL must not fire inside the entry grace period")
+            coVerify(exactly = 0) { orderPort.placeMarketOrder(any(), any(), any()) }
         }
 
     @Test

@@ -21,6 +21,7 @@ data class BearCallSpread(
     override val soldLeg: SpreadLeg,
     override val boughtLeg: SpreadLeg,
     override val creditPerShare: BigDecimal,
+    override val entryMidPerShare: BigDecimal? = null,
     override val maxRiskPerShare: BigDecimal,
     override val quantity: Int = 1,
     override val status: SpreadStatus,

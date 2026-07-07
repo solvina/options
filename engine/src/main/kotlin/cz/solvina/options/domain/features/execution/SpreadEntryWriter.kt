@@ -31,11 +31,17 @@ interface SpreadEntryWriter {
         credit: BigDecimal,
     ): Spread
 
-    /** Mark OPEN at the net (post-fee) fill credit, with the filled combo orderId on both legs. */
+    /**
+     * Mark OPEN at the net (post-fee) fill credit, with the filled combo orderId on both legs.
+     * [entryMid] is the spread's fair value (mid) at fill time — persisted so exit thresholds can
+     * be computed off fair value instead of a possibly-below-mid fill credit; null when no fresh
+     * tick was available at submission.
+     */
     suspend fun markFilled(
         spread: Spread,
         orderId: Int,
         netCredit: BigDecimal,
+        entryMid: BigDecimal?,
     ): Spread
 
     /** Leg-by-leg: the protective long filled but the short did not — record for manual handling. */

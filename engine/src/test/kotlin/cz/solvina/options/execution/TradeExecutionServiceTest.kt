@@ -876,6 +876,9 @@ class TradeExecutionServiceTest {
 
         override suspend fun countByStatus(status: SpreadStatus): Long = store.count { it.status == status }.toLong()
 
+        override suspend fun countFilledSince(since: java.time.Instant): Long =
+            store.count { it.openedAt >= since && it.status !in SpreadStatus.NOT_FILLED }.toLong()
+
         override suspend fun findByStatus(status: SpreadStatus): List<BullPutSpread> = store.filter { it.status == status }
 
         override suspend fun findBySymbolWithLock(symbol: Symbol): List<BullPutSpread> = store.filter { it.symbol == symbol }

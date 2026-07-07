@@ -1,8 +1,30 @@
 # Current Work & Open Problems
 
-*Living document — update as things change. Last update: **2026-07-06**.*
+*Living document — update as things change. Last update: **2026-07-07**.*
 
-## Current task: move to real production
+## Current task: spread P&L overhaul — deploy tonight, observe tomorrow
+
+2026-07-07 P&L review found the spread strategy structurally losing (−$1.4k realized, −$1.9k
+open): entries filled at the natural cross (avg 68% of mid ≈ $84/spread donated), stops keyed to
+those depressed fill credits fired on single wide-quote observations (LITE stopped 29 s after
+entry) and exited with raw market orders, and the cap-30 experiment opened 21 correlated tech
+bull puts into the Jul 6 vol spike. Full reconstruction: `POSTMORTEM_2026-07-06_SPREADS.md`
+(including the "What actually changed" section with the new parameters and expectations).
+
+**State right now**: fixes implemented + tested; the spread scanner is **paused via API**
+(`POST /options/scanner/pause`, done 2026-07-07 ~17:00) so no new entries fire at the old
+settings; the exit monitor still protects the open book (19 bull puts + 2 bear calls).
+
+### Deploy checklist (after US close tonight, 22:00 CEST)
+1. Deploy the new engine build (Liquibase v24 adds `entry_mid_per_share` to both spread tables).
+2. Run `~/options/backfill_entry_mid_2026-07-07.sql` — sets scan-mid entry values for the open
+   Jul 6/7 positions. **Skipping this makes their stops fall back to 2× fill credit (tighter
+   than the old 3×) and several would stop out on the first sweep.**
+3. Scanner pause clears with the restart; verify `scanner/status` shows maxOpenSpreads=5.
+4. Tomorrow: expect fewer fills (FLOOR_REACHED/LIQUIDITY_REJECTED aborts are the system working);
+   watch `entryMid=$…` on FILLED lines and `SL breach 1/2` confirmations in the journal.
+
+## Previous task: move to real production
 
 Live engine + live IB Gateway move to a new machine (VPS, not yet provisioned); this RPi keeps
 the paper engine on **free delayed market data** (no second data subscription, no relay of
@@ -42,12 +64,10 @@ rejected ("multiple Paper Trading users"). Credentials must be correct in **both
    ALV have no ex-div data for bear-call protection. One-line change if wanted. (decision)
 6. **Flag EOD liquidation uses fixed ET windows** — misses half-day 13:00 closes (Nov 27,
    Dec 24). Calendar infra (liquidHours) now exists to fix it. (before those dates)
-7. **max-open-spreads sizing** — set to 30 (2026-07-06 evening, deployed 2026-07-07 morning;
-   the 500 experiment opened 21 spreads on 2026-07-06). Resource ceiling with the sequential 60s
-   exit monitor is ~15–20 open spreads, so 30 can outrun it if the slots actually fill; the
-   canary is the "Spread monitor skipped: previous run still in progress" log **during market
-   hours** (overnight skips are normal — dead quotes make every snapshot wait out its timeout).
-   Dial down or parallelize the monitor sweep if it fires intraday. (watch)
+7. **max-open-spreads sizing** — RESOLVED 2026-07-07: the intraday canary DID fire (skips every
+   minute through the 07-07 session with 21 open spreads), confirming the sweep can't keep up
+   past ~15–20. Cap set back to 5 + `max-new-entries-per-day: 4` as part of the P&L overhaul.
+   Parallelizing the sweep is only needed if the cap is ever raised again.
 8. **Consolidate deploy env files** — `.env` vs `.env.rpi` duplication caused a real outage
    (2026-07-06); deploy.sh should use one file. (cleanup)
 
@@ -62,6 +82,13 @@ rejected ("multiple Paper Trading users"). Credentials must be correct in **both
 
 ## Recently completed (context for the above)
 
+- 2026-07-07 (evening): spread P&L overhaul — mid-anchored entry ladder with 85%-of-mid fill
+  floor + fresh-tick width re-check; `entry_mid_per_share` persisted (v24) and stop-loss re-keyed
+  to it (SL 1.00 = exit at 2× entry mid, TP unchanged at 50% of fill credit); SL gated by 2-cycle
+  confirmation + 15-min entry grace + 30-min opening-rotation skip; stop exits via marketable
+  limits with retryClose market escalation; 40% credit/width crash-pricing guard on candidates;
+  delta target 0.30→0.25; cap 30→5 + 4-fills/day throttle; retryClose PROFIT/STOP relabeling by
+  realized sign. See `POSTMORTEM_2026-07-06_SPREADS.md`.
 - 2026-07-07: short-stock-orphan fix — flag closes verify broker holdings before selling (sell
   capped at held quantity; zero held → CLOSED_EXTERNAL, nothing sold; unverifiable → close aborts
   with 503 and the position stays OPEN/protected); PENDING closes also cancel the entry order;

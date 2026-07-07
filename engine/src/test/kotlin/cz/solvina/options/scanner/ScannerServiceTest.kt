@@ -346,6 +346,8 @@ class ScannerServiceTest {
                 else -> 0L
             }
 
+        override suspend fun countFilledSince(since: Instant) = 0L
+
         override suspend fun save(spread: BullPutSpread) = spread
 
         override suspend fun update(spread: BullPutSpread) = spread
