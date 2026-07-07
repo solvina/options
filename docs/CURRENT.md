@@ -70,6 +70,14 @@ rejected ("multiple Paper Trading users"). Credentials must be correct in **both
    Parallelizing the sweep is only needed if the cap is ever raised again.
 8. **Consolidate deploy env files** — `.env` vs `.env.rpi` duplication caused a real outage
    (2026-07-06); deploy.sh should use one file. (cleanup)
+9. **Scanner pause doesn't stop an in-flight scan** — `POST /scanner/pause` at ~17:00 on
+   2026-07-07 returned 204, yet entries kept filling until 20:05 (PG, BKNG, COHR, INTC, PANW,
+   AMD, ADBE). The kill switch gates new scan runs but a sweep already in progress keeps
+   launching executions for hours. Check the flag per candidate, not just per scan. (bug)
+10. **Stop-loss cooldown failed to block same-day re-entry** — PANW stopped 16:05 CEST
+    2026-07-07 (24 h `blockEntry`), re-entered 20:03 CEST the same day. `cooldownUntil` is
+    in-memory; either the checking path (scanner `isCoolingDown`) isn't consulted on this route
+    or the entry raced the stop. Investigate; consider persisting cooldowns. (bug)
 
 ## Open positions to clean up (paper, TWS)
 
