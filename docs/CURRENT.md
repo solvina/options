@@ -51,13 +51,21 @@ rejected ("multiple Paper Trading users"). Credentials must be correct in **both
 
 ## Open positions to clean up (paper, TWS)
 
-- 3 orphan short stock positions (AAPL −66, META −49, TSLA −58) — caused by manual closes on
-  2026-07-01 that left bracket protective sells working (they filled a second time). **Cancel any
-  resting sell orders on these symbols first**, then flatten; then reconcile the engine's stale
-  AAPL 69-share flag position against the broker.
+- 4 orphan short stock positions (AAPL −135, GOOGL −96, TSLA −58, META −49) — flag manual closes
+  that blind-sold: the close marked the row CLOSED_MANUAL even when the broker calls failed or the
+  exit had already filled, so the protective sell (or the manual sell) executed a second time.
+  Three date from 2026-07-01; GOOGL/AAPL grew on 2026-07-06 when closes were clicked during the
+  gateway outage. **Cancel any resting sell orders on these symbols first**, then flatten. The
+  root cause is fixed in code (2026-07-07, see below) — closes now verify broker holdings first.
 
 ## Recently completed (context for the above)
 
+- 2026-07-07: short-stock-orphan fix — flag closes verify broker holdings before selling (sell
+  capped at held quantity; zero held → CLOSED_EXTERNAL, nothing sold; unverifiable → close aborts
+  with 503 and the position stays OPEN/protected); PENDING closes also cancel the entry order;
+  new `FlagRecoveryService` re-arms lost fill watchers after restart/disconnect, re-places
+  vanished trailing stops, and adopts/administratively closes positions whose orders changed
+  while unwatched; scanner now enforces one PENDING/OPEN flag position per symbol.
 - 2026-07-06: delayed-data support (tick normalization, delayed-aware spread streams), dividend
   relay + `dividend_sync_status`, fatal lockout (account mismatch → orders blocked + UI banner),
   loud real-time-bars failures, error 10168 handling, spread-stream permit-leak fix, dollar P&L

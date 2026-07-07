@@ -29,6 +29,7 @@ const STATUS_COLORS: Record<string, string> = {
   CLOSED_STOP: 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300',
   CLOSED_EOD: 'bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-300',
   CLOSED_MANUAL: 'bg-muted text-muted-foreground',
+  CLOSED_EXTERNAL: 'bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300',
 }
 
 function StatusBadge({ status }: { status: string }) {
@@ -494,6 +495,12 @@ function LivePositionCard({ position: p }: { position: FlagPositionDto }) {
         </div>
       </div>
 
+      {closePos.isError && (
+        <p className="mt-2 text-xs text-destructive font-medium">
+          Close failed — broker holdings could not be verified; nothing was sold and the position stays {p.status}. Check the IBKR connection and retry.
+        </p>
+      )}
+
       <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-x-4 gap-y-1 text-sm">
         <div><span className="text-xs text-muted-foreground block">Entry</span><span className="tabular-nums font-medium">${fmt(p.entryPrice, 2)}</span></div>
         <div><span className="text-xs text-muted-foreground block">Current</span>
@@ -564,7 +571,7 @@ function FlagHistoryRow({ position }: { position: FlagPositionDto }) {
 // Status filter tabs
 // ─────────────────────────────────────────────
 
-const HISTORY_FILTERS = ['ALL', 'CLOSED_PROFIT', 'CLOSED_STOP', 'CLOSED_EOD', 'CLOSED_MANUAL', 'PENDING', 'OPEN'] as const
+const HISTORY_FILTERS = ['ALL', 'CLOSED_PROFIT', 'CLOSED_STOP', 'CLOSED_EOD', 'CLOSED_MANUAL', 'CLOSED_EXTERNAL', 'PENDING', 'OPEN'] as const
 type HistoryFilter = (typeof HISTORY_FILTERS)[number]
 
 // ─────────────────────────────────────────────

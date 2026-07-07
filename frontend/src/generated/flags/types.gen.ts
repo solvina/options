@@ -7,7 +7,7 @@ export type ClientOptions = {
 export type FlagPositionDto = {
     id: string;
     symbol: string;
-    status: 'PENDING' | 'OPEN' | 'CLOSED_PROFIT' | 'CLOSED_STOP' | 'CLOSED_EOD' | 'CLOSED_MANUAL';
+    status: 'PENDING' | 'OPEN' | 'CLOSED_PROFIT' | 'CLOSED_STOP' | 'CLOSED_EOD' | 'CLOSED_MANUAL' | 'ENTRY_TIMEOUT' | 'CLOSED_EXTERNAL';
     entryOrderId: number;
     stopLossOrderId: number;
     profitTargetOrderId: number;
@@ -151,7 +151,7 @@ export type ListFlagsData = {
     body?: never;
     path?: never;
     query?: {
-        status?: 'PENDING' | 'OPEN' | 'CLOSED_PROFIT' | 'CLOSED_STOP' | 'CLOSED_EOD' | 'CLOSED_MANUAL';
+        status?: 'PENDING' | 'OPEN' | 'CLOSED_PROFIT' | 'CLOSED_STOP' | 'CLOSED_EOD' | 'CLOSED_MANUAL' | 'ENTRY_TIMEOUT' | 'CLOSED_EXTERNAL';
         page?: number;
         size?: number;
         sort?: 'openedAt' | 'closedAt' | 'realizedPnl' | 'rMultiple' | 'timeInTradeSeconds' | 'symbol' | 'entryPrice';

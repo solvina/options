@@ -180,6 +180,13 @@ flag:
   min-flag-retracement-pct: 0.15          # was 0.25
   min-flag-bars-for-entry: 5              # was 7
 
+# Re-attaches fill watchers to PENDING/OPEN flag rows after a restart/disconnect (they are
+# in-memory only) and adopts/closes positions whose orders changed while nobody was watching —
+# the short-stock-orphan fix. Runs at startup (after IBKR connect) and on this schedule.
+flag-recovery:
+  delay-ms: 300000          # sweep every 5 min
+  initial-delay-ms: 180000  # first scheduled sweep 3 min after boot (startup run happens earlier)
+
 influxdb:
   url: http://localhost:8086
   token: ${INFLUXDB_TOKEN:options_token_changeme}

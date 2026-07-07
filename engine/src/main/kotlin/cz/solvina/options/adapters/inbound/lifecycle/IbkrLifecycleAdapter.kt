@@ -27,6 +27,7 @@ class IbkrLifecycleAdapter(
     private val marketDataRegistry: IbkrMarketDataRegistry,
     private val orderRegistry: IbkrOrderRegistry,
     private val recoveryService: StartupRecoveryService,
+    private val flagRecoveryService: FlagRecoveryService,
 ) {
     @EventListener(ApplicationReadyEvent::class)
     fun onApplicationReady() {
@@ -41,6 +42,8 @@ class IbkrLifecycleAdapter(
                             delay(3_000)
                             runCatching { recoveryService.recover() }
                                 .onFailure { e -> logger.warn(e) { "Startup recovery failed: ${e.message}" } }
+                            runCatching { flagRecoveryService.recover() }
+                                .onFailure { e -> logger.warn(e) { "Flag startup recovery failed: ${e.message}" } }
                         } else {
                             logger.warn { "Could not connect to IBKR at startup — watchdog will keep retrying" }
                         }

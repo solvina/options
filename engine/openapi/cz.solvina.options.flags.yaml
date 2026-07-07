@@ -17,7 +17,7 @@ paths:
           required: false
           schema:
             type: string
-            enum: [PENDING, OPEN, CLOSED_PROFIT, CLOSED_STOP, CLOSED_EOD, CLOSED_MANUAL, ENTRY_TIMEOUT]
+            enum: [PENDING, OPEN, CLOSED_PROFIT, CLOSED_STOP, CLOSED_EOD, CLOSED_MANUAL, ENTRY_TIMEOUT, CLOSED_EXTERNAL]
         - name: page
           in: query
           required: false
@@ -183,6 +183,8 @@ paths:
           description: Not found
         '409':
           description: Already closed
+        '503':
+          description: Close aborted — broker holdings could not be verified; nothing was sold and the position stays OPEN
 
 components:
   schemas:
@@ -209,7 +211,7 @@ components:
           type: string
         status:
           type: string
-          enum: [PENDING, OPEN, CLOSED_PROFIT, CLOSED_STOP, CLOSED_EOD, CLOSED_MANUAL, ENTRY_TIMEOUT]
+          enum: [PENDING, OPEN, CLOSED_PROFIT, CLOSED_STOP, CLOSED_EOD, CLOSED_MANUAL, ENTRY_TIMEOUT, CLOSED_EXTERNAL]
         entryOrderId:
           type: integer
         stopLossOrderId:

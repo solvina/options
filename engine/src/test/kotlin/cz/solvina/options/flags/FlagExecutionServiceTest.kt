@@ -216,6 +216,19 @@ class FlagExecutionServiceTest {
 
         override suspend fun awaitParentFill(orderId: Int) = EntryFill(status = OrderStatus.FILLED, avgPrice = entryFillPrice)
 
+        override suspend fun rewatchParentFill(orderId: Int) = awaitParentFill(orderId)
+
+        override suspend fun rewatchChildFill(orderId: Int): OrderStatus = awaitChildFill(orderId)
+
+        override fun hasActiveWatch(orderId: Int) = false
+
+        override suspend fun submitTrailingStopSell(
+            symbol: Symbol,
+            shares: Int,
+            initialStop: BigDecimal,
+            trailAmount: BigDecimal,
+        ) = 98
+
         // Children never fill — we only test up to entry in these tests
         override suspend fun awaitChildFill(orderId: Int): OrderStatus =
             kotlinx.coroutines.delay(Long.MAX_VALUE).let { OrderStatus.CANCELLED }

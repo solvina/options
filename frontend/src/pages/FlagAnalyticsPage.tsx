@@ -176,6 +176,7 @@ const STATUS_COLORS: Record<string, string> = {
   CLOSED_STOP: 'text-red-500',
   CLOSED_EOD: 'text-orange-500',
   CLOSED_MANUAL: 'text-muted-foreground',
+  CLOSED_EXTERNAL: 'text-purple-500',
   PENDING: 'text-yellow-600',
   OPEN: 'text-blue-600',
 }

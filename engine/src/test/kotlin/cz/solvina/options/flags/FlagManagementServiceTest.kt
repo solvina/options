@@ -1,5 +1,7 @@
 package cz.solvina.options.flags
 
+import cz.solvina.options.domain.features.account.AccountPosition
+import cz.solvina.options.domain.features.account.PositionsPort
 import cz.solvina.options.domain.features.flag.BracketOrderPort
 import cz.solvina.options.domain.features.flag.EntryFill
 import cz.solvina.options.domain.features.flag.FlagManagementService
@@ -9,6 +11,7 @@ import cz.solvina.options.domain.features.flag.config.FlagTradingConfig
 import cz.solvina.options.domain.features.flag.config.FlagTradingConfigPort
 import cz.solvina.options.domain.features.flag.model.FlagPosition
 import cz.solvina.options.domain.features.flag.model.FlagStatus
+import cz.solvina.options.domain.features.flag.model.isTerminal
 import cz.solvina.options.domain.features.market.MarketDataPort
 import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.models.Money
@@ -232,13 +235,87 @@ class FlagManagementServiceTest {
         }
 
     // -------------------------------------------------------------------------
+    // Broker-verified closes (short-stock-orphan fix, 2026-07)
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `manual close aborts before touching any order when broker holdings cannot be verified`() =
+        runTest {
+            val position = openPosition()
+            val flagPort = InMemoryFlagPort(listOf(position))
+            val bracketPort = RecordingBracketOrderPort()
+            // An empty snapshot is indistinguishable from a feed still warming up — never trust it.
+            val service = buildService(flagPort = flagPort, bracketPort = bracketPort, brokerHoldings = emptyList())
+
+            val result = service.manualClose(position.id!!)
+
+            assertTrue(result is FlagManagementService.ManualCloseResult.Failed, "Close must report failure, got $result")
+            assertTrue(bracketPort.cancelledOrders.isEmpty(), "Protective orders must survive an aborted close")
+            assertTrue(bracketPort.marketSells.isEmpty(), "Nothing may be sold blind")
+            assertEquals(FlagStatus.OPEN, flagPort.findById(position.id!!)!!.status, "Position must stay OPEN")
+        }
+
+    @Test
+    fun `close of a position whose exit already filled is booked as CLOSED_EXTERNAL without selling`() =
+        runTest {
+            val position = openPosition()
+            val flagPort = InMemoryFlagPort(listOf(position))
+            val bracketPort = RecordingBracketOrderPort()
+            // Snapshot is trustworthy (non-empty) but holds none of the symbol: the trailing stop
+            // already fired while the engine was not watching.
+            val service = buildService(flagPort = flagPort, bracketPort = bracketPort, brokerHoldings = listOf(stkHolding("MSFT", 50)))
+
+            val result = service.manualClose(position.id!!)
+
+            assertTrue(result is FlagManagementService.ManualCloseResult.Closed, "Close must succeed administratively, got $result")
+            assertTrue(bracketPort.marketSells.isEmpty(), "Selling here is exactly the double-sell that created orphan shorts")
+            assertEquals(FlagStatus.CLOSED_EXTERNAL, flagPort.findById(position.id!!)!!.status)
+        }
+
+    @Test
+    fun `close sells only the quantity the broker actually holds`() =
+        runTest {
+            val position = openPosition(shares = 10)
+            val flagPort = InMemoryFlagPort(listOf(position))
+            val bracketPort = RecordingBracketOrderPort()
+            val service = buildService(flagPort = flagPort, bracketPort = bracketPort, brokerHoldings = listOf(stkHolding("AAPL", 4)))
+
+            service.manualClose(position.id!!)
+
+            assertEquals(listOf(symbol to 4), bracketPort.marketSells, "Sell must be capped at the held quantity")
+            assertEquals(FlagStatus.CLOSED_MANUAL, flagPort.findById(position.id!!)!!.status)
+        }
+
+    // -------------------------------------------------------------------------
     // Test infrastructure
     // -------------------------------------------------------------------------
+
+    /** Broker STK holding for [sym] — what the positions feed reports the account actually holds. */
+    private fun stkHolding(
+        sym: String,
+        qty: Int,
+    ) = AccountPosition(
+        account = "DU1",
+        symbol = sym,
+        secType = "STK",
+        currency = "USD",
+        expiry = null,
+        strike = null,
+        optionRight = null,
+        quantity = BigDecimal(qty),
+        avgCost = BigDecimal("150"),
+    )
 
     private fun buildService(
         flagPort: FlagPort = InMemoryFlagPort(),
         bracketPort: BracketOrderPort = RecordingBracketOrderPort(),
         currentPrice: BigDecimal = BigDecimal("151.00"),
+        // Default: the broker holds plenty of the test symbol, so closes behave as before.
+        brokerHoldings: List<AccountPosition> = listOf(stkHolding("AAPL", 100)),
+        positionsPort: PositionsPort =
+            object : PositionsPort {
+                override suspend fun getPositions() = brokerHoldings
+            },
     ) = FlagManagementService(
         flagPort = flagPort,
         bracketOrderPort = bracketPort,
@@ -256,6 +333,7 @@ class FlagManagementServiceTest {
 
                 override suspend fun getOptionMid(contract: OptionContract) = Money(BigDecimal.ZERO)
             },
+        positionsPort = positionsPort,
         clock = fixedClock,
     )
 
@@ -281,7 +359,7 @@ class FlagManagementServiceTest {
                 saved.add(position)
             }
 
-        override suspend fun findOpen() = store.values.filter { !it.status.isTerminal() }
+        override suspend fun findOpen() = store.values.filter { !it.status.isTerminal }
 
         override suspend fun findById(id: UUID) = store[id]
 
@@ -298,16 +376,6 @@ class FlagManagementServiceTest {
             sort: String,
             sortDir: String,
         ) = FlagPage(emptyList(), 0, 0, page, size)
-
-        private fun FlagStatus.isTerminal() =
-            this in
-                setOf(
-                    FlagStatus.CLOSED_PROFIT,
-                    FlagStatus.CLOSED_STOP,
-                    FlagStatus.CLOSED_EOD,
-                    FlagStatus.CLOSED_MANUAL,
-                    FlagStatus.ENTRY_TIMEOUT,
-                )
     }
 
     /** Records all cancel and market-sell calls so tests can verify what was submitted. */
@@ -330,6 +398,19 @@ class FlagManagementServiceTest {
         override suspend fun awaitParentFill(orderId: Int) = EntryFill(status = OrderStatus.FILLED, avgPrice = BigDecimal("150.00"))
 
         override suspend fun awaitChildFill(orderId: Int): OrderStatus = OrderStatus.FILLED
+
+        override suspend fun rewatchParentFill(orderId: Int) = awaitParentFill(orderId)
+
+        override suspend fun rewatchChildFill(orderId: Int): OrderStatus = awaitChildFill(orderId)
+
+        override fun hasActiveWatch(orderId: Int) = false
+
+        override suspend fun submitTrailingStopSell(
+            symbol: Symbol,
+            shares: Int,
+            initialStop: BigDecimal,
+            trailAmount: BigDecimal,
+        ) = 998
 
         override suspend fun submitMarketSell(
             symbol: Symbol,

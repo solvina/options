@@ -21,6 +21,13 @@ enum class FlagStatus {
 
     /** Entry order placed but never filled within the timeout — no position was opened. */
     ENTRY_TIMEOUT,
+
+    /**
+     * The exit already filled at the broker while the engine was not watching (e.g. the trailing
+     * stop fired after a restart killed its fill watcher). Closed administratively — realized P&L
+     * is unknown because the actual exit price was never observed.
+     */
+    CLOSED_EXTERNAL,
 }
 
 val FlagStatus.isTerminal: Boolean
@@ -32,4 +39,5 @@ val FlagStatus.isTerminal: Boolean
                 FlagStatus.CLOSED_EOD,
                 FlagStatus.CLOSED_MANUAL,
                 FlagStatus.ENTRY_TIMEOUT,
+                FlagStatus.CLOSED_EXTERNAL,
             )

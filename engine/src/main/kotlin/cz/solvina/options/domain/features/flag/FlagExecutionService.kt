@@ -103,7 +103,7 @@ class FlagExecutionService(
                 return
             }
 
-        var position =
+        val position =
             flagPort.save(
                 FlagPosition(
                     id = null,
@@ -145,43 +145,64 @@ class FlagExecutionService(
         }
 
         // Await parent fill in background
+        launchEntryWatch(position)
+    }
+
+    /**
+     * Watches the parent entry order in the background; on fill promotes the position to OPEN and
+     * starts the exit watches. [rewatch] means the orders were placed by a previous engine run
+     * (startup/periodic recovery): the fill watch is re-armed instead of expecting the deferred
+     * registered at order placement.
+     */
+    fun launchEntryWatch(
+        position: FlagPosition,
+        rewatch: Boolean = false,
+    ) {
+        val entryOrderId = position.entryOrderId
         scope.launch {
             val entryFill =
-                runCatching { bracketOrderPort.awaitParentFill(ids.entryOrderId) }
-                    .getOrElse { e ->
-                        logger.warn(e) { "[${request.symbol}] Parent fill await failed: ${e.message}" }
-                        EntryFill(OrderStatus.CANCELLED)
-                    }
+                runCatching {
+                    if (rewatch) bracketOrderPort.rewatchParentFill(entryOrderId) else bracketOrderPort.awaitParentFill(entryOrderId)
+                }.getOrElse { e ->
+                    logger.warn(e) { "[${position.symbol}] Parent fill await failed: ${e.message}" }
+                    EntryFill(OrderStatus.CANCELLED)
+                }
 
             if (entryFill.status != OrderStatus.FILLED) {
-                logger.info { "[${request.symbol}] Entry order not filled (status=${entryFill.status}) — marking cancelled" }
+                logger.info { "[${position.symbol}] Entry order not filled (status=${entryFill.status}) — marking cancelled" }
                 flagPort.update(
                     position.copy(status = FlagStatus.ENTRY_TIMEOUT, closeReason = "entry_not_filled", closedAt = Instant.now(clock)),
                 )
                 return@launch
             }
 
-            val entrySlippage = entryFill.avgPrice?.subtract(request.entryPrice)
-            position =
+            val entrySlippage = entryFill.avgPrice?.subtract(position.entryPrice)
+            val open =
                 flagPort.update(
                     position.copy(status = FlagStatus.OPEN, actualEntryPrice = entryFill.avgPrice, entrySlippage = entrySlippage),
                 )
             tradeLogger.info {
-                "ENTRY_FILLED ${request.symbol} entryOrder=${ids.entryOrderId} shares=$shares entry=${request.entryPrice} actualFill=${entryFill.avgPrice} slippage=$entrySlippage"
+                "ENTRY_FILLED ${position.symbol} entryOrder=$entryOrderId shares=${position.shares} " +
+                    "entry=${position.entryPrice} actualFill=${entryFill.avgPrice} slippage=$entrySlippage"
             }
 
             // Now watch both children — whichever fills first wins (OCA cancels the other)
-            awaitChildOutcome(position, ids)
+            launchExitWatch(open, rewatch)
         }
     }
 
-    private suspend fun awaitChildOutcome(
+    /**
+     * Watches the protective child orders of an OPEN position and books the close when one fills.
+     * Public so recovery can re-attach watches to positions restored from persistence ([rewatch]).
+     */
+    fun launchExitWatch(
         position: FlagPosition,
-        ids: BracketOrderIds,
+        rewatch: Boolean = false,
     ) {
+        val ids = BracketOrderIds(position.entryOrderId, position.stopLossOrderId, position.profitTargetOrderId)
         // Wait for SL
         scope.launch {
-            val status = runCatching { bracketOrderPort.awaitChildFill(ids.stopLossOrderId) }.getOrNull()
+            val status = runCatching { childFill(ids.stopLossOrderId, rewatch) }.getOrNull()
             if (status == OrderStatus.FILLED) {
                 val closedAt = Instant.now(clock)
                 val latest = position.id?.let { flagPort.findById(it) } ?: position
@@ -214,7 +235,7 @@ class FlagExecutionService(
 
         // Wait for PT
         scope.launch {
-            val status = runCatching { bracketOrderPort.awaitChildFill(ids.profitTargetOrderId) }.getOrNull()
+            val status = runCatching { childFill(ids.profitTargetOrderId, rewatch) }.getOrNull()
             if (status == OrderStatus.FILLED) {
                 val closedAt = Instant.now(clock)
                 val latest = position.id?.let { flagPort.findById(it) } ?: position
@@ -245,6 +266,11 @@ class FlagExecutionService(
             }
         }
     }
+
+    private suspend fun childFill(
+        orderId: Int,
+        rewatch: Boolean,
+    ): OrderStatus = if (rewatch) bracketOrderPort.rewatchChildFill(orderId) else bracketOrderPort.awaitChildFill(orderId)
 
     private fun withCloseMetrics(
         position: FlagPosition,

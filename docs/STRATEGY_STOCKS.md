@@ -36,7 +36,10 @@ live promotion; go-live will most likely start **without** the flag strategy ena
 
 ## Known operational hazards
 
-- Manual closes must cancel the resting bracket children, or the protective sell fills again
-  later and leaves a short stock position (this produced real orphan shorts on 2026-07-01).
+- Fill watchers are in-memory: a restart/disconnect used to strand PENDING/OPEN rows while their
+  GTC orders lived on at the broker, and a later blind close double-sold (the 2026-07 orphan
+  shorts). Since 2026-07-07 closes verify broker holdings first (zero held → CLOSED_EXTERNAL,
+  unverifiable → abort) and `FlagRecoveryService` re-arms watchers / re-protects shares at
+  startup and every 5 minutes.
 - A rejected real-time-bars subscription now logs ERROR + CRITICAL Telegram alert (previously it
   was silent and the strategy just produced nothing).

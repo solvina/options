@@ -134,6 +134,7 @@ class FlagsApiImpl(
             is FlagManagementService.ManualCloseResult.Closed -> ResponseEntity.ok(result.position.toDto())
             is FlagManagementService.ManualCloseResult.NotFound -> ResponseEntity.notFound().build()
             is FlagManagementService.ManualCloseResult.AlreadyClosed -> ResponseEntity.status(HttpStatus.CONFLICT).build()
+            is FlagManagementService.ManualCloseResult.Failed -> ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).build()
         }
 
     override suspend fun subscribeFlagSymbol(scannerSubscribeRequestDto: ScannerSubscribeRequestDto): ResponseEntity<Unit> {

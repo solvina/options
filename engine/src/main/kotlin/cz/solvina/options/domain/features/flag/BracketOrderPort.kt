@@ -44,6 +44,30 @@ interface BracketOrderPort {
     suspend fun awaitChildFill(orderId: Int): OrderStatus
 
     /**
+     * Like [awaitParentFill] but for an entry order restored from persistence (placed by a previous
+     * engine run and confirmed still working at the broker): re-arms the fill watch first instead of
+     * expecting one registered at placement.
+     */
+    suspend fun rewatchParentFill(orderId: Int): EntryFill
+
+    /** Like [awaitChildFill] but for a protective order restored from persistence — re-arms the watch first. */
+    suspend fun rewatchChildFill(orderId: Int): OrderStatus
+
+    /** True while a fill watcher is armed for [orderId]. Lets recovery skip positions already being watched. */
+    fun hasActiveWatch(orderId: Int): Boolean
+
+    /**
+     * Places a standalone GTC trailing-stop SELL to re-protect shares whose original protective
+     * order vanished (e.g. cancelled while the engine was down). Returns the new order ID.
+     */
+    suspend fun submitTrailingStopSell(
+        symbol: Symbol,
+        shares: Int,
+        initialStop: BigDecimal,
+        trailAmount: BigDecimal,
+    ): Int
+
+    /**
      * Places an immediate market SELL for [shares] of [symbol].
      * Used for EOD liquidation and manual closes of OPEN positions.
      * Returns the new order ID.

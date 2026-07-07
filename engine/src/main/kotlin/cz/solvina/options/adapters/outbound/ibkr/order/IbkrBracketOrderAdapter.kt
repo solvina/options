@@ -113,6 +113,64 @@ class IbkrBracketOrderAdapter(
     // Children are GTC — give them a generous safety-net before treating as stuck
     override suspend fun awaitChildFill(orderId: Int): OrderStatus = awaitFill(orderId, CHILD_TIMEOUT_MS)
 
+    override suspend fun rewatchParentFill(orderId: Int): EntryFill {
+        val status = rewatchFill(orderId, PARENT_TIMEOUT_MS)
+        return EntryFill(status, registry.consumeFillPrice(orderId))
+    }
+
+    override suspend fun rewatchChildFill(orderId: Int): OrderStatus = rewatchFill(orderId, CHILD_TIMEOUT_MS)
+
+    override fun hasActiveWatch(orderId: Int): Boolean = registry.hasActiveWatch(orderId)
+
+    /**
+     * Awaits a fill for an order placed by a previous engine run: the deferred registered at
+     * placement is gone, so arm a fresh one. A fill that already landed this session is caught via
+     * [IbkrOrderRegistry.isFilled] — checked again after arming because onOrderStatus records the
+     * fill before completing deferreds, which closes the arrival-during-arming race.
+     */
+    private suspend fun rewatchFill(
+        orderId: Int,
+        timeoutMs: Long,
+    ): OrderStatus {
+        if (registry.isFilled(orderId)) return OrderStatus.FILLED
+        registry.ensureWatch(orderId)
+        if (registry.isFilled(orderId)) {
+            registry.pendingOrderStatus.remove(orderId)
+            return OrderStatus.FILLED
+        }
+        return awaitFill(orderId, timeoutMs)
+    }
+
+    override suspend fun submitTrailingStopSell(
+        symbol: Symbol,
+        shares: Int,
+        initialStop: BigDecimal,
+        trailAmount: BigDecimal,
+    ): Int {
+        val contract = contractFactory.stockContract(symbol)
+        val stop = contractCache.roundToTick(symbol, initialStop)
+        val trail = contractCache.roundToTick(symbol, trailAmount)
+        val orderId = registry.nextOrderId()
+
+        val trailStop =
+            Order().apply {
+                action("SELL")
+                orderType("TRAIL")
+                auxPrice(trail.toDouble())
+                trailStopPrice(stop.toDouble())
+                totalQuantity(Decimal.get(shares.toLong()))
+                tif("GTC")
+                transmit(true)
+                if (connectionConfig.account.isNotBlank()) account(connectionConfig.account)
+            }
+
+        registry.pendingOrderStatus[orderId] = CompletableDeferred()
+
+        logger.info { "[$symbol] Re-protecting: trailing-stop SELL $shares shares stop=$stop trail=$trail (orderId=$orderId)" }
+        client.placeOrder(orderId, contract, trailStop)
+        return orderId
+    }
+
     override suspend fun submitMarketSell(
         symbol: Symbol,
         shares: Int,

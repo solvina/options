@@ -70,6 +70,17 @@ class IbkrOrderRegistry {
 
     fun consumeFillPrice(orderId: Int): java.math.BigDecimal? = fillPrices.remove(orderId)
 
+    /** True while a fill watcher is armed for [orderId] (deferred registered and not yet consumed). */
+    fun hasActiveWatch(orderId: Int): Boolean = pendingOrderStatus.containsKey(orderId)
+
+    /**
+     * Arms a fill watch for an order restored from persistence (placed by a previous engine run,
+     * still working at the broker). Idempotent — an already-armed watch is left untouched.
+     */
+    fun ensureWatch(orderId: Int) {
+        pendingOrderStatus.putIfAbsent(orderId, CompletableDeferred())
+    }
+
     /** One-shot: the broker-reported rejection reason for [orderId] (IBKR code + message), or null. */
     fun consumeRejectReason(orderId: Int): String? = rejectReasons.remove(orderId)
 
