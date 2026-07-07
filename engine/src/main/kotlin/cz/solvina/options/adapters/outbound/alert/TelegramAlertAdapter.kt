@@ -39,8 +39,14 @@ class TelegramAlertAdapter(
         }
 
         val text = "${level.emoji} $title\n\n$body"
+        // Route into the alerts topic when a thread id is configured; the numeric check keeps a blank
+        // (or stray non-numeric) env var posting to the group's General thread and can't corrupt the JSON.
+        val threadField =
+            config.messageThreadId.trim().takeIf { it.matches(Regex("-?\\d+")) }
+                ?.let { ""","message_thread_id":$it""" }
+                ?: ""
         val payload =
-            """{"chat_id":${jsonString(config.chatId)},"text":${jsonString(text)},"disable_web_page_preview":true}"""
+            """{"chat_id":${jsonString(config.chatId)}$threadField,"text":${jsonString(text)},"disable_web_page_preview":true}"""
 
         try {
             withContext(Dispatchers.IO) {

@@ -12,4 +12,9 @@ data class TelegramAlertConfig(
     val enabled: Boolean = false,
     val botToken: String = "",
     val chatId: String = "",
+    /**
+     * Optional forum-topic thread id to post alerts into (the "engine alerts" topic). Blank posts to
+     * the group's General thread. Kept as a String so an unset env var is simply blank, not a parse error.
+     */
+    val messageThreadId: String = "",
 )

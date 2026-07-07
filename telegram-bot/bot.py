@@ -20,8 +20,11 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 
 BOT_TOKEN     = os.environ["TELEGRAM_BOT_TOKEN"]
 ALLOWED_CHAT  = int(os.environ["TELEGRAM_CHAT_ID"])
+# Forum topic the bot chats in. When set, the bot only engages inside this topic, leaving the
+# separate engine-alerts topic (TELEGRAM_ALERTS_TOPIC_ID, used by the engine) untouched. 0 = any thread.
+CHAT_TOPIC_ID = int(os.environ.get("TELEGRAM_CHAT_TOPIC_ID", "0"))
 CLAUDE_BIN    = os.environ.get("CLAUDE_BIN", "/home/solvina/.local/bin/claude")
-CLAUDE_MODEL  = os.environ.get("CLAUDE_MODEL", "haiku")
+CLAUDE_MODEL  = os.environ.get("CLAUDE_MODEL", "opus")
 CLAUDE_TIMEOUT = int(os.environ.get("CLAUDE_TIMEOUT", "120"))
 WORK_DIR      = Path(__file__).parent
 
@@ -110,7 +113,14 @@ session = ClaudeSession(model=CLAUDE_MODEL)
 # ── Telegram handlers ─────────────────────────────────────────────────────────
 
 def is_allowed(update: Update) -> bool:
-    return update.effective_chat.id == ALLOWED_CHAT
+    if update.effective_chat is None or update.effective_chat.id != ALLOWED_CHAT:
+        return False
+    # Scope to the chat topic when configured, so the bot never answers in the engine-alerts topic
+    # or the group's General thread. message_thread_id is None outside a forum topic.
+    if CHAT_TOPIC_ID:
+        msg = update.effective_message
+        return msg is not None and msg.message_thread_id == CHAT_TOPIC_ID
+    return True
 
 async def keep_typing(chat, stop: asyncio.Event):
     """Re-send 'typing' every 4 s so Telegram shows the indicator."""
@@ -148,7 +158,8 @@ async def handle_start(update: Update, context):
         "Commands:\n"
         "  /reset — fresh conversation\n"
         "  /haiku — fast model ⚡\n"
-        "  /sonnet — smarter model 🧠\n\n"
+        "  /sonnet — smarter model 🧠\n"
+        "  /opus — most capable model 🎩\n\n"
         "Just type to chat!"
     )
 
@@ -170,6 +181,12 @@ async def handle_sonnet(update: Update, context):
     session.model = "sonnet"
     await update.message.reply_text("🧠 Switched to Sonnet (smarter). Context kept.")
 
+async def handle_opus(update: Update, context):
+    if not is_allowed(update):
+        return
+    session.model = "opus"
+    await update.message.reply_text("🎩 Switched to Opus (most capable). Context kept.")
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _split(text: str, limit: int = 4000) -> list[str]:
@@ -184,12 +201,16 @@ def _split(text: str, limit: int = 4000) -> list[str]:
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    log.info("Starting Telegram bot (chat=%d, model=%s)", ALLOWED_CHAT, CLAUDE_MODEL)
+    log.info(
+        "Starting Telegram bot (chat=%d, chat_topic=%s, model=%s)",
+        ALLOWED_CHAT, CHAT_TOPIC_ID or "any", CLAUDE_MODEL,
+    )
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start",  handle_start))
     app.add_handler(CommandHandler("reset",  handle_reset))
     app.add_handler(CommandHandler("haiku",  handle_haiku))
     app.add_handler(CommandHandler("sonnet", handle_sonnet))
+    app.add_handler(CommandHandler("opus",   handle_opus))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     log.info("Polling…")
     app.run_polling()

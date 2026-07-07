@@ -64,10 +64,13 @@ ibkr:
 scanner:
   # ---- Shared across all strategies (bull put + bear call) ----
   trading-enabled: true            # paper trading active with live data subscription
-  # 2026-07-07: 30 → 5 after the P&L review. The 30-cap experiment filled 21 correlated tech bull
-  # puts into the Jul 6 vol spike AND saturated the 60s exit monitor (skip canary fired intraday).
-  max-open-spreads: 5              # portfolio cap across bull put + bear call combined
-  max-new-entries-per-day: 4       # fills per day across strategies — one scan day can't fill the book
+  # 2026-07-07: 5 → 20 once the P&L overhaul landed (mid-anchored entries + mid-keyed gated stops +
+  # throttles). The 5/4 clamp was a stopgap while the exit side was broken; with the new stop/throttle
+  # logic managing the book we re-open capacity to 20/15. Earlier the 30-cap experiment had filled 21
+  # correlated tech bull puts into the Jul 6 vol spike AND saturated the 60s exit monitor — the overhaul,
+  # not a low cap, is what addresses that. Revisit if the exit monitor saturates again at 20.
+  max-open-spreads: 20              # portfolio cap across bull put + bear call combined
+  max-new-entries-per-day: 15       # fills per day across strategies — one scan day can't fill the book
   execution-timeout-minutes: 15
   ticks-before-price-adjust: 5
   price-adjust-interval-seconds: 30
@@ -137,6 +140,9 @@ alerts:
     enabled: true
     bot-token: ${TELEGRAM_BOT_TOKEN:}
     chat-id: ${TELEGRAM_CHAT_ID:}
+    # Forum-topic thread the engine posts alerts into (the "engine alerts" topic). Empty = post to
+    # the group's General thread. The bot's interactive chat lives in a separate topic (TELEGRAM_CHAT_TOPIC_ID).
+    message-thread-id: ${TELEGRAM_ALERTS_TOPIC_ID:}
 
 # Email notifications: one rich email per qualified spread candidate (bull put + bear call).
 # Credentials injected from env (.env). Password is a Gmail App Password (2FA), never the account password.
