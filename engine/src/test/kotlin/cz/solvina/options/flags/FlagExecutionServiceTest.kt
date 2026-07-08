@@ -6,12 +6,16 @@ import cz.solvina.options.domain.features.flag.EntryFill
 import cz.solvina.options.domain.features.flag.FlagExecutionService
 import cz.solvina.options.domain.features.flag.FlagPage
 import cz.solvina.options.domain.features.flag.FlagPort
+import cz.solvina.options.domain.features.account.AccountDetail
+import cz.solvina.options.domain.features.account.AccountPort
 import cz.solvina.options.domain.features.flag.config.FlagTradingConfig
 import cz.solvina.options.domain.features.flag.model.FlagPosition
 import cz.solvina.options.domain.features.flag.model.FlagStatus
 import cz.solvina.options.domain.features.order.OrderStatus
+import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.Symbol
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import java.math.BigDecimal
@@ -59,6 +63,27 @@ class FlagExecutionServiceTest {
 
             val saved = flagPort.saved.first()
             assertEquals(200, saved.shares)
+        }
+
+    @Test
+    fun `notional cap limits shares below risk-based size when the stop is tight`() =
+        runTest {
+            // Risk-based sizing would buy 200 shares ($2,000 notional), but on a $4,000 account the
+            // 25% notional cap = $1,000 → 100 shares. This is the go-live protection: a tight stop must
+            // not let one position sweep the book / blow past buying power.
+            val flagPort = CapturingFlagPort()
+            val service = buildService(flagPort = flagPort, accountPort = stubAccountPort(BigDecimal("4000")))
+
+            service.execute(
+                buildRequest(
+                    entryPrice = BigDecimal("10.00"),
+                    stopLossPrice = BigDecimal("9.50"),
+                    riskPerTrade = BigDecimal("100.00"),
+                ),
+            )
+
+            val saved = flagPort.saved.first()
+            assertEquals(100, saved.shares, "Notional cap (25% × \$4,000 ÷ \$10) must cap 200 risk-based shares to 100")
         }
 
     @Test
@@ -162,15 +187,25 @@ class FlagExecutionServiceTest {
         tradingConfig = FlagTradingConfig(riskPerTrade = riskPerTrade),
     )
 
+    // Capital large enough that the notional cap never binds — these tests assert risk-based sizing.
+    private fun stubAccountPort(capital: BigDecimal = BigDecimal("100000000")): AccountPort =
+        object : AccountPort {
+            override val accountDetail =
+                MutableStateFlow(AccountDetail(totalCapital = Money(capital), availableFunds = Money(capital)))
+        }
+
     private fun buildService(
         flagPort: FlagPort = CapturingFlagPort(),
         bracketPort: BracketOrderPort = ImmediateFillBracketPort(),
         scope: kotlinx.coroutines.CoroutineScope = kotlinx.coroutines.GlobalScope,
+        accountPort: AccountPort = stubAccountPort(),
     ) = FlagExecutionService(
         bracketOrderPort = bracketPort,
         flagPort = flagPort,
         clock = fixedClock,
         scope = scope,
+        accountPort = accountPort,
+        maxPositionPctOfCapital = BigDecimal("0.25"),
     )
 
     /** Records every [save] call for assertion. */

@@ -8,6 +8,7 @@ import cz.solvina.options.domain.features.market.SpreadCreditTick
 import cz.solvina.options.domain.features.order.LegQuotes
 import cz.solvina.options.domain.features.order.OrderExecutionPort
 import cz.solvina.options.domain.features.order.OrderStatus
+import cz.solvina.options.domain.features.order.OrderReplacementUnverifiedException
 import cz.solvina.options.domain.features.order.StrandedLongLegException
 import cz.solvina.options.domain.features.order.optionTickFor
 import cz.solvina.options.domain.features.order.roundToOptionTick
@@ -256,6 +257,9 @@ class TradeExecutionService(
         pendingSpread = writer.stampOrderIds(pendingSpread, currentOrderId, freshCredit)
         var currentCredit = freshCredit
         var ticksSinceAdjust = 0
+        // Set once a reprice hits an unverifiable cancel: further laddering is suppressed and the
+        // current order is ridden to fill/timeout (see ladderStep).
+        var ladderFrozen = false
         var outcome = ExecutionOutcome.TIMED_OUT
         // Broker-reported rejection reason (IBKR code + message), captured on ORDER_REJECTED so it
         // reaches the human-readable execution log and TRADES record instead of only the raw wrapper log.
@@ -301,7 +305,25 @@ class TradeExecutionService(
         // current order filled instead of cancelling, it returns the SAME order id with the credit
         // unchanged — no new fill watcher is needed; the pending Fill event completes the loop.
         suspend fun ladderStep(): Boolean {
-            val stepped = ladder(effectiveRequest, currentOrderId, currentCredit) ?: return false
+            // Once a reprice hit an unverifiable cancel we stop laddering entirely and ride the
+            // current working order to its authoritative resolution (fill watcher or the timeout's
+            // cancel-and-await). Re-attempting would just re-hit the same uncertainty.
+            if (ladderFrozen) return true
+            val stepped =
+                try {
+                    ladder(effectiveRequest, currentOrderId, currentCredit)
+                } catch (e: OrderReplacementUnverifiedException) {
+                    // The old order could not be confirmed gone, so no replacement was submitted
+                    // (double-fill is prevented). Freezing here — instead of letting this escape and
+                    // crash the coroutine — is what keeps the spread from being stranded in PENDING
+                    // with a live order that later fills as an orphan.
+                    logger.warn(e) {
+                        "[${request.underlyingSymbol}] Ladder frozen on order $currentOrderId — prior cancel " +
+                            "unverifiable; letting fill/timeout resolve instead of crashing the entry"
+                    }
+                    ladderFrozen = true
+                    return true
+                } ?: return false
             currentCredit = stepped.first
             if (stepped.second != currentOrderId) {
                 currentOrderId = stepped.second
@@ -449,6 +471,25 @@ class TradeExecutionService(
                 }
         } catch (e: CancellationException) {
             throw e
+        } catch (e: Exception) {
+            // Safety net: any unexpected exception in the loop must NOT escape with the spread left
+            // in PENDING while an order is still working at the broker (that is exactly how orphans
+            // accumulate). Cancel-and-await the current order and fall through to the terminal write —
+            // a racing fill is honored as FILLED, otherwise the order is flattened and marked aborted.
+            logger.error(e) {
+                "[${request.underlyingSymbol}] Entry loop crashed unexpectedly — cancelling order " +
+                    "$currentOrderId and resolving to avoid a stranded PENDING spread"
+            }
+            val cancelStatus =
+                runCatching { orderExecutionPort.cancelAndAwait(currentOrderId) }
+                    .onFailure { ex -> logger.warn(ex) { "[${request.underlyingSymbol}] Cancel after crash failed" } }
+                    .getOrNull()
+            outcome =
+                if (cancelStatus == OrderStatus.FILLED) {
+                    ExecutionOutcome.FILLED
+                } else {
+                    ExecutionOutcome.TIMED_OUT
+                }
         } finally {
             underlyingJob.cancel()
             creditJob.cancel()

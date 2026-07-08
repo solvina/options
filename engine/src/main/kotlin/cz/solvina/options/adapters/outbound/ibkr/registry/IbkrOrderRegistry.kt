@@ -9,6 +9,8 @@ import java.util.concurrent.atomic.AtomicInteger
 
 private val logger = KotlinLogging.logger {}
 
+private val TERMINAL_CANCEL_STATUSES = setOf("cancelled", "inactive", "apicancelled", "rejected")
+
 @Component
 class IbkrOrderRegistry {
     internal val pendingOrderStatus = ConcurrentHashMap<Int, CompletableDeferred<OrderStatus>>()
@@ -24,6 +26,11 @@ class IbkrOrderRegistry {
     // consumed). Absence from the open-orders list alone can mean "cancelled" OR "filled" — this set
     // lets callers (e.g. OrderReplacementService) tell the two apart before submitting a replacement.
     private val filledOrders = ConcurrentHashMap.newKeySet<Int>()
+
+    // Orders IBKR has reported in a terminal CANCELLED state (cancelled/inactive/apicancelled/rejected).
+    // This is the authoritative, push-based "no longer working" signal — verification paths consult it
+    // instead of polling reqAllOpenOrders, which is expensive (returns the whole book) and laggy.
+    private val cancelledOrders = ConcurrentHashMap.newKeySet<Int>()
     private val orderIdCounter = AtomicInteger(1)
 
     fun seedOrderId(id: Int) {
@@ -44,12 +51,17 @@ class IbkrOrderRegistry {
         filled: java.math.BigDecimal = java.math.BigDecimal.ZERO,
         remaining: java.math.BigDecimal = java.math.BigDecimal.ZERO,
     ) {
-        // Record fill state BEFORE the deferred lookup: a late "filled" callback arriving after the
-        // deferred was consumed/removed (e.g. a fill racing a cancel) must still be visible via
-        // isFilled/consumeFillPrice — that is what lets cancel paths tell "cancelled" from "filled".
-        if (status.lowercase() == "filled") {
+        // Record terminal state BEFORE the deferred lookup: a late "filled"/"cancelled" callback
+        // arriving after the deferred was consumed/removed (e.g. a fill racing a cancel) must still be
+        // visible via isFilled/isCancelled/consumeFillPrice — that is what lets cancel paths tell
+        // "cancelled" from "filled" without polling the broker's open-orders list.
+        val lower = status.lowercase()
+        if (lower == "filled") {
             filledOrders.add(orderId)
             if (avgFillPrice > 0.0) fillPrices[orderId] = java.math.BigDecimal(avgFillPrice).setScale(4, java.math.RoundingMode.HALF_UP)
+        }
+        if (lower in TERMINAL_CANCEL_STATUSES) {
+            cancelledOrders.add(orderId)
         }
         val deferred = pendingOrderStatus[orderId] ?: return
         // Qty is always 1 today, so no code path currently expects a partial fill. This is a tripwire
@@ -61,9 +73,9 @@ class IbkrOrderRegistry {
                     "(filled=$filled remaining=$remaining) — partial fills are not modeled; treating per the terminal status"
             }
         }
-        when (status.lowercase()) {
+        when (lower) {
             "filled" -> deferred.complete(OrderStatus.FILLED)
-            "cancelled", "inactive", "apicancelled", "rejected" -> deferred.complete(OrderStatus.CANCELLED)
+            in TERMINAL_CANCEL_STATUSES -> deferred.complete(OrderStatus.CANCELLED)
             else -> logger.debug { "Order $orderId status: $status (waiting for terminal status)" }
         }
     }
@@ -87,6 +99,15 @@ class IbkrOrderRegistry {
     /** True once IBKR has confirmed this order FILLED — distinguishes "filled" from "cancelled/absent". */
     fun isFilled(orderId: Int): Boolean = filledOrders.contains(orderId)
 
+    /** True once IBKR has confirmed this order terminally CANCELLED (cancelled/inactive/apicancelled/rejected). */
+    fun isCancelled(orderId: Int): Boolean = cancelledOrders.contains(orderId)
+
+    /**
+     * True once IBKR has confirmed this order is no longer working — either FILLED or CANCELLED. This is
+     * the authoritative, push-based replacement for polling the open-orders list to confirm removal.
+     */
+    fun isRemoved(orderId: Int): Boolean = isFilled(orderId) || isCancelled(orderId)
+
     fun onError(
         id: Int,
         code: Int,
@@ -100,6 +121,7 @@ class IbkrOrderRegistry {
         if (code == 399) {
             logger.warn { "Order $id queued for after-hours [code=399] — failing fast to avoid stale overnight fill" }
             rejectReasons[id] = "code=$code: $msg"
+            cancelledOrders.add(id)
             pendingOrderStatus.remove(id)?.complete(OrderStatus.CANCELLED)
             return
         }
@@ -115,6 +137,7 @@ class IbkrOrderRegistry {
             }
             // Self-cancel is our own reprice, not a broker rejection — don't surface it as a reason.
             if (!isSelfCancelled) rejectReasons[id] = "code=$code: $msg"
+            cancelledOrders.add(id)
             pendingOrderStatus.remove(id)?.complete(OrderStatus.CANCELLED)
             return
         }

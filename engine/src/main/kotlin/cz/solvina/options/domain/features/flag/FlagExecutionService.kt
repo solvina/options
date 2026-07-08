@@ -1,5 +1,6 @@
 package cz.solvina.options.domain.features.flag
 
+import cz.solvina.options.domain.features.account.AccountPort
 import cz.solvina.options.domain.features.flag.EntryFill
 import cz.solvina.options.domain.features.flag.config.FlagTradingConfig
 import cz.solvina.options.domain.features.flag.model.FlagPosition
@@ -10,6 +11,7 @@ import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.math.RoundingMode
@@ -26,6 +28,14 @@ class FlagExecutionService(
     private val flagPort: FlagPort,
     private val clock: Clock,
     private val scope: CoroutineScope,
+    private val accountPort: AccountPort,
+    // Hard cap on a single flag position as a fraction of account capital. Risk-based sizing
+    // (riskPerTrade ÷ stop-distance) alone ignores NOTIONAL: a tight stop yields a huge share count
+    // whose dollar value can dwarf the account and sweep the book (e.g. GOOGL 2000sh ≈ $686k off a
+    // $100 risk). This caps shares at maxPositionPctOfCapital × capital ÷ entryPrice. Account-relative
+    // so it self-scales to the paper balance and a small live account alike.
+    @param:Value("\${flag.max-position-pct-of-capital:0.25}")
+    private val maxPositionPctOfCapital: BigDecimal = BigDecimal("0.25"),
 ) {
     data class ExecutionRequest(
         val symbol: Symbol,
@@ -67,11 +77,35 @@ class FlagExecutionService(
             return
         }
 
-        val shares =
+        val riskBasedShares =
             request.tradingConfig.riskPerTrade
                 .divide(risk, 0, RoundingMode.FLOOR)
                 .toInt()
                 .coerceAtLeast(1)
+
+        // Notional cap: never let a single position exceed maxPositionPctOfCapital of account capital,
+        // regardless of how tight the stop makes the risk-based share count. Falls back to risk-based
+        // sizing only when capital is unknown (account feed not yet populated).
+        val capital = accountPort.accountDetail.value?.totalCapital?.amount
+        val shares =
+            if (capital != null && capital > BigDecimal.ZERO) {
+                val maxNotional = capital.multiply(maxPositionPctOfCapital)
+                val notionalCappedShares =
+                    maxNotional.divide(request.entryPrice, 0, RoundingMode.FLOOR).toInt().coerceAtLeast(1)
+                if (notionalCappedShares < riskBasedShares) {
+                    logger.warn {
+                        "[${request.symbol}] Notional cap applied: $riskBasedShares → $notionalCappedShares shares " +
+                            "(max ${maxPositionPctOfCapital.multiply(BigDecimal(100)).toInt()}% of capital \$$capital = " +
+                            "\$$maxNotional at entry \$${request.entryPrice})"
+                    }
+                    notionalCappedShares
+                } else {
+                    riskBasedShares
+                }
+            } else {
+                logger.warn { "[${request.symbol}] Account capital unknown — sizing by risk only (no notional cap this entry)" }
+                riskBasedShares
+            }
 
         // Best config: trailing stop 2R behind the peak (no fixed target), held overnight. The
         // trail distance is 2 × initial risk; profitTarget is kept only as a nominal display

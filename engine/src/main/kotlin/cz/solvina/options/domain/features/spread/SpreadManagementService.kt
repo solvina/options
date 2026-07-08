@@ -243,6 +243,12 @@ class SpreadManagementService(
             return true // Assume closed if we can't verify
         }
 
+        // Require TWO consecutive "both legs flat" observations before trusting a close. A single
+        // empty/partial snapshot is not enough: reqPositions can return positionEnd before the position
+        // rows populate, and on this box the positions feed degrades (IBKR 10197 "no market data during
+        // competing live session"). A transient empty snapshot read as "flat" is exactly how a live leg
+        // gets marked CLOSED and becomes an orphan. A genuinely flat account simply confirms twice.
+        var consecutiveFlat = 0
         repeat(10) { attempt ->
             runCatching {
                 val positions = port.getPositions()
@@ -250,15 +256,24 @@ class SpreadManagementService(
                 val boughtLegClosed = !positions.any { positionMatchesLeg(it, spread.symbol, spread.boughtLeg.contract) }
 
                 if (soldLegClosed && boughtLegClosed) {
-                    logger.info { "[${spread.symbol}] Position verification SUCCESS (attempt $attempt)" }
-                    return true
+                    consecutiveFlat++
+                    if (consecutiveFlat >= 2) {
+                        logger.info { "[${spread.symbol}] Position verification SUCCESS (attempt $attempt, confirmed twice)" }
+                        return true
+                    }
+                    logger.debug { "[${spread.symbol}] Legs appear flat (attempt $attempt) — confirming once more" }
+                    delay(500)
                 } else {
+                    consecutiveFlat = 0
                     if (attempt < 9) {
                         logger.debug { "[${spread.symbol}] Position not yet closed (attempt $attempt), retrying..." }
                         delay(500)
                     }
                 }
             }.onFailure { e ->
+                // A failed/timed-out query is NOT evidence of closure — reset so a degraded feed can
+                // never accumulate toward a false "flat" verdict.
+                consecutiveFlat = 0
                 logger.warn(e) { "[${spread.symbol}] Position verification error on attempt $attempt" }
             }
         }

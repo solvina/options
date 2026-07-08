@@ -10,6 +10,7 @@ import cz.solvina.options.domain.features.alert.AlertPort
 import cz.solvina.options.domain.features.order.LegQuotes
 import cz.solvina.options.domain.features.order.OrderExecutionPort
 import cz.solvina.options.domain.features.order.OrderStatus
+import cz.solvina.options.domain.features.order.OrderReplacementUnverifiedException
 import cz.solvina.options.domain.features.order.StrandedLongLegException
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
@@ -176,7 +177,8 @@ class IbkrOrderExecutionAdapter(
                     "Order replacement BLOCKED: old order $existingOrderId still in IBKR after verification attempts. " +
                         "Will not submit replacement to prevent double-order scenario."
                 }
-                throw IllegalStateException(
+                throw OrderReplacementUnverifiedException(
+                    existingOrderId,
                     "Order replacement failed: could not verify removal of old order $existingOrderId. " +
                         "Check IBKR manually before retrying.",
                 )

@@ -54,8 +54,14 @@ interface OrderExecutionPort {
     suspend fun cancelAndAwait(orderId: Int): OrderStatus
 
     /**
-     * Cancel the existing combo order and resubmit at [newCredit].
-     * Returns the new orderId.
+     * Cancel the existing combo order and resubmit at [newCredit]. Returns the new orderId, or
+     * [existingOrderId] unchanged when the old order turned out to have FILLED during the cancel
+     * (no replacement submitted — the caller's existing fill watcher will complete).
+     *
+     * Throws [OrderReplacementUnverifiedException] when the old order could not be confirmed removed:
+     * no replacement is submitted (double-fill is prevented), and the caller MUST catch this and ride
+     * the existing order to fill/timeout rather than let it crash the entry (a leaked PENDING spread
+     * with a live order is how orphans accumulate).
      */
     suspend fun replaceComboWithNewPrice(
         existingOrderId: Int,

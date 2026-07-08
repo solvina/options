@@ -32,7 +32,7 @@ class Phase2IntegrationTest {
 
     fun setup() {
         orderCancellationService = OrderCancellationService(client, openOrdersAdapter, mockk(relaxed = true))
-        orderReplacementService = OrderReplacementService(orderCancellationService, openOrdersAdapter, orderRegistry)
+        orderReplacementService = OrderReplacementService(orderCancellationService, orderRegistry)
     }
 
     @Test

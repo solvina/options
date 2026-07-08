@@ -183,6 +183,11 @@ quote-monitoring:
 
 flag:
   # Watchlist is DB-driven via instrument_universe.flag_enabled (UniversePort.getFlagWatchlist).
+  # Hard cap on a single flag position as a fraction of account capital. Risk-based sizing
+  # (riskPerTrade ÷ stop-distance) ignores notional, so a tight stop can size a position far beyond
+  # the account (paper $1.09M masked this). 0.25 = a position may use at most 25% of capital.
+  # REVIEW before going live on the real account — set to your intended per-position exposure.
+  max-position-pct-of-capital: 0.25
   atr-period: 14
   atr-multiplier: 2.0
   volume-ma-period: 20

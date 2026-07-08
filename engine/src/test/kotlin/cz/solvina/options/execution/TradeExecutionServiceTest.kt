@@ -12,6 +12,7 @@ import cz.solvina.options.domain.features.market.SpreadCreditTick
 import cz.solvina.options.domain.features.order.LegAction
 import cz.solvina.options.domain.features.order.LegQuotes
 import cz.solvina.options.domain.features.order.OrderExecutionPort
+import cz.solvina.options.domain.features.order.OrderReplacementUnverifiedException
 import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.features.scanner.BearCallScannerConfig
 import cz.solvina.options.domain.features.scanner.BullPutScannerConfig
@@ -51,6 +52,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -424,6 +426,78 @@ class TradeExecutionServiceTest {
 
             assertEquals(ExecutionOutcome.TIMED_OUT, result.outcome)
             assertTrue(cancelCalled, "cancelAndAwait should have been called on timeout")
+        }
+
+    @Test
+    fun `an unverifiable cancel during laddering freezes instead of crashing and never leaves the spread PENDING`() =
+        runTest {
+            // Regression for the orphan-accumulation bug: a reprice whose old-order cancel could not
+            // be verified threw OrderReplacementUnverifiedException out of the entry coroutine, crashing
+            // it AFTER the spread was persisted PENDING and its order was still working at the broker —
+            // which then filled untracked as an orphan. The ladder must now freeze on the current order
+            // and let the timeout resolve it, and the spread must reach a terminal status (never PENDING).
+            val spreadPort = InMemoryBullPutSpreadPort()
+            var cancelCalled = false
+            var replaceAttempts = 0
+            val orderPort =
+                object : OrderExecutionPort {
+                    override suspend fun submitComboLimitOrder(
+                        soldContract: OptionContract,
+                        boughtContract: OptionContract,
+                        netCredit: Money,
+                        qty: Int,
+                        legQuotes: LegQuotes?,
+                    ): Int = 1
+
+                    override suspend fun awaitFill(orderId: Int): OrderStatus {
+                        delay(Long.MAX_VALUE)
+                        return OrderStatus.CANCELLED
+                    }
+
+                    override suspend fun cancelAndAwait(orderId: Int): OrderStatus {
+                        cancelCalled = true
+                        return OrderStatus.CANCELLED
+                    }
+
+                    override suspend fun replaceComboWithNewPrice(
+                        existingOrderId: Int,
+                        soldContract: OptionContract,
+                        boughtContract: OptionContract,
+                        newCredit: Money,
+                        qty: Int,
+                    ): Int {
+                        replaceAttempts++
+                        throw OrderReplacementUnverifiedException(existingOrderId, "cannot verify removal of $existingOrderId")
+                    }
+
+                    override suspend fun getSymbolsWithOpenOrders(): Set<Symbol> = emptySet()
+
+                    override fun consumeFillPrice(orderId: Int): java.math.BigDecimal? = null
+                }
+
+            val service =
+                buildService(
+                    marketTickPort = fixedMarketTickPort(500.0, tickFlowLaddering(listOf(1.00, 1.00, 1.00, 1.00, 1.00))),
+                    orderExecutionPort = orderPort,
+                    spreadPort = spreadPort,
+                    config = baseConfig.copy(ticksBeforePriceAdjust = 1, executionTimeoutMinutes = 1),
+                )
+
+            launch { advanceTimeBy(61_000) }
+
+            val result = service.execute(buildRequest(targetCredit = BigDecimal("1.00")))
+
+            assertEquals(ExecutionOutcome.TIMED_OUT, result.outcome)
+            assertTrue(cancelCalled, "the frozen order must still be cancelled on timeout")
+            assertTrue(replaceAttempts >= 1, "the ladder must have attempted at least one reprice to hit the unverified path")
+            val persisted = spreadPort.findAll()
+            assertEquals(1, persisted.size, "exactly one spread row should have been persisted")
+            assertNotEquals(
+                SpreadStatus.PENDING,
+                persisted.single().status,
+                "spread must not be stranded in PENDING after an unverifiable cancel",
+            )
+            assertEquals(SpreadStatus.CLOSED_TIMEOUT, persisted.single().status)
         }
 
     @Test

@@ -112,6 +112,22 @@ class OrderCancellationService(
         for (attempt in 1..maxRetries) {
             delay(200)
 
+            // Authoritative, push-based signal first: the orderStatus callback records terminal
+            // filled/cancelled state in the registry. In the common case the cancel is confirmed here
+            // within an attempt or two and we never fire a full-book reqAllOpenOrders — that request
+            // storm (up to ~16 per failing cancel while laddering) was itself worsening the latency
+            // that caused spurious "still present" verdicts.
+            if (registry.isRemoved(orderId)) {
+                logger.debug { "Cancel verified via status callback: orderId=$orderId after $attempt attempt(s)" }
+                return CancellationResult(
+                    orderId = orderId,
+                    success = true,
+                    reason = "verified_via_status_callback",
+                    attemptCount = attempt,
+                )
+            }
+
+            // Fallback: the callback can lag or be missed — confirm against the broker's open-orders list.
             val openOrders =
                 runCatching { openOrdersAdapter.getOpenOrders() }
                     .onFailure { e -> logger.warn(e) { "getOpenOrders failed on attempt $attempt/$maxRetries — will retry" } }

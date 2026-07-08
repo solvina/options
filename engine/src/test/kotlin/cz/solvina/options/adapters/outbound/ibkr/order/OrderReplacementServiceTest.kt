@@ -23,7 +23,7 @@ class OrderReplacementServiceTest {
     private val openOrdersAdapter: IbkrOpenOrdersAdapter = mockk()
     private val orderRegistry: IbkrOrderRegistry = mockk()
     private val cancellationService = OrderCancellationService(client, openOrdersAdapter, mockk(relaxed = true))
-    private val service = OrderReplacementService(cancellationService, openOrdersAdapter, orderRegistry)
+    private val service = OrderReplacementService(cancellationService, orderRegistry)
 
     private fun openOrder(orderId: Int) =
         OpenOrder(orderId = orderId, symbol = "SPY", action = "SELL", orderType = "LMT", limitPrice = 1.0, status = "Submitted")
