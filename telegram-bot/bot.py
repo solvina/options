@@ -25,7 +25,7 @@ ALLOWED_CHAT  = int(os.environ["TELEGRAM_CHAT_ID"])
 CHAT_TOPIC_ID = int(os.environ.get("TELEGRAM_CHAT_TOPIC_ID", "0"))
 CLAUDE_BIN    = os.environ.get("CLAUDE_BIN", "/home/solvina/.local/bin/claude")
 CLAUDE_MODEL  = os.environ.get("CLAUDE_MODEL", "opus")
-CLAUDE_TIMEOUT = int(os.environ.get("CLAUDE_TIMEOUT", "120"))
+CLAUDE_TIMEOUT = int(os.environ.get("CLAUDE_TIMEOUT", "10800"))  # 3h — long agentic turns can run a while
 WORK_DIR      = Path(__file__).parent
 
 BOT_SYSTEM_PROMPT = (
