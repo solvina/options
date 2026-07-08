@@ -142,7 +142,7 @@ class BacktestSmokeTest {
                     cz.solvina.options.domain.features.execution.PreTradeValidator(
                         spreadQuery = spreadQuery,
                         orderExecutionPort = orderExecutionAdapter,
-                        accountPort = accountAdapter,
+                        effectiveAccount = cz.solvina.options.domain.features.account.EffectiveAccountService(accountAdapter, null),
                         config = config,
                     ),
                 config = config,
@@ -178,7 +178,7 @@ class BacktestSmokeTest {
                 bullPutSelector = candidateSelector,
                 bearCallSelector = bearCallSelector,
                 bearCallConfig = bearCallConfig,
-                accountPort = accountAdapter,
+                effectiveAccount = cz.solvina.options.domain.features.account.EffectiveAccountService(accountAdapter, null),
                 executionPort = executionService,
                 spreadQuery = spreadQuery,
                 config = config,

@@ -181,6 +181,13 @@ quote-monitoring:
   blind-cycles-before-exit: 2  # synthetic stops only after N consecutive BLIND cycles (hysteresis)
   synthetic-risk-exit-enabled: false  # Phase 2: BS risk-only fallback (disabled for now, dry-run first)
 
+account:
+  # Ceiling on the account size used for ALL sizing/limit math (spread risk-per-trade, flag notional
+  # cap, capital gate) — see EffectiveAccountService. It CAPS: effective capital = min(real, this).
+  # Lets the large paper balance behave like a small account, and is a hard exposure ceiling live.
+  # Leave blank/absent to use the real broker figures unchanged. Display/diagnostics still show real.
+  effective-account-size: 50000
+
 flag:
   # Watchlist is DB-driven via instrument_universe.flag_enabled (UniversePort.getFlagWatchlist).
   # Hard cap on a single flag position as a fraction of account capital. Risk-based sizing

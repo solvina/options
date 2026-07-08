@@ -8,6 +8,7 @@ import cz.solvina.options.domain.features.flag.FlagPage
 import cz.solvina.options.domain.features.flag.FlagPort
 import cz.solvina.options.domain.features.account.AccountDetail
 import cz.solvina.options.domain.features.account.AccountPort
+import cz.solvina.options.domain.features.account.EffectiveAccountService
 import cz.solvina.options.domain.features.flag.config.FlagTradingConfig
 import cz.solvina.options.domain.features.flag.model.FlagPosition
 import cz.solvina.options.domain.features.flag.model.FlagStatus
@@ -204,7 +205,7 @@ class FlagExecutionServiceTest {
         flagPort = flagPort,
         clock = fixedClock,
         scope = scope,
-        accountPort = accountPort,
+        effectiveAccount = EffectiveAccountService(accountPort, null),
         maxPositionPctOfCapital = BigDecimal("0.25"),
     )
 

@@ -2,6 +2,7 @@ package cz.solvina.options.execution
 
 import cz.solvina.options.domain.features.account.AccountDetail
 import cz.solvina.options.domain.features.account.AccountPort
+import cz.solvina.options.domain.features.account.EffectiveAccountService
 import cz.solvina.options.domain.features.execution.PreTradeValidator
 import cz.solvina.options.domain.features.execution.SpreadEntryWriterRegistry
 import cz.solvina.options.domain.features.execution.TradeExecutionService
@@ -132,7 +133,7 @@ class TradeExecutionServiceTest {
                 PreTradeValidator(
                     spreadQuery = spreadQuery,
                     orderExecutionPort = orderExecutionPort,
-                    accountPort = accountPort,
+                    effectiveAccount = EffectiveAccountService(accountPort, null),
                     config = config,
                 ),
             config = config,

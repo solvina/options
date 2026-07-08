@@ -1,6 +1,6 @@
 package cz.solvina.options.domain.features.scanner
 
-import cz.solvina.options.domain.features.account.AccountPort
+import cz.solvina.options.domain.features.account.EffectiveAccountService
 import cz.solvina.options.domain.features.execution.TradeExecutionPort
 import cz.solvina.options.domain.features.execution.model.TradeExecutionRequest
 import cz.solvina.options.domain.features.regime.DirectionalBias
@@ -29,7 +29,7 @@ class ScannerService(
     private val bullPutSelector: BullPutCandidateSelector,
     private val bearCallSelector: BearCallCandidateSelector,
     private val bearCallConfig: BearCallScannerConfig,
-    private val accountPort: AccountPort,
+    private val effectiveAccount: EffectiveAccountService,
     private val executionPort: TradeExecutionPort,
     private val spreadQuery: SpreadQueryFacade,
     private val config: ScannerConfig,
@@ -56,8 +56,10 @@ class ScannerService(
             return
         }
 
+        // Effective (possibly capped) account size — see EffectiveAccountService. All spread sizing
+        // downstream (allowedRiskPerTrade = capital × maxRiskPercent) runs off this.
         val accountDetail =
-            accountPort.accountDetail.value ?: run {
+            effectiveAccount.detail() ?: run {
                 logger.info { "Account detail not yet received, skipping scan" }
                 return
             }

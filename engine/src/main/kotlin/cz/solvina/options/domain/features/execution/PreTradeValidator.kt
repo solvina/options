@@ -1,6 +1,6 @@
 package cz.solvina.options.domain.features.execution
 
-import cz.solvina.options.domain.features.account.AccountPort
+import cz.solvina.options.domain.features.account.EffectiveAccountService
 import cz.solvina.options.domain.features.execution.model.ExecutionOutcome
 import cz.solvina.options.domain.features.execution.model.TradeExecutionRequest
 import cz.solvina.options.domain.features.order.OrderExecutionPort
@@ -19,7 +19,7 @@ private val tradeLogger = KotlinLogging.logger("TRADES")
 class PreTradeValidator(
     private val spreadQuery: SpreadQueryFacade,
     private val orderExecutionPort: OrderExecutionPort,
-    private val accountPort: AccountPort,
+    private val effectiveAccount: EffectiveAccountService,
     private val config: ScannerConfig,
 ) {
     suspend fun validate(
@@ -56,9 +56,9 @@ class PreTradeValidator(
             return ExecutionOutcome.EXPOSURE_REJECTED
         }
 
-        // Capital: available funds vs total max risk for the requested quantity
+        // Capital: available funds (capped at effective-account-size) vs total max risk for the qty
         val availableFunds =
-            accountPort.accountDetail.value
+            effectiveAccount.detail()
                 ?.availableFunds
                 ?.amount
         val maxRiskTotal =

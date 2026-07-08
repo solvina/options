@@ -1,6 +1,6 @@
 package cz.solvina.options.domain.features.flag
 
-import cz.solvina.options.domain.features.account.AccountPort
+import cz.solvina.options.domain.features.account.EffectiveAccountService
 import cz.solvina.options.domain.features.flag.EntryFill
 import cz.solvina.options.domain.features.flag.config.FlagTradingConfig
 import cz.solvina.options.domain.features.flag.model.FlagPosition
@@ -28,7 +28,7 @@ class FlagExecutionService(
     private val flagPort: FlagPort,
     private val clock: Clock,
     private val scope: CoroutineScope,
-    private val accountPort: AccountPort,
+    private val effectiveAccount: EffectiveAccountService,
     // Hard cap on a single flag position as a fraction of account capital. Risk-based sizing
     // (riskPerTrade ÷ stop-distance) alone ignores NOTIONAL: a tight stop yields a huge share count
     // whose dollar value can dwarf the account and sweep the book (e.g. GOOGL 2000sh ≈ $686k off a
@@ -86,7 +86,7 @@ class FlagExecutionService(
         // Notional cap: never let a single position exceed maxPositionPctOfCapital of account capital,
         // regardless of how tight the stop makes the risk-based share count. Falls back to risk-based
         // sizing only when capital is unknown (account feed not yet populated).
-        val capital = accountPort.accountDetail.value?.totalCapital?.amount
+        val capital = effectiveAccount.detail()?.totalCapital?.amount
         val shares =
             if (capital != null && capital > BigDecimal.ZERO) {
                 val maxNotional = capital.multiply(maxPositionPctOfCapital)

@@ -278,7 +278,8 @@ class PositionReversalIntegrationTest {
                 PreTradeValidator(
                     spreadQuery = SpreadQueryFacade(spreadPort, InMemoryBearCallSpreadPort()),
                     orderExecutionPort = orderExecutionPortMock,
-                    accountPort = accountPort,
+                    effectiveAccount =
+                        cz.solvina.options.domain.features.account.EffectiveAccountService(accountPort, null),
                     config = config,
                 )
 

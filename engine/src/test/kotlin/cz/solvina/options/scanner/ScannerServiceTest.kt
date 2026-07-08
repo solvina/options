@@ -2,6 +2,7 @@ package cz.solvina.options.scanner
 
 import cz.solvina.options.domain.features.account.AccountDetail
 import cz.solvina.options.domain.features.account.AccountPort
+import cz.solvina.options.domain.features.account.EffectiveAccountService
 import cz.solvina.options.domain.features.execution.TradeExecutionPort
 import cz.solvina.options.domain.features.execution.model.ExecutionOutcome
 import cz.solvina.options.domain.features.execution.model.TradeExecutionRequest
@@ -280,7 +281,7 @@ class ScannerServiceTest {
             bullPutSelector = selector,
             bearCallSelector = bearCallSelector,
             bearCallConfig = bearCallConfig,
-            accountPort = accountPort,
+            effectiveAccount = EffectiveAccountService(accountPort, null),
             executionPort = executionPort,
             spreadQuery = SpreadQueryFacade(spreadPort, InMemoryBearCallSpreadPort()),
             config = config,
