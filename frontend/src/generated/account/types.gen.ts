@@ -105,6 +105,27 @@ export type AccountPositionDto = {
      */
     conId: number;
     /**
+     * True when this held position is NOT explained by anything the engine actively manages (no open spread/flag covers it, or the held quantity does not match). Orphans have no automated exit and should be handled manually.
+     *
+     */
+    orphan: boolean;
+    /**
+     * Why the position is an orphan (only set when orphan is true)
+     */
+    orphanReason?: string | null;
+    /**
+     * ID of the tracked spread this leg belongs to (null for orphans and stock)
+     */
+    spreadId?: string | null;
+    /**
+     * Human label of the owning spread, e.g. "PG 140/135 P" (for grouping in the UI)
+     */
+    spreadLabel?: string | null;
+    /**
+     * Role of this leg within its spread — SHORT or LONG
+     */
+    legRole?: string | null;
+    /**
      * IBKR account ID
      */
     account: string;

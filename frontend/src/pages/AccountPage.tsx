@@ -146,15 +146,17 @@ function OpenOrdersTable({ orders, onCancel }: { orders: OpenOrderDto[]; onCance
 function IbkrPositionsTable({
   positions,
   onKill,
+  showReason = false,
 }: {
   positions: AccountPositionDto[]
   onKill: (conId: number, quantity: number) => void
+  showReason?: boolean
 }) {
   const [killing, setKilling] = useState<Set<number>>(new Set())
   const { sort, toggle } = useSortable('symbol', 'asc')
 
   if (positions.length === 0)
-    return <p className="text-muted-foreground text-sm">No IBKR positions.</p>
+    return <p className="text-muted-foreground text-sm">None.</p>
 
   const sortedPositions = sorted(positions, sort, (p, k) => {
     if (k === 'pnl') return p.unrealizedPnL != null ? Number(p.unrealizedPnL) : null
@@ -183,6 +185,7 @@ function IbkrPositionsTable({
             <th className={thClass}>Avg Cost</th>
             <SortTh label="P&L" col="pnl" sort={sort} onSort={toggle} className={thClass} />
             <th className={thClass}>CCY</th>
+            {showReason && <th className={thClass}>Reason</th>}
             <th className={thClass}></th>
           </tr>
         </thead>
@@ -203,6 +206,9 @@ function IbkrPositionsTable({
                 {pnl != null ? fmtPnl(pnl) : '—'}
               </td>
               <td className="px-3 py-2 text-muted-foreground">{p.currency}</td>
+              {showReason && (
+                <td className="px-3 py-2 text-xs text-amber-600 dark:text-amber-400">{p.orphanReason ?? '—'}</td>
+              )}
               <td className="px-3 py-2">
                 {p.conId !== 0 && (
                   <button
@@ -219,6 +225,86 @@ function IbkrPositionsTable({
           })}
         </tbody>
       </table>
+    </div>
+  )
+}
+
+// One held option leg shown inside its spread group.
+function SpreadLegRow({ p }: { p: AccountPositionDto }) {
+  const pnl = p.unrealizedPnL != null ? Number(p.unrealizedPnL) : null
+  const pnlColor = pnl == null ? '' : pnl >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'
+  const roleColor = p.legRole === 'SHORT' ? 'text-red-600 dark:text-red-400' : 'text-blue-600 dark:text-blue-400'
+  return (
+    <tr className="border-b border-border last:border-0 hover:bg-muted/40 transition-colors">
+      <td className={`px-3 py-2 font-medium ${roleColor}`}>{p.legRole ?? '—'}</td>
+      <td className="px-3 py-2">{p.optionRight ?? '—'}</td>
+      <td className="px-3 py-2 tabular-nums">{p.strike?.toFixed(2) ?? '—'}</td>
+      <td className="px-3 py-2 tabular-nums">{p.expiry?.toString() ?? '—'}</td>
+      <td className="px-3 py-2 tabular-nums">{p.quantity?.toFixed(0)}</td>
+      <td className="px-3 py-2 tabular-nums">{p.avgCost?.toFixed(2) ?? '—'}</td>
+      <td className={`px-3 py-2 tabular-nums font-medium ${pnlColor}`}>{pnl != null ? fmtPnl(pnl) : '—'}</td>
+    </tr>
+  )
+}
+
+// Tracked spread legs, grouped so a short + long leg render together as the pair they are.
+function TrackedSpreadGroups({ positions }: { positions: AccountPositionDto[] }) {
+  if (positions.length === 0)
+    return <p className="text-muted-foreground text-sm">No spread legs held at IBKR.</p>
+
+  const groups = new Map<string, { label: string; legs: AccountPositionDto[] }>()
+  for (const p of positions) {
+    const key = p.spreadId ?? p.spreadLabel ?? 'unknown'
+    const g = groups.get(key) ?? { label: p.spreadLabel ?? p.symbol, legs: [] }
+    g.legs.push(p)
+    groups.set(key, g)
+  }
+  // SHORT leg first within each pair.
+  for (const g of groups.values())
+    g.legs.sort((a, b) => (a.legRole === 'SHORT' ? -1 : 1) - (b.legRole === 'SHORT' ? -1 : 1))
+
+  const thClass = 'px-3 py-2 text-left'
+
+  return (
+    <div className="space-y-3">
+      {[...groups.entries()].map(([key, g]) => {
+        const groupPnl = g.legs.reduce((sum, l) => sum + (l.unrealizedPnL != null ? Number(l.unrealizedPnL) : 0), 0)
+        const pnlColor = groupPnl >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'
+        const incomplete = g.legs.length !== 2
+        return (
+          <div key={key} className="rounded-lg border border-border overflow-hidden">
+            <div className="flex items-center justify-between bg-muted/50 px-3 py-2">
+              <span className="font-medium text-sm">
+                {g.label}
+                {incomplete && (
+                  <span className="ml-2 text-xs text-amber-600 dark:text-amber-400">
+                    ({g.legs.length} of 2 legs held)
+                  </span>
+                )}
+              </span>
+              <span className={`text-sm font-medium tabular-nums ${pnlColor}`}>{fmtPnl(groupPnl)}</span>
+            </div>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border text-muted-foreground text-xs uppercase tracking-wide">
+                  <th className={thClass}>Leg</th>
+                  <th className={thClass}>Right</th>
+                  <th className={thClass}>Strike</th>
+                  <th className={thClass}>Expiry</th>
+                  <th className={thClass}>Qty</th>
+                  <th className={thClass}>Avg Cost</th>
+                  <th className={thClass}>P&L</th>
+                </tr>
+              </thead>
+              <tbody>
+                {g.legs.map((l) => (
+                  <SpreadLegRow key={l.conId} p={l} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -281,18 +367,61 @@ export function AccountPage() {
             <EnginePositionsTable positions={data.openPositions ?? []} />
           </section>
 
-          <section>
-            <h2 className="text-base font-semibold mb-3">
-              All IBKR Positions
-              <span className="ml-2 text-xs text-muted-foreground font-normal">
-                ({data.accountPositionCount})
-              </span>
-            </h2>
-            <IbkrPositionsTable
-              positions={data.accountPositions ?? []}
-              onKill={(conId, quantity) => doKill({ conId, quantity })}
-            />
-          </section>
+          {(() => {
+            const all = data.accountPositions ?? []
+            const orphans = all.filter((p) => p.orphan)
+            const trackedLegs = all.filter((p) => !p.orphan && p.spreadId != null)
+            const otherManaged = all.filter((p) => !p.orphan && p.spreadId == null)
+            return (
+              <>
+                <section>
+                  <h2 className="text-base font-semibold mb-3">
+                    Tracked Spread Legs
+                    <span className="ml-2 text-xs text-muted-foreground font-normal">
+                      ({trackedLegs.length} leg{trackedLegs.length !== 1 ? 's' : ''} across{' '}
+                      {new Set(trackedLegs.map((p) => p.spreadId)).size} spread
+                      {new Set(trackedLegs.map((p) => p.spreadId)).size !== 1 ? 's' : ''})
+                    </span>
+                  </h2>
+                  <TrackedSpreadGroups positions={trackedLegs} />
+                </section>
+
+                {otherManaged.length > 0 && (
+                  <section>
+                    <h2 className="text-base font-semibold mb-3">
+                      Other Managed
+                      <span className="ml-2 text-xs text-muted-foreground font-normal">
+                        ({otherManaged.length}) — e.g. flag stock
+                      </span>
+                    </h2>
+                    <IbkrPositionsTable
+                      positions={otherManaged}
+                      onKill={(conId, quantity) => doKill({ conId, quantity })}
+                    />
+                  </section>
+                )}
+
+                <section>
+                  <h2 className="text-base font-semibold mb-3">
+                    Orphans / Manual
+                    <span className="ml-2 text-xs text-muted-foreground font-normal">
+                      ({orphans.length}) — held positions the engine is not managing
+                    </span>
+                  </h2>
+                  {orphans.length > 0 && (
+                    <p className="text-xs text-amber-600 dark:text-amber-400 mb-2">
+                      These have no automated exit (no TP/SL/DTE). Close manually if unintended.
+                    </p>
+                  )}
+                  <IbkrPositionsTable
+                    positions={orphans}
+                    onKill={(conId, quantity) => doKill({ conId, quantity })}
+                    showReason
+                  />
+                </section>
+              </>
+            )
+          })()}
 
           <section>
             <h2 className="text-base font-semibold mb-3">
