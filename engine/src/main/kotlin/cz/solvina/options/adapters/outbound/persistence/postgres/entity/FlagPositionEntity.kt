@@ -32,6 +32,8 @@ class FlagPositionEntity(
     var stopLossPrice: BigDecimal = BigDecimal.ZERO,
     @Column(name = "profit_target_price", nullable = false, precision = 10, scale = 4)
     var profitTargetPrice: BigDecimal = BigDecimal.ZERO,
+    @Column(name = "trail_amount", precision = 10, scale = 4)
+    var trailAmount: BigDecimal? = null,
     @Column(nullable = false)
     var shares: Int = 0,
     @Column(name = "risk_amount", nullable = false, precision = 10, scale = 2)

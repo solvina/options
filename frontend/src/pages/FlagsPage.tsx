@@ -406,6 +406,7 @@ function FlagDetailRow({ position: p, colSpan }: { position: FlagPositionDto; co
         {/* Execution */}
         <DetailGrid items={[
           ['Strategy', p.strategyName ?? 'bull_flag'],
+          ['2R ref', `$${fmt(p.profitTargetPrice, 2)}`],
           ['Breakout type', p.breakoutType ?? null],
           ['Session', p.marketSession ?? null],
           ['Min to close', p.minutesToClose != null ? `${p.minutesToClose}m` : null],
@@ -465,6 +466,11 @@ function LivePositionCard({ position: p }: { position: FlagPositionDto }) {
   const unrealPnl = p.unrealizedPnl != null ? Number(p.unrealizedPnl) : null
   const entryPrice = Number(p.entryPrice)
   const stopPct = ((entryPrice - Number(p.stopLossPrice)) / entryPrice * 100).toFixed(1)
+  const effStop = p.effectiveStopPrice != null ? Number(p.effectiveStopPrice) : null
+  const fillPrice = p.actualEntryPrice != null ? Number(p.actualEntryPrice) : entryPrice
+  // Positive once the ratcheted trigger clears the fill: profit locked in even if the stop fires.
+  const lockedIn = effStop != null ? (effStop - fillPrice) * (p.shares ?? 0) : null
+  const isTrailing = effStop != null && effStop > Number(p.stopLossPrice)
   const elapsed = p.openedAt ? Math.floor((Date.now() - new Date(p.openedAt).getTime()) / 60_000) : null
 
   return (
@@ -506,15 +512,27 @@ function LivePositionCard({ position: p }: { position: FlagPositionDto }) {
         <div><span className="text-xs text-muted-foreground block">Current</span>
           <span className="tabular-nums font-medium">{p.currentPrice != null ? `$${fmt(p.currentPrice, 2)}` : '—'}</span>
         </div>
-        <div><span className="text-xs text-muted-foreground block">Stop</span><span className="tabular-nums text-red-500">${fmt(p.stopLossPrice, 2)} <span className="text-xs opacity-70">(-{stopPct}%)</span></span></div>
-        <div><span className="text-xs text-muted-foreground block">Target</span><span className="tabular-nums text-green-600 dark:text-green-400">${fmt(p.profitTargetPrice, 2)}</span></div>
+        <div title="Approximate — IBKR ratchets the trigger server-side on its own tick stream">
+          <span className="text-xs text-muted-foreground block">Stop{isTrailing ? ' ⇡ trailing' : ''}</span>
+          <span className={`tabular-nums ${lockedIn != null && lockedIn >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>
+            ${fmt(effStop ?? p.stopLossPrice, 2)}{!isTrailing && <span className="text-xs opacity-70"> (-{stopPct}%)</span>}
+          </span>
+        </div>
+        <div><span className="text-xs text-muted-foreground block">Trail</span>
+          <span className="tabular-nums">{p.trailAmount != null ? `$${fmt(p.trailAmount, 2)}` : '—'}</span>
+        </div>
         <div><span className="text-xs text-muted-foreground block">Shares</span><span className="tabular-nums">{p.shares}</span></div>
         <div><span className="text-xs text-muted-foreground block">Unreal. P&amp;L</span><PnlSpan val={unrealPnl} placeholder="…" /></div>
+        {lockedIn != null && (
+          <div><span className="text-xs text-muted-foreground block">Locked in</span><PnlSpan val={lockedIn} /></div>
+        )}
       </div>
 
       {expanded && (
         <div className="mt-3 pt-3 border-t border-border space-y-1.5">
           <DetailGrid items={[
+            ['Initial stop', `$${fmt(p.stopLossPrice, 2)}`],
+            ['2R ref', `$${fmt(p.profitTargetPrice, 2)}`],
             ['Strategy', p.strategyName ?? 'bull_flag'],
             ['Breakout type', p.breakoutType ?? null],
             ['Session', p.marketSession ?? null],
@@ -553,7 +571,7 @@ function FlagHistoryRow({ position }: { position: FlagPositionDto }) {
         <td className="px-3 py-2"><StatusBadge status={position.status} /></td>
         <td className="px-3 py-2 tabular-nums text-sm">${fmt(position.entryPrice, 2)}</td>
         <td className="px-3 py-2 tabular-nums text-sm text-red-500">${fmt(position.stopLossPrice, 2)}</td>
-        <td className="px-3 py-2 tabular-nums text-sm text-green-600 dark:text-green-400">${fmt(position.profitTargetPrice, 2)}</td>
+        <td className="px-3 py-2 tabular-nums text-sm">{position.trailAmount != null ? `$${fmt(position.trailAmount, 2)}` : '—'}</td>
         <td className="px-3 py-2 tabular-nums text-sm">{position.shares}</td>
         <td className="px-3 py-2 tabular-nums text-sm"><PnlSpan val={position.realizedPnl} /></td>
         <td className="px-3 py-2 tabular-nums text-sm"><RSpan val={position.rMultiple} /></td>
@@ -693,7 +711,7 @@ export function FlagsPage() {
                     <th className="px-3 py-2 text-left text-muted-foreground text-xs uppercase tracking-wide">Status</th>
                     <SortTh col="entryPrice" label="Entry" sort={sort} sortDir={sortDir} onSort={handleSort} />
                     <th className="px-3 py-2 text-left text-muted-foreground text-xs uppercase tracking-wide">Stop</th>
-                    <th className="px-3 py-2 text-left text-muted-foreground text-xs uppercase tracking-wide">Target</th>
+                    <th className="px-3 py-2 text-left text-muted-foreground text-xs uppercase tracking-wide">Trail</th>
                     <th className="px-3 py-2 text-left text-muted-foreground text-xs uppercase tracking-wide">Shares</th>
                     <SortTh col="realizedPnl" label="P&L" sort={sort} sortDir={sortDir} onSort={handleSort} />
                     <SortTh col="rMultiple" label="R" sort={sort} sortDir={sortDir} onSort={handleSort} />

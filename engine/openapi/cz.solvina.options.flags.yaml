@@ -224,6 +224,17 @@ components:
           type: number
         profitTargetPrice:
           type: number
+        trailAmount:
+          type: number
+          nullable: true
+          description: Aux price of the broker-side TRAIL SELL (2 x initial risk). Null on pre-v26 rows.
+        effectiveStopPrice:
+          type: number
+          nullable: true
+          description: >-
+            Best-known live trigger of the trailing stop: max(stopLossPrice, highestPriceSeen -
+            trailAmount). Approximate - IBKR ratchets server-side on its own tick stream and never
+            reports the trigger back. Null when trailAmount is unknown.
         shares:
           type: integer
         riskAmount:

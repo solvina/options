@@ -14,6 +14,14 @@ export type FlagPositionDto = {
     entryPrice: number;
     stopLossPrice: number;
     profitTargetPrice: number;
+    /**
+     * Aux price of the broker-side TRAIL SELL (2 x initial risk). Null on pre-v26 rows.
+     */
+    trailAmount?: number | null;
+    /**
+     * Best-known live trigger of the trailing stop: max(stopLossPrice, highestPriceSeen - trailAmount). Approximate - IBKR ratchets server-side on its own tick stream and never reports the trigger back. Null when trailAmount is unknown.
+     */
+    effectiveStopPrice?: number | null;
     shares: number;
     riskAmount: number;
     flagpoleHeight?: number | null;
@@ -315,6 +323,10 @@ export type CloseFlagPositionErrors = {
      * Already closed
      */
     409: unknown;
+    /**
+     * Close aborted — broker holdings could not be verified; nothing was sold and the position stays OPEN
+     */
+    503: unknown;
 };
 
 export type CloseFlagPositionResponses = {

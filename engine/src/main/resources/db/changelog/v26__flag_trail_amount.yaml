@@ -1,0 +1,21 @@
+databaseChangeLog:
+  - changeSet:
+      id: v26__flag_trail_amount
+      author: claude
+      changes:
+        - addColumn:
+            tableName: flag_positions
+            columns:
+              - column:
+                  name: trail_amount
+                  type: DECIMAL(10,4)
+                  constraints:
+                    nullable: true
+        # The trail is a real order parameter (aux price of the broker-side TRAIL SELL) that was
+        # never recorded. Backfill from the sizing formula in FlagExecutionService (trail = 2 ×
+        # initial risk) — exact for every historical row, and lets analytics use the column uniformly.
+        - sql:
+            sql: >-
+              UPDATE flag_positions
+              SET trail_amount = 2 * (entry_price - stop_loss_price)
+              WHERE trail_amount IS NULL

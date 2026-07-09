@@ -149,6 +149,7 @@ class FlagExecutionService(
                     entryPrice = request.entryPrice,
                     stopLossPrice = request.stopLossPrice,
                     profitTargetPrice = profitTarget,
+                    trailAmount = trailAmount,
                     shares = shares,
                     riskAmount = request.tradingConfig.riskPerTrade,
                     flagpoleHeight = request.flagpoleHeight,

@@ -19,6 +19,12 @@ data class FlagPosition(
     val stopLossPrice: BigDecimal,
     /** Profit target = entryPrice + 2 × (entryPrice − stopLossPrice). */
     val profitTargetPrice: BigDecimal,
+    /**
+     * Aux price of the broker-side TRAIL SELL (2 × initial risk). IBKR ratchets the trigger
+     * server-side and never reports it back, so the effective stop must be derived as
+     * max(stopLossPrice, highestPriceSeen − trailAmount). Null on rows persisted before v26.
+     */
+    val trailAmount: BigDecimal? = null,
     /** Number of shares. Calculated as riskAmount / (entryPrice − stopLossPrice). */
     val shares: Int,
     /** Configured risk per trade at the time of entry. */

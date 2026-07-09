@@ -181,13 +181,17 @@ class FlagRecoveryService(
 
     /**
      * Shares are at the broker but no protective order is working — re-place the trailing stop.
-     * The original trail distance is recoverable: profitTargetPrice = entryPrice + trailAmount by
-     * construction.
+     * Re-arm at the RATCHETED trigger (highest seen − trail), not the initial stop: the vanished
+     * order had trailed server-side, and re-arming from the stale DB stop would silently lower the
+     * live trigger back to entry-time protection, giving back locked-in profit on the next dip.
      */
     private suspend fun reprotect(row: FlagPosition) {
-        val trailAmount = row.profitTargetPrice.subtract(row.entryPrice)
+        // Pre-v26 rows have no persisted trail; profitTargetPrice = entryPrice + trailAmount by construction.
+        val trailAmount = row.trailAmount ?: row.profitTargetPrice.subtract(row.entryPrice)
+        val ratcheted = row.highestPriceSeen?.subtract(trailAmount)
+        val initialStop = if (ratcheted != null && ratcheted > row.stopLossPrice) ratcheted else row.stopLossPrice
         val newOrderId =
-            runCatching { bracketOrderPort.submitTrailingStopSell(row.symbol, row.shares, row.stopLossPrice, trailAmount) }
+            runCatching { bracketOrderPort.submitTrailingStopSell(row.symbol, row.shares, initialStop, trailAmount) }
                 .getOrElse { e ->
                     logger.error(e) { "Flag recovery: [${row.symbol}] failed to re-place protective trailing stop: ${e.message}" }
                     alertPort.send(

@@ -144,6 +144,18 @@ class FlagsApiImpl(
         return ResponseEntity.noContent().build()
     }
 
+    /**
+     * Best-known live trigger of the broker-side TRAIL SELL. IBKR ratchets the trigger server-side
+     * on its own tick stream and never reports it back, so this derives it from the engine's own
+     * high-water mark: max(initial stop, highest seen − trail). Null when the trail is unknown
+     * (pre-v26 rows before the backfill).
+     */
+    private fun FlagPosition.effectiveStopPrice(): java.math.BigDecimal? =
+        trailAmount?.let { trail ->
+            val ratcheted = highestPriceSeen?.subtract(trail)
+            if (ratcheted != null && ratcheted > stopLossPrice) ratcheted else stopLossPrice
+        }
+
     private suspend fun FlagPosition.toDto(): FlagPositionDto {
         val livePrice =
             if (status == FlagStatus.OPEN || status == FlagStatus.PENDING) {
@@ -168,6 +180,8 @@ class FlagsApiImpl(
             entryPrice = entryPrice,
             stopLossPrice = stopLossPrice,
             profitTargetPrice = profitTargetPrice,
+            trailAmount = trailAmount,
+            effectiveStopPrice = effectiveStopPrice(),
             shares = shares,
             riskAmount = riskAmount,
             flagpoleHeight = flagpoleHeight,
