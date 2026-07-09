@@ -22,6 +22,7 @@ data class BullPutSpread(
     override val closeReason: String? = null,
     override val closePricePerShare: BigDecimal? = null,
     override val lastSpreadValue: BigDecimal? = null,
+    override val lastUnderlyingPrice: BigDecimal? = null,
     override val underlyingPriceAtExit: BigDecimal? = null,
     override val ivRankAtExit: BigDecimal? = null,
     override val strategyId: StrategyId = StrategyId.BULL_PUT,

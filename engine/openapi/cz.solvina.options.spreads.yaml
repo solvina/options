@@ -272,6 +272,17 @@ components:
         currentPnl:
           type: number
           nullable: true
+        underlyingPriceNow:
+          type: number
+          nullable: true
+          description: Latest underlying spot recorded by the monitor (null until the first check on an open spread)
+        distanceToShortStrikePct:
+          type: number
+          nullable: true
+          description: >
+            Cushion of the underlying from the short strike, as a percent of spot. Positive = safe
+            side (bull put above / bear call below the short strike); negative = breached. Null when
+            no current spot is available.
         underlyingPriceAtExit:
           type: number
           nullable: true

@@ -110,6 +110,9 @@ class BearCallSpreadsApiImpl(
             closePricePerShare = closePricePerShare,
             currentSpreadValue = currentSpreadValue,
             currentPnl = currentPnl,
+            underlyingPriceNow = lastUnderlyingPrice,
+            // Bear call is safe while spot stays BELOW the short (sold) strike.
+            distanceToShortStrikePct = cushionPct(lastUnderlyingPrice, soldLeg.contract.strike, bullish = false),
             underlyingPriceAtExit = underlyingPriceAtExit,
             ivRankAtExit = ivRankAtExit,
             exDividendDate = universePort.get(symbol)?.exDividendDate,

@@ -41,6 +41,7 @@ function EnginePositionsTable({ positions }: { positions: OpenPositionDto[] }) {
     if (k === 'dte') return p.expiryDate ? dte(p.expiryDate.toString()) : null
     if (k === 'pnl') return p.unrealizedPnL != null ? Number(p.unrealizedPnL) : null
     if (k === 'creditPerShare') return p.creditPerShare ?? null
+    if (k === 'cushion') return p.distanceToShortStrikePct != null ? Number(p.distanceToShortStrikePct) : null
     return (p as Record<string, unknown>)[k]
   })
 
@@ -58,6 +59,8 @@ function EnginePositionsTable({ positions }: { positions: OpenPositionDto[] }) {
             <SortTh label="Credit/sh" col="creditPerShare" sort={sort} onSort={toggle} className={thClass} />
             <th className={thClass}>Max Risk</th>
             <th className={thClass}>Qty</th>
+            <th className={thClass}>Underlying</th>
+            <SortTh label="Cushion" col="cushion" sort={sort} onSort={toggle} className={thClass} />
             <th className={thClass}>IV Rank</th>
             <SortTh label="P&L" col="pnl" sort={sort} onSort={toggle} className={thClass} />
           </tr>
@@ -77,6 +80,23 @@ function EnginePositionsTable({ positions }: { positions: OpenPositionDto[] }) {
               <td className="px-3 py-2 tabular-nums">{p.creditPerShare?.toFixed(4) ?? '—'}</td>
               <td className="px-3 py-2 tabular-nums">{fmt(p.maxRiskTotal)}</td>
               <td className="px-3 py-2">{p.quantity}</td>
+              <td className="px-3 py-2 tabular-nums">
+                {p.underlyingPriceNow != null ? p.underlyingPriceNow.toFixed(2) : '—'}
+                {p.underlyingPriceNow != null && p.soldStrike != null && (
+                  <span className="text-muted-foreground text-xs"> / {p.soldStrike.toFixed(0)}</span>
+                )}
+              </td>
+              <td className={`px-3 py-2 tabular-nums ${
+                p.distanceToShortStrikePct == null
+                  ? ''
+                  : p.distanceToShortStrikePct >= 5
+                    ? 'text-green-600 dark:text-green-400'
+                    : p.distanceToShortStrikePct >= 0
+                      ? 'text-amber-600 dark:text-amber-400'
+                      : 'text-red-600 dark:text-red-400'
+              }`}>
+                {p.distanceToShortStrikePct != null ? `${p.distanceToShortStrikePct.toFixed(1)}%` : '—'}
+              </td>
               <td className="px-3 py-2 tabular-nums">
                 {p.ivRankAtEntry != null ? `${p.ivRankAtEntry.toFixed(1)}%` : '—'}
               </td>

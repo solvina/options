@@ -29,7 +29,14 @@ class BullPutSpreadCloser(
     override suspend fun recordLastValue(
         spread: Spread,
         value: BigDecimal,
-    ): Spread = port.update((spread as BullPutSpread).copy(lastSpreadValue = value))
+        underlyingPrice: BigDecimal?,
+    ): Spread =
+        port.update(
+            (spread as BullPutSpread).copy(
+                lastSpreadValue = value,
+                lastUnderlyingPrice = underlyingPrice ?: spread.lastUnderlyingPrice,
+            ),
+        )
 
     override suspend fun markClosing(
         spread: Spread,

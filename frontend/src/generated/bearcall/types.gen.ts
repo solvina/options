@@ -22,6 +22,15 @@ export type BearCallSpreadDto = {
     closePricePerShare?: number | null;
     currentSpreadValue?: number | null;
     currentPnl?: number | null;
+    /**
+     * Latest underlying spot recorded by the monitor (null until the first check on an open spread)
+     */
+    underlyingPriceNow?: number | null;
+    /**
+     * Cushion of the underlying from the short strike, as a percent of spot. Positive = safe side (bear call below the short strike); negative = breached. Null when no spot available.
+     *
+     */
+    distanceToShortStrikePct?: number | null;
     underlyingPriceAtExit?: number | null;
     ivRankAtExit?: number | null;
     exDividendDate?: string | null;

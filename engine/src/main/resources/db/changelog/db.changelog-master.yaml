@@ -37,3 +37,5 @@ databaseChangeLog:
       file: db/changelog/v23__dividend_sync_status.yaml
   - include:
       file: db/changelog/v24__entry_mid_per_share.yaml
+  - include:
+      file: db/changelog/v25__spread_last_underlying_price.yaml

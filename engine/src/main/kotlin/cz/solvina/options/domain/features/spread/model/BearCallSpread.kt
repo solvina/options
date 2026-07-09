@@ -32,6 +32,7 @@ data class BearCallSpread(
     override val closeReason: String? = null,
     override val closePricePerShare: BigDecimal? = null,
     override val lastSpreadValue: BigDecimal? = null,
+    override val lastUnderlyingPrice: BigDecimal? = null,
     override val underlyingPriceAtExit: BigDecimal? = null,
     override val ivRankAtExit: BigDecimal? = null,
     val exDividendDate: LocalDate? = null,

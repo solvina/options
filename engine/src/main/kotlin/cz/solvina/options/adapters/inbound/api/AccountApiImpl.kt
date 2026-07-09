@@ -168,6 +168,8 @@ class AccountApiImpl(
             openedAt = openedAt.atOffset(ZoneOffset.UTC),
             ivRankAtEntry = ivRankAtEntry?.toBigDecimal(),
             underlyingPriceAtEntry = underlyingPriceAtEntry,
+            underlyingPriceNow = lastUnderlyingPrice,
+            distanceToShortStrikePct = cushionPct(lastUnderlyingPrice, soldLeg.contract.strike, bullish = true),
             unrealizedPnL =
                 lastSpreadValue?.let { sv ->
                     creditPerShare

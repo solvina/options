@@ -173,8 +173,31 @@ class BullPutSpreadsApiImpl(
             closePricePerShare = closePricePerShare,
             currentSpreadValue = currentSpreadValue,
             currentPnl = currentPnl,
+            underlyingPriceNow = lastUnderlyingPrice,
+            // Bull put is safe while spot stays ABOVE the short (sold) strike.
+            distanceToShortStrikePct = cushionPct(lastUnderlyingPrice, soldLeg.contract.strike, bullish = true),
             underlyingPriceAtExit = underlyingPriceAtExit,
             ivRankAtExit = ivRankAtExit,
         )
     }
+}
+
+/**
+ * Cushion of the underlying from the short strike, as a signed percent of spot. Positive means the
+ * safe side (bull put: spot above the short strike; bear call: spot below it). Null when no spot.
+ */
+internal fun cushionPct(
+    underlying: java.math.BigDecimal?,
+    shortStrike: java.math.BigDecimal,
+    bullish: Boolean,
+): java.math.BigDecimal? {
+    if (underlying == null || underlying <= java.math.BigDecimal.ZERO) return null
+    val gap = if (bullish) underlying.subtract(shortStrike) else shortStrike.subtract(underlying)
+    return gap
+        .divide(
+            underlying,
+            6,
+            java.math.RoundingMode.HALF_UP,
+        ).multiply(java.math.BigDecimal("100"))
+        .setScale(2, java.math.RoundingMode.HALF_UP)
 }

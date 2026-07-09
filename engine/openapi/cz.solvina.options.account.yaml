@@ -159,6 +159,14 @@ components:
         underlyingPriceAtEntry:
           type: number
           nullable: true
+        underlyingPriceNow:
+          type: number
+          nullable: true
+          description: Latest underlying spot recorded by the monitor (null until the first check)
+        distanceToShortStrikePct:
+          type: number
+          nullable: true
+          description: "Cushion of spot from the short strike, percent of spot. Positive = safe side; null if no spot."
         unrealizedPnL:
           type: number
           nullable: true

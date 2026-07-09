@@ -22,6 +22,15 @@ export type SpreadDto = {
     closePricePerShare?: number | null;
     currentSpreadValue?: number | null;
     currentPnl?: number | null;
+    /**
+     * Latest underlying spot recorded by the monitor (null until the first check on an open spread)
+     */
+    underlyingPriceNow?: number | null;
+    /**
+     * Cushion of the underlying from the short strike, as a percent of spot. Positive = safe side (bull put above / bear call below the short strike); negative = breached. Null when no current spot is available.
+     *
+     */
+    distanceToShortStrikePct?: number | null;
     underlyingPriceAtExit?: number | null;
     ivRankAtExit?: number | null;
 };

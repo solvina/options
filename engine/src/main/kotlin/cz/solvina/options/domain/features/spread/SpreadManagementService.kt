@@ -460,7 +460,11 @@ class SpreadManagementService(
 
         if (exitSignal == null) {
             if (currentSpreadValue != null) {
-                closers.forSpread(spread).recordLastValue(spread, currentSpreadValue)
+                // Capture the underlying spot in the same cycle so the API can show a current price
+                // and distance-to-short-strike for open positions. Non-fatal: a missing spot keeps
+                // the prior stored value rather than blocking the value update.
+                val underlyingNow = runCatching { marketDataPort.getUnderlyingPrice(spread.symbol).amount }.getOrNull()
+                closers.forSpread(spread).recordLastValue(spread, currentSpreadValue, underlyingNow)
             } else {
                 logger.debug { "[${spread.symbol}] No live option quotes — skipping price-based exit checks this cycle (DTE=$dte)" }
             }

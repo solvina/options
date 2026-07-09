@@ -1,0 +1,21 @@
+databaseChangeLog:
+  - changeSet:
+      id: v25__spread_last_underlying_price
+      author: claude
+      changes:
+        - addColumn:
+            tableName: bull_put_spreads
+            columns:
+              - column:
+                  name: last_underlying_price
+                  type: DECIMAL(10,2)
+                  constraints:
+                    nullable: true
+        - addColumn:
+            tableName: bear_call_spreads
+            columns:
+              - column:
+                  name: last_underlying_price
+                  type: DECIMAL(10,2)
+                  constraints:
+                    nullable: true

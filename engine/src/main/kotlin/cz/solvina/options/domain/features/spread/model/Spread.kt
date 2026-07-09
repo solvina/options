@@ -37,6 +37,14 @@ sealed interface Spread {
     val closeReason: String?
     val closePricePerShare: BigDecimal?
     val lastSpreadValue: BigDecimal?
+
+    /**
+     * Underlying spot captured at the same monitor cycle as [lastSpreadValue] (null until the first
+     * check, or on rows persisted before v25). Powers the "current price" / distance-to-short-strike
+     * shown for open positions — persisted rather than fetched per API request to avoid quote-feed
+     * load and health-metric pollution on read paths.
+     */
+    val lastUnderlyingPrice: BigDecimal?
     val underlyingPriceAtExit: BigDecimal?
     val ivRankAtExit: BigDecimal?
     val strategyId: StrategyId

@@ -83,6 +83,14 @@ export type OpenPositionDto = {
     ivRankAtEntry?: number | null;
     underlyingPriceAtEntry?: number | null;
     /**
+     * Latest underlying spot recorded by the monitor (null until the first check)
+     */
+    underlyingPriceNow?: number | null;
+    /**
+     * Cushion of spot from the short strike, percent of spot. Positive = safe side; null if no spot.
+     */
+    distanceToShortStrikePct?: number | null;
+    /**
      * (creditPerShare - currentSpreadValue) × quantity × 100; null until first monitor check
      */
     unrealizedPnL?: number | null;

@@ -114,6 +114,7 @@ class BullPutSpreadPersistenceAdapter(
             closeReason = closeReason,
             closePricePerShare = closePricePerShare,
             lastSpreadValue = lastSpreadValue,
+            lastUnderlyingPrice = lastUnderlyingPrice,
             underlyingPriceAtExit = underlyingPriceAtExit,
             ivRankAtExit = ivRankAtExit,
         )
@@ -140,6 +141,7 @@ class BullPutSpreadPersistenceAdapter(
             closeReason = closeReason,
             closePricePerShare = closePricePerShare,
             lastSpreadValue = lastSpreadValue,
+            lastUnderlyingPrice = lastUnderlyingPrice,
             underlyingPriceAtExit = underlyingPriceAtExit,
             ivRankAtExit = ivRankAtExit,
         )

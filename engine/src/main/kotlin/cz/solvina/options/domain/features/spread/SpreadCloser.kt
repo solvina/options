@@ -21,10 +21,15 @@ interface SpreadCloser {
 
     suspend fun closingSpreads(): List<Spread>
 
-    /** Persist the latest observed spread value (no status change). */
+    /**
+     * Persist the latest observed spread value and underlying spot (no status change).
+     * [underlyingPrice] is null when the spot could not be resolved this cycle — the prior value is
+     * then kept rather than overwritten with null.
+     */
     suspend fun recordLastValue(
         spread: Spread,
         value: BigDecimal,
+        underlyingPrice: BigDecimal? = null,
     ): Spread
 
     /** Mark CLOSING (close orders in flight); [intendedStatus] is recorded as the close reason. */
