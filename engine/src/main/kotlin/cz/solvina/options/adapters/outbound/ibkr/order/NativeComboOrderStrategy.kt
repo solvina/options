@@ -56,48 +56,10 @@ class NativeComboOrderStrategy(
         }
 
         return try {
-            // Build native combo contract. resolveConIdOrCached uses a 6s timeout > the cache's own
-            // 5s network timeout so the cache governs the lookup and cleans up its own in-flight state
-            // (a sub-second timeout here cancels the cache mid-lookup and used to orphan its in-flight
-            // deferred — see E3).
-            val soldKey =
-                OptionContractKey(
-                    symbol = soldContract.symbol,
-                    expiry = soldContract.expiry,
-                    strike = soldContract.strike,
-                    optionType = soldContract.type,
-                )
-            val boughtKey =
-                OptionContractKey(
-                    symbol = boughtContract.symbol,
-                    expiry = boughtContract.expiry,
-                    strike = boughtContract.strike,
-                    optionType = boughtContract.type,
-                )
-            val soldConId =
-                contractCache.resolveConIdOrCached(soldKey)
-                    ?: error("Sold contract not in cache and lookup timed out for $soldKey")
-            val boughtConId =
-                contractCache.resolveConIdOrCached(boughtKey)
-                    ?: error("Bought contract not in cache and lookup timed out for $boughtKey")
-
-            val bagContract =
-                buildNativeComboContract(
-                    underlyingSymbol = soldContract.symbol.value,
-                    soldConId = soldConId,
-                    boughtConId = boughtConId,
-                )
+            val bagContract = resolveBagContract(soldContract, boughtContract)
 
             // Create BUY order with negative limit (IBKR convention for net credit)
-            val order =
-                Order().apply {
-                    action("BUY")
-                    orderType("LMT")
-                    lmtPrice(-netCredit.amount.floorToOptionTick().toDouble()) // Negative = net credit accepted
-                    totalQuantity(Decimal.get(qty.toLong()))
-                    tif("DAY")
-                    if (connectionConfig.account.isNotBlank()) account(connectionConfig.account)
-                }
+            val order = buildComboOrder(netCredit, qty)
 
             val orderId = registry.nextOrderId()
             if (orderId == 0) {
@@ -187,6 +149,83 @@ class NativeComboOrderStrategy(
     }
 
     override fun notes(): String = "Native combo order (atomic): both legs fill together or order cancelled. Most reliable."
+
+    override fun supportsInPlaceModify(): Boolean = true
+
+    override suspend fun modifySpreadPrice(
+        existingOrderId: Int,
+        soldContract: OptionContract,
+        boughtContract: OptionContract,
+        newCredit: Money,
+        qty: Int,
+    ) {
+        val validation = validateOrder(soldContract, boughtContract, newCredit)
+        require(validation.isValid) { "Cannot amend to an invalid price: ${validation.reason}" }
+
+        // Re-`placeOrder` under the SAME orderId — IBKR treats this as a modification of the live
+        // order, not a new one. No cancel is issued (no PendingCancel race) and the fill watcher
+        // already registered against existingOrderId stays valid, so we deliberately do NOT touch
+        // registry.pendingOrderStatus here.
+        val bagContract = resolveBagContract(soldContract, boughtContract)
+        val order = buildComboOrder(newCredit, qty)
+
+        logger.info {
+            "[$exchangeId] Amending NATIVE COMBO order $existingOrderId IN PLACE → net \$${newCredit.amount} " +
+                "(lmtPrice=${order.lmtPrice()})"
+        }
+        client.placeOrder(existingOrderId, bagContract, order)
+    }
+
+    /**
+     * Resolve both legs' conIds (from the cache; a 6s timeout > the cache's own 5s network timeout so
+     * the cache governs the lookup and cleans up its own in-flight state — see E3) and assemble the
+     * BAG parent contract.
+     */
+    private suspend fun resolveBagContract(
+        soldContract: OptionContract,
+        boughtContract: OptionContract,
+    ): Contract {
+        val soldKey =
+            OptionContractKey(
+                symbol = soldContract.symbol,
+                expiry = soldContract.expiry,
+                strike = soldContract.strike,
+                optionType = soldContract.type,
+            )
+        val boughtKey =
+            OptionContractKey(
+                symbol = boughtContract.symbol,
+                expiry = boughtContract.expiry,
+                strike = boughtContract.strike,
+                optionType = boughtContract.type,
+            )
+        val soldConId =
+            contractCache.resolveConIdOrCached(soldKey)
+                ?: error("Sold contract not in cache and lookup timed out for $soldKey")
+        val boughtConId =
+            contractCache.resolveConIdOrCached(boughtKey)
+                ?: error("Bought contract not in cache and lookup timed out for $boughtKey")
+
+        return buildNativeComboContract(
+            underlyingSymbol = soldContract.symbol.value,
+            soldConId = soldConId,
+            boughtConId = boughtConId,
+        )
+    }
+
+    /** BUY order with a negative limit — IBKR's convention for accepting a net credit on a BAG. */
+    private fun buildComboOrder(
+        netCredit: Money,
+        qty: Int,
+    ): Order =
+        Order().apply {
+            action("BUY")
+            orderType("LMT")
+            lmtPrice(-netCredit.amount.floorToOptionTick().toDouble()) // Negative = net credit accepted
+            totalQuantity(Decimal.get(qty.toLong()))
+            tif("DAY")
+            if (connectionConfig.account.isNotBlank()) account(connectionConfig.account)
+        }
 
     private fun buildNativeComboContract(
         underlyingSymbol: String,

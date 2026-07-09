@@ -7,8 +7,8 @@ import cz.solvina.options.domain.features.market.MarketTickPort
 import cz.solvina.options.domain.features.market.SpreadCreditTick
 import cz.solvina.options.domain.features.order.LegQuotes
 import cz.solvina.options.domain.features.order.OrderExecutionPort
-import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.features.order.OrderReplacementUnverifiedException
+import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.features.order.StrandedLongLegException
 import cz.solvina.options.domain.features.order.optionTickFor
 import cz.solvina.options.domain.features.order.roundToOptionTick
@@ -397,6 +397,20 @@ class TradeExecutionService(
                                     break
                                 }
                                 OrderStatus.CANCELLED -> {
+                                    if (orderExecutionPort.wasSelfCancelled(currentOrderId)) {
+                                        // Our OWN reprice/abort cancel finally landed on the order we
+                                        // were riding (e.g. a frozen ladder after an unverifiable
+                                        // replacement cancel). It is not a broker rejection — the entry
+                                        // simply didn't fill. Record it as a timeout, not ORDER_REJECTED
+                                        // (which would mislabel the spread CLOSED_REJECTED and imply a
+                                        // broker fault that isn't there).
+                                        logger.info {
+                                            "[${request.underlyingSymbol}] Order $currentOrderId cancelled by our own " +
+                                                "reprice/abort — no fill, recording as timeout (not a broker rejection)"
+                                        }
+                                        outcome = ExecutionOutcome.TIMED_OUT
+                                        break
+                                    }
                                     rejectReason = orderExecutionPort.consumeRejectReason(currentOrderId)
                                     logger.info {
                                         "[${request.underlyingSymbol}] ORDER_REJECTED — " +
@@ -586,6 +600,39 @@ class TradeExecutionService(
             }
             return null
         }
+
+        // US atomic combos: amend the live order's limit IN PLACE (same orderId, same fill watcher).
+        // The cancel-and-replace path below races IBKR's PendingCancel latency — a slow cancel is
+        // declared "unverifiable", the ladder freezes on the order, then IBKR completes OUR OWN cancel
+        // and the executor misreads that terminal CANCELLED as a broker ORDER_REJECTED, false-aborting
+        // a perfectly healthy entry (and benching the symbol on a cooldown). An in-place amend issues
+        // no cancel, so that whole failure mode disappears. Leg-by-leg (EUREX) has no combo book, so it
+        // keeps cancel-replace.
+        if (orderExecutionPort.supportsInPlaceComboModify(request.underlyingSymbol)) {
+            val amended =
+                runCatching {
+                    orderExecutionPort.modifyComboPriceInPlace(
+                        existingOrderId = currentOrderId,
+                        soldContract = request.soldContract,
+                        boughtContract = request.boughtContract,
+                        newCredit = Money(newCredit),
+                        qty = request.quantity,
+                    )
+                }
+            return if (amended.isSuccess) {
+                logger.info { "[${request.underlyingSymbol}] Amended order $currentOrderId in place → \$$newCredit" }
+                Pair(newCredit, currentOrderId)
+            } else {
+                // A transient amend failure must not abort the entry: the existing order is still
+                // resting and fillable at the current limit. Keep it and let the next tick retry.
+                logger.warn(amended.exceptionOrNull()) {
+                    "[${request.underlyingSymbol}] In-place amend of order $currentOrderId failed — " +
+                        "keeping it resting at \$$currentCredit, will retry next tick"
+                }
+                Pair(currentCredit, currentOrderId)
+            }
+        }
+
         val newOrderId =
             orderExecutionPort.replaceComboWithNewPrice(
                 existingOrderId = currentOrderId,

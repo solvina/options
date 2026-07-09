@@ -62,6 +62,9 @@ interface OrderExecutionPort {
      * no replacement is submitted (double-fill is prevented), and the caller MUST catch this and ride
      * the existing order to fill/timeout rather than let it crash the entry (a leaked PENDING spread
      * with a live order is how orphans accumulate).
+     *
+     * Used only by exchanges without a combo book (EUREX leg-by-leg). US atomic-combo exchanges
+     * amend in place via [modifyComboPriceInPlace] — see [supportsInPlaceComboModify].
      */
     suspend fun replaceComboWithNewPrice(
         existingOrderId: Int,
@@ -70,6 +73,28 @@ interface OrderExecutionPort {
         newCredit: Money,
         qty: Int,
     ): Int
+
+    /**
+     * True when the exchange serving [symbol] supports amending a live combo order's limit price in
+     * place (a single atomic BAG order). When true, the ladder MUST amend via
+     * [modifyComboPriceInPlace] rather than cancel-and-replace: an in-place amend issues no cancel,
+     * so it cannot hit the PendingCancel-verification race that makes the cancel path falsely abort a
+     * healthy entry as ORDER_REJECTED. Defaults to false (leg-by-leg exchanges keep cancel-replace).
+     */
+    fun supportsInPlaceComboModify(symbol: Symbol): Boolean = false
+
+    /**
+     * Amend the working combo order [existingOrderId] to rest at [newCredit], IN PLACE — same
+     * orderId, same fill watcher, no cancel. IBKR treats a re-`placeOrder` on a live id as a
+     * modification. Only valid for exchanges where [supportsInPlaceComboModify] is true.
+     */
+    suspend fun modifyComboPriceInPlace(
+        existingOrderId: Int,
+        soldContract: OptionContract,
+        boughtContract: OptionContract,
+        newCredit: Money,
+        qty: Int,
+    ): Unit = throw UnsupportedOperationException("in-place combo modify not supported")
 
     /** Returns the set of underlying symbols that have at least one open order on the broker. */
     suspend fun getSymbolsWithOpenOrders(): Set<Symbol>
@@ -90,4 +115,12 @@ interface OrderExecutionPort {
      * adapter overrides it; test doubles and the backtest adapter can ignore it.
      */
     fun consumeRejectReason(orderId: Int): String? = null
+
+    /**
+     * True if WE initiated the cancel of [orderId] (a reprice or abort), not the broker rejecting it.
+     * The execution loop consults this so a terminal CANCELLED it caused itself is not misreported as
+     * an ORDER_REJECTED (which mislabels the spread CLOSED_REJECTED and implies a broker fault that
+     * isn't there). Defaults to false; only the live IBKR adapter overrides it.
+     */
+    fun wasSelfCancelled(orderId: Int): Boolean = false
 }

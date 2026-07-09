@@ -9,8 +9,8 @@ import cz.solvina.options.domain.features.alert.AlertLevel
 import cz.solvina.options.domain.features.alert.AlertPort
 import cz.solvina.options.domain.features.order.LegQuotes
 import cz.solvina.options.domain.features.order.OrderExecutionPort
-import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.features.order.OrderReplacementUnverifiedException
+import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.features.order.StrandedLongLegException
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
@@ -186,6 +186,22 @@ class IbkrOrderExecutionAdapter(
         }
     }
 
+    override fun supportsInPlaceComboModify(symbol: Symbol): Boolean {
+        val exchange = instrumentsConfig.instruments[symbol.value]?.optionExchange ?: "SMART"
+        return strategyRouter.supportsInPlaceModify(exchange)
+    }
+
+    override suspend fun modifyComboPriceInPlace(
+        existingOrderId: Int,
+        soldContract: OptionContract,
+        boughtContract: OptionContract,
+        newCredit: Money,
+        qty: Int,
+    ) {
+        val exchange = instrumentsConfig.instruments[soldContract.symbol.value]?.optionExchange ?: "SMART"
+        strategyRouter.modifySpreadPrice(exchange, existingOrderId, soldContract, boughtContract, newCredit, qty)
+    }
+
     override suspend fun getSymbolsWithOpenOrders(): Set<Symbol> =
         runCatching { openOrdersAdapter.getOpenOrders() }
             .getOrDefault(emptyList())
@@ -195,4 +211,6 @@ class IbkrOrderExecutionAdapter(
     override fun consumeFillPrice(orderId: Int): java.math.BigDecimal? = registry.consumeFillPrice(orderId)
 
     override fun consumeRejectReason(orderId: Int): String? = registry.consumeRejectReason(orderId)
+
+    override fun wasSelfCancelled(orderId: Int): Boolean = registry.wasSelfCancelled(orderId)
 }

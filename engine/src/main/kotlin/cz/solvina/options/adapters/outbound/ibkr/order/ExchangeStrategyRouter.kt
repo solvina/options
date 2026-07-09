@@ -82,6 +82,28 @@ class ExchangeStrategyRouter(
         return strategy.submitSpreadOrder(soldContract, boughtContract, netCredit, qty, legQuotes)
     }
 
+    /** True if [exchange]'s strategy amends combo prices in place (US native combo) vs cancel-replace. */
+    fun supportsInPlaceModify(exchange: String): Boolean = (strategies[exchange] ?: strategies["SMART"])?.supportsInPlaceModify() ?: false
+
+    /**
+     * Amend a working combo order's price in place via [exchange]'s strategy. Falls back to SMART for
+     * an unregistered exchange, matching [submitSpreadOrder]'s routing.
+     */
+    suspend fun modifySpreadPrice(
+        exchange: String,
+        existingOrderId: Int,
+        soldContract: OptionContract,
+        boughtContract: OptionContract,
+        newCredit: Money,
+        qty: Int,
+    ) {
+        val strategy =
+            strategies[exchange]
+                ?: strategies["SMART"]
+                ?: error("SMART strategy not registered")
+        strategy.modifySpreadPrice(existingOrderId, soldContract, boughtContract, newCredit, qty)
+    }
+
     /**
      * Get strategy details for logging/debugging
      */

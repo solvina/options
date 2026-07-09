@@ -291,6 +291,85 @@ class TradeExecutionServiceTest {
         }
 
     @Test
+    fun `US combos ladder by amending in place, never cancel-replace`() =
+        runTest {
+            // Repricing an atomic US combo must AMEND the live order in place (same orderId), not
+            // cancel-and-replace. The cancel-replace path races IBKR's PendingCancel latency and can
+            // misread our own cancel as a broker ORDER_REJECTED (the 2026-07-09 zero-fill blocker).
+            val modifyCount = AtomicInteger(0)
+            val replaceCount = AtomicInteger(0)
+
+            val orderPort =
+                object : OrderExecutionPort {
+                    private val deferred = CompletableDeferred<OrderStatus>()
+                    private val submittedId = 100
+
+                    override suspend fun submitComboLimitOrder(
+                        soldContract: OptionContract,
+                        boughtContract: OptionContract,
+                        netCredit: Money,
+                        qty: Int,
+                        legQuotes: LegQuotes?,
+                    ): Int = submittedId
+
+                    override suspend fun awaitFill(orderId: Int): OrderStatus =
+                        if (orderId == submittedId) deferred.await() else OrderStatus.CANCELLED
+
+                    override suspend fun cancelAndAwait(orderId: Int): OrderStatus {
+                        deferred.complete(OrderStatus.CANCELLED)
+                        return OrderStatus.CANCELLED
+                    }
+
+                    override fun supportsInPlaceComboModify(symbol: Symbol): Boolean = true
+
+                    override suspend fun modifyComboPriceInPlace(
+                        existingOrderId: Int,
+                        soldContract: OptionContract,
+                        boughtContract: OptionContract,
+                        newCredit: Money,
+                        qty: Int,
+                    ) {
+                        assertEquals(submittedId, existingOrderId, "Amend must target the SAME live orderId")
+                        // First amend represents the resting order filling at the improved price.
+                        if (modifyCount.incrementAndGet() == 1) deferred.complete(OrderStatus.FILLED)
+                    }
+
+                    override suspend fun replaceComboWithNewPrice(
+                        existingOrderId: Int,
+                        soldContract: OptionContract,
+                        boughtContract: OptionContract,
+                        newCredit: Money,
+                        qty: Int,
+                    ): Int {
+                        replaceCount.incrementAndGet()
+                        return existingOrderId
+                    }
+
+                    override suspend fun getSymbolsWithOpenOrders(): Set<Symbol> = emptySet()
+
+                    override fun consumeFillPrice(orderId: Int): java.math.BigDecimal? = null
+                }
+
+            val service =
+                buildService(
+                    marketTickPort =
+                        fixedMarketTickPort(
+                            underlyingPrice = 500.0,
+                            creditFlow = tickFlowLaddering(listOf(1.00, 1.00, 1.00, 1.00, 1.00)),
+                        ),
+                    orderExecutionPort = orderPort,
+                    config = baseConfig.copy(ticksBeforePriceAdjust = 3),
+                )
+
+            val result = service.execute(buildRequest(targetCredit = BigDecimal("1.00")))
+
+            assertEquals(ExecutionOutcome.FILLED, result.outcome)
+            assertEquals(100, result.comboOrderId, "The order id must be preserved across in-place amends")
+            assertTrue(modifyCount.get() >= 1, "Expected at least one in-place amend")
+            assertEquals(0, replaceCount.get(), "US combos must never cancel-replace")
+        }
+
+    @Test
     fun `never_goes_below_floor`() =
         runTest {
             val submittedCredits = mutableListOf<BigDecimal>()
@@ -499,6 +578,63 @@ class TradeExecutionServiceTest {
                 "spread must not be stranded in PENDING after an unverifiable cancel",
             )
             assertEquals(SpreadStatus.CLOSED_TIMEOUT, persisted.single().status)
+        }
+
+    @Test
+    fun `a self-cancelled order reporting CANCELLED is a timeout, not a broker ORDER_REJECTED`() =
+        runTest {
+            // Bug #2 of the 2026-07-09 blocker: when our OWN reprice/abort cancel lands on the order the
+            // ladder is riding, IBKR reports it CANCELLED. That is not a broker rejection — but the loop
+            // used to map any terminal CANCELLED on the current order to ORDER_REJECTED, mislabeling the
+            // spread CLOSED_REJECTED and implying a broker fault. With wasSelfCancelled() consulted, it
+            // must resolve as TIMED_OUT / CLOSED_TIMEOUT instead.
+            val spreadPort = InMemoryBullPutSpreadPort()
+            val orderPort =
+                object : OrderExecutionPort {
+                    override suspend fun submitComboLimitOrder(
+                        soldContract: OptionContract,
+                        boughtContract: OptionContract,
+                        netCredit: Money,
+                        qty: Int,
+                        legQuotes: LegQuotes?,
+                    ): Int = 1
+
+                    // The order terminates CANCELLED — as it would once our in-flight self-cancel lands.
+                    override suspend fun awaitFill(orderId: Int): OrderStatus = OrderStatus.CANCELLED
+
+                    override suspend fun cancelAndAwait(orderId: Int): OrderStatus = OrderStatus.CANCELLED
+
+                    override suspend fun replaceComboWithNewPrice(
+                        existingOrderId: Int,
+                        soldContract: OptionContract,
+                        boughtContract: OptionContract,
+                        newCredit: Money,
+                        qty: Int,
+                    ): Int = existingOrderId
+
+                    // We initiated this cancel — the whole point of the fix.
+                    override fun wasSelfCancelled(orderId: Int): Boolean = true
+
+                    override suspend fun getSymbolsWithOpenOrders(): Set<Symbol> = emptySet()
+
+                    override fun consumeFillPrice(orderId: Int): java.math.BigDecimal? = null
+                }
+
+            val service =
+                buildService(
+                    marketTickPort = fixedMarketTickPort(500.0, tickFlowAtCredit(1.00)),
+                    orderExecutionPort = orderPort,
+                    spreadPort = spreadPort,
+                )
+
+            val result = service.execute(buildRequest(targetCredit = BigDecimal("1.00")))
+
+            assertEquals(
+                ExecutionOutcome.TIMED_OUT,
+                result.outcome,
+                "Our own cancel must not be reported as a broker ORDER_REJECTED",
+            )
+            assertEquals(SpreadStatus.CLOSED_TIMEOUT, spreadPort.findAll().single().status)
         }
 
     @Test

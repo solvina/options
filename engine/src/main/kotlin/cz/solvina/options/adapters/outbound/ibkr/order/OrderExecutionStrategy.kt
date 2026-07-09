@@ -48,6 +48,26 @@ interface OrderExecutionStrategy {
      * Exchange-specific notes (for logging/debugging)
      */
     fun notes(): String
+
+    /**
+     * True if this exchange can amend a live combo order's price in place (single atomic BAG).
+     * Native-combo (US) strategies override to true; leg-by-leg (EUREX) keeps the default false and
+     * reprices via cancel-and-replace.
+     */
+    fun supportsInPlaceModify(): Boolean = false
+
+    /**
+     * Amend the working combo order [existingOrderId] to rest at [newCredit] in place: re-`placeOrder`
+     * under the SAME orderId (IBKR treats this as a modification), leaving the caller's existing fill
+     * watcher intact. Only implemented by strategies where [supportsInPlaceModify] is true.
+     */
+    suspend fun modifySpreadPrice(
+        existingOrderId: Int,
+        soldContract: OptionContract,
+        boughtContract: OptionContract,
+        newCredit: Money,
+        qty: Int,
+    ): Unit = throw UnsupportedOperationException("$javaClass does not support in-place modify")
 }
 
 /**

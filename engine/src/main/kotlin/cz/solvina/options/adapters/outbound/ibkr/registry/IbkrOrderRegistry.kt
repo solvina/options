@@ -103,6 +103,12 @@ class IbkrOrderRegistry {
     fun isCancelled(orderId: Int): Boolean = cancelledOrders.contains(orderId)
 
     /**
+     * True if WE initiated the cancel of this order (reprice or abort), as opposed to the broker
+     * rejecting it. Lets the execution loop avoid misreading its own cancel as an ORDER_REJECTED.
+     */
+    fun wasSelfCancelled(orderId: Int): Boolean = selfCancelledOrders.contains(orderId)
+
+    /**
      * True once IBKR has confirmed this order is no longer working — either FILLED or CANCELLED. This is
      * the authoritative, push-based replacement for polling the open-orders list to confirm removal.
      */
@@ -129,7 +135,11 @@ class IbkrOrderRegistry {
             val isPaperAccountLimit =
                 msg.contains("Guaranteed-to-Lose", ignoreCase = true) ||
                     msg.contains("guaranteed-loss", ignoreCase = true)
-            val isSelfCancelled = selfCancelledOrders.remove(id)
+            // Consult, don't consume: the flag must stay queryable via wasSelfCancelled() so the
+            // execution loop can tell a terminal CANCELLED that WE caused (reprice/abort) from a
+            // genuine broker rejection. Order ids are monotonic within a session, so this never
+            // masks a later real reject on a reused id.
+            val isSelfCancelled = selfCancelledOrders.contains(id)
             when {
                 isSelfCancelled -> logger.debug { "Order $id self-cancelled for repricing [code=$code]" }
                 isPaperAccountLimit -> logger.warn { "Order $id rejected/cancelled [code=$code]: $msg" }
