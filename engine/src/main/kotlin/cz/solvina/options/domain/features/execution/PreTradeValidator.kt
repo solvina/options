@@ -58,7 +58,8 @@ class PreTradeValidator(
 
         // Capital: available funds (capped at effective-account-size) vs total max risk for the qty
         val availableFunds =
-            effectiveAccount.detail()
+            effectiveAccount
+                .detail()
                 ?.availableFunds
                 ?.amount
         val maxRiskTotal =

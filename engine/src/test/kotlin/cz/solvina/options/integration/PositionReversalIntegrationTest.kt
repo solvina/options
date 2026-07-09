@@ -279,7 +279,8 @@ class PositionReversalIntegrationTest {
                     spreadQuery = SpreadQueryFacade(spreadPort, InMemoryBearCallSpreadPort()),
                     orderExecutionPort = orderExecutionPortMock,
                     effectiveAccount =
-                        cz.solvina.options.domain.features.account.EffectiveAccountService(accountPort, null),
+                        cz.solvina.options.domain.features.account
+                            .EffectiveAccountService(accountPort, null),
                     config = config,
                 )
 

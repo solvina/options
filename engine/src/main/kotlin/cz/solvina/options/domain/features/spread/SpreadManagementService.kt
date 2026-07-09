@@ -67,6 +67,7 @@ class SpreadManagementService(
     // only delays a stop by one extra monitor cycle). One garbage mid must never market-out a
     // position — LITE was stopped 29 s after entry on a single wide-book observation.
     private val slBreachCounts = ConcurrentHashMap<UUID, Int>()
+
     sealed interface ManualCloseResult {
         data class Closed(
             val spread: Spread,

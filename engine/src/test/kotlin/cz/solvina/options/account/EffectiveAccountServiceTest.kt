@@ -11,7 +11,10 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
 class EffectiveAccountServiceTest {
-    private fun port(capital: BigDecimal?, funds: BigDecimal?): AccountPort =
+    private fun port(
+        capital: BigDecimal?,
+        funds: BigDecimal?,
+    ): AccountPort =
         object : AccountPort {
             override val accountDetail =
                 MutableStateFlow(
