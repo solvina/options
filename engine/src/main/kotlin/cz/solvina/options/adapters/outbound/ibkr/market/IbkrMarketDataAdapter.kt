@@ -36,7 +36,7 @@ class IbkrMarketDataAdapter(
 
     private suspend fun resolveUnderlyingPrice(symbol: Symbol): Money {
         val snapshot = reqMktDataSnapshot(registry, client, contractFactory.stockContract(symbol), "", SnapshotReady.STOCK_PRICE)
-        val price = snapshot.last.takeIf { !it.isNaN() } ?: snapshot.close.takeIf { !it.isNaN() }
+        val price = snapshot.last.takeIf { it > 0 } ?: snapshot.close.takeIf { it > 0 }
         if (price != null) return Money(BigDecimal(price).setScale(2, RoundingMode.HALF_UP))
 
         // No live/delayed snapshot — fall back to last historical close (e.g. EU symbols on paper)

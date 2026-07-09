@@ -432,8 +432,11 @@ class SpreadManagementService(
         }
 
         val slBreached = currentSpreadValue != null && currentSpreadValue >= slThreshold
-        if (!slBreached) {
-            // Breaches must be CONSECUTIVE — any non-breaching observation resets the count.
+        if (currentSpreadValue != null && !slBreached) {
+            // Breaches must be CONSECUTIVE across VALUED observations — a real quote below the
+            // threshold resets the count. A BLIND cycle (null value) is no information, not an
+            // all-clear: resetting on it let flapping quotes starve the 2-cycle confirmation so the
+            // stop could never fire (2026-07-09, ~80% BLIND sweeps).
             spread.id?.let { slBreachCounts.remove(it) }
         }
 

@@ -15,14 +15,19 @@ import java.math.RoundingMode
  *  (snapshot=false) never emits tickSnapshotEnd, so the request must declare which fields make its
  *  snapshot "complete" — the registry resolves the deferred as soon as they have all arrived. */
 internal object SnapshotReady {
+    // IBKR's first tick after a subscribe is often a -1 placeholder ("no cached quote yet") with the
+    // real value following moments later. A placeholder must NOT complete the snapshot — completing
+    // cancels the subscription and discards the real quote, which read as a BLIND exit cycle for
+    // every leg whose placeholder won the race (2026-07-09). NaN > 0 is false, so > 0 covers both.
+
     /** Underlying price: live last, else previous close. */
-    val STOCK_PRICE: (MarketDataSnapshot) -> Boolean = { !it.last.isNaN() || !it.close.isNaN() }
+    val STOCK_PRICE: (MarketDataSnapshot) -> Boolean = { it.last > 0 || it.close > 0 }
 
     /** Option quote used for strike selection — needs both sides plus a live delta (greeks). */
-    val OPTION_QUOTE: (MarketDataSnapshot) -> Boolean = { !it.bid.isNaN() && !it.ask.isNaN() && !it.delta.isNaN() }
+    val OPTION_QUOTE: (MarketDataSnapshot) -> Boolean = { it.bid > 0 && it.ask > 0 && !it.delta.isNaN() }
 
     /** Option price only (mid for exits/repricing) — bid/ask are enough, greeks not required. */
-    val OPTION_PRICE: (MarketDataSnapshot) -> Boolean = { !it.bid.isNaN() && !it.ask.isNaN() }
+    val OPTION_PRICE: (MarketDataSnapshot) -> Boolean = { it.bid > 0 && it.ask > 0 }
 }
 
 internal suspend fun reqMktDataSnapshot(
