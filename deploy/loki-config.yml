@@ -27,6 +27,9 @@ schema_config:
 compactor:
   working_directory: /loki/compactor
   retention_enabled: true
+  # Required by Loki 3.x whenever retention is enabled: where pending delete requests are stored.
+  # Without it the process exits at config validation (crash-looped 2026-07-09).
+  delete_request_store: filesystem
 
 limits_config:
   retention_period: 720h   # 30 days
