@@ -1,0 +1,104 @@
+openapi: 3.0.3
+info:
+  title: Options Engine - Reports API
+  description: Period performance overview across strategies
+  version: 1.0.0
+
+paths:
+  /reports/summary:
+    get:
+      tags:
+        - Reports
+      summary: Per-strategy performance summary for a date range
+      description: >-
+        Aggregates every strategy (bull puts, bear calls, flags) over the given period.
+        Dates are inclusive and interpreted in Europe/Prague. "Opened" counts entries that
+        actually filled in the period; "closed" counts positions whose close fell in the
+        period regardless of when they were opened (P&L is attributed to the close date).
+      operationId: getReportSummary
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Report summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportSummaryDto'
+        '400':
+          description: Invalid range (from after to)
+
+components:
+  schemas:
+    ReportSummaryDto:
+      type: object
+      required: [from, to, strategies, total]
+      properties:
+        from:
+          type: string
+          format: date
+        to:
+          type: string
+          format: date
+        strategies:
+          type: array
+          items:
+            $ref: '#/components/schemas/StrategyReportDto'
+        total:
+          $ref: '#/components/schemas/StrategyReportDto'
+
+    StrategyReportDto:
+      type: object
+      required: [strategy, opened, stillOpen, closed, wins, losses, closedNoPnl, realizedPnl]
+      properties:
+        strategy:
+          type: string
+          description: bull_put | bear_call | bull_flag | total
+        opened:
+          type: integer
+          description: Entries filled within the period
+        stillOpen:
+          type: integer
+          description: Of the opened ones, how many are still open now
+        closed:
+          type: integer
+          description: Positions closed within the period (any open date)
+        wins:
+          type: integer
+          description: Closed with realized P&L > 0
+        losses:
+          type: integer
+          description: Closed with realized P&L < 0 (breakeven counts as a win)
+        closedNoPnl:
+          type: integer
+          description: Closed without a known P&L (e.g. exits filled while the engine was down)
+        winRate:
+          type: number
+          nullable: true
+          description: wins / (wins + losses), null when nothing closed with P&L
+        realizedPnl:
+          type: number
+          description: Total realized P&L of closes in the period (fees included where recorded)
+        avgPnl:
+          type: number
+          nullable: true
+        bestPnl:
+          type: number
+          nullable: true
+        worstPnl:
+          type: number
+          nullable: true
+        avgHoldDays:
+          type: number
+          nullable: true

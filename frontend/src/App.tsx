@@ -12,6 +12,7 @@ import { FlagsPage } from './pages/FlagsPage'
 import { FlagAnalyticsPage } from './pages/FlagAnalyticsPage'
 import { HistoricalDataPage } from './pages/HistoricalDataPage'
 import { BacktestPage } from './pages/BacktestPage'
+import { ReportsPage } from './pages/ReportsPage'
 
 function App() {
   return (
@@ -20,6 +21,7 @@ function App() {
         <Route element={<Layout />}>
           <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<DashboardPage />} />
+          <Route path="/reports" element={<ReportsPage />} />
           <Route path="/spreads" element={<Navigate to="/spreads/positions" replace />} />
           <Route path="/spreads/positions" element={<SpreadsPage />} />
           <Route path="/spreads/analytics" element={<AnalyticsPage />} />

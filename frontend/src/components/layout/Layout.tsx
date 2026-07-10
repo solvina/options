@@ -11,6 +11,7 @@ const navGroups = [
     label: 'Overview',
     items: [
       { to: '/dashboard', label: 'Dashboard' },
+      { to: '/reports', label: 'Reports' },
     ],
   },
   {

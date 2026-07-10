@@ -11,6 +11,7 @@ import { client as diagnosticClient } from './generated/diagnostic/client.gen'
 import { client as universeClient } from './generated/universe/client.gen'
 import { client as flagsClient } from './generated/flags/client.gen'
 import { client as historicalClient } from './generated/historical/client.gen'
+import { client as reportsClient } from './generated/reports/client.gen'
 
 healthClient.setConfig({ baseUrl: '/api' })
 accountClient.setConfig({ baseUrl: '/api' })
@@ -20,6 +21,7 @@ diagnosticClient.setConfig({ baseUrl: '/api' })
 universeClient.setConfig({ baseUrl: '/api' })
 flagsClient.setConfig({ baseUrl: '/api' })
 historicalClient.setConfig({ baseUrl: '/api' })
+reportsClient.setConfig({ baseUrl: '/api' })
 
 const queryClient = new QueryClient()
 
