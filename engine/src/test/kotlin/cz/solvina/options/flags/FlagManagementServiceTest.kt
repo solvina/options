@@ -3,10 +3,10 @@ package cz.solvina.options.flags
 import cz.solvina.options.domain.features.account.AccountPosition
 import cz.solvina.options.domain.features.account.PositionsPort
 import cz.solvina.options.domain.features.flag.BracketOrderPort
-import cz.solvina.options.domain.features.flag.OrderFill
 import cz.solvina.options.domain.features.flag.FlagManagementService
 import cz.solvina.options.domain.features.flag.FlagPage
 import cz.solvina.options.domain.features.flag.FlagPort
+import cz.solvina.options.domain.features.flag.OrderFill
 import cz.solvina.options.domain.features.flag.config.FlagTradingConfig
 import cz.solvina.options.domain.features.flag.config.FlagTradingConfigPort
 import cz.solvina.options.domain.features.flag.model.FlagPosition
