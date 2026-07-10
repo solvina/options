@@ -61,6 +61,10 @@ function PnlSpan({ val, children }: { val: number | null | undefined; children: 
 // Page
 // ─────────────────────────────────────────────
 
+// 2026-07-10: quote snapshots, SL confirmation, flag exit booking, and the P&L refresh were all
+// fixed — numbers before this date measure bugs, not strategies. Default the report to it.
+const MAJOR_FIX_EPOCH = '2026-07-10'
+
 const PRESETS: { label: string; from: () => string }[] = [
   { label: '7d', from: () => daysAgo(7) },
   { label: '30d', from: () => daysAgo(30) },
@@ -69,7 +73,7 @@ const PRESETS: { label: string; from: () => string }[] = [
 ]
 
 export function ReportsPage() {
-  const [from, setFrom] = useState(() => daysAgo(30))
+  const [from, setFrom] = useState(MAJOR_FIX_EPOCH)
   const [to, setTo] = useState(() => isoDate(new Date()))
 
   const { data, isLoading, isError } = useQuery({
@@ -122,6 +126,21 @@ export function ReportsPage() {
               </button>
             ))}
           </div>
+          <button
+            type="button"
+            onClick={() => {
+              setFrom(MAJOR_FIX_EPOCH)
+              setTo(isoDate(new Date()))
+            }}
+            className={
+              from === MAJOR_FIX_EPOCH
+                ? 'rounded-md border border-primary bg-primary/10 px-2 py-1.5 text-xs font-medium text-primary'
+                : 'rounded-md border border-border px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground'
+            }
+            title="Execution and P&L booking were overhauled on 10. 7. 2026 — earlier numbers measure bugs, not strategies"
+          >
+            Since last major fix (10. 7. 2026)
+          </button>
         </div>
       </div>
 
