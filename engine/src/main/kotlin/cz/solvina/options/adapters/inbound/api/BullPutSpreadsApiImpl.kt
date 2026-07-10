@@ -62,12 +62,19 @@ class BullPutSpreadsApiImpl(
         val spread = spreadPort.findById(id) ?: return ResponseEntity.notFound().build()
         if (spread.status != SpreadStatus.OPEN) return ResponseEntity.ok(spread.toDto())
 
+        // Live quotes only: outside market hours both legs quote as unavailable, and booking the
+        // resulting 0 as lastSpreadValue makes every credit spread display max profit (2026-07-10
+        // incident). No live mid on either leg → keep the last real mark untouched.
         val updated =
             runCatching {
-                val soldMid = marketDataPort.getOptionMid(spread.soldLeg.contract).amount
-                val boughtMid = marketDataPort.getOptionMid(spread.boughtLeg.contract).amount
-                val spreadValue = soldMid.subtract(boughtMid)
-                spreadPort.update(spread.copy(lastSpreadValue = spreadValue))
+                val soldMid = marketDataPort.getOptionMidLive(spread.soldLeg.contract)?.amount
+                val boughtMid = marketDataPort.getOptionMidLive(spread.boughtLeg.contract)?.amount
+                if (soldMid == null || boughtMid == null) {
+                    logger.info { "[${spread.symbol}] refreshSpreadPnl: no live quotes (market closed?) — keeping last mark" }
+                    spread
+                } else {
+                    spreadPort.update(spread.copy(lastSpreadValue = soldMid.subtract(boughtMid)))
+                }
             }.onFailure { e -> logger.warn(e) { "[${spread.symbol}] refreshSpreadPnl failed: ${e.message}" } }
                 .getOrDefault(spread)
 
