@@ -38,7 +38,7 @@ class StartupRecoveryServiceTest {
     private val positionsPort = mockk<PositionsPort>()
 
     private val service =
-        StartupRecoveryService(spreadPort, orderRegistry, openOrdersAdapter, client, orderCancellationService, positionsPort)
+        StartupRecoveryService(spreadPort, orderRegistry, openOrdersAdapter, client, orderCancellationService, positionsPort, mockk(relaxed = true))
 
     private val expiry = LocalDate.of(2026, 7, 17)
 

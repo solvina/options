@@ -7,18 +7,22 @@ import cz.solvina.options.adapters.outbound.ibkr.order.OrderCancellationService
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import cz.solvina.options.domain.features.account.AccountPosition
 import cz.solvina.options.domain.features.account.PositionsPort
+import cz.solvina.options.domain.features.connection.status.ConnectionStatusPort
 import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.features.spread.BullPutSpreadPort
 import cz.solvina.options.domain.features.spread.model.BullPutSpread
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
 import io.github.oshai.kotlinlogging.KotlinLogging
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
+import java.time.Duration
 import java.time.Instant
 
 private val logger = KotlinLogging.logger {}
@@ -29,6 +33,13 @@ private const val RECOVERY_POSITION_POLLS = 5
 /** Delay between recovery position polls — lets a feed that is still warming up at startup populate. */
 private const val RECOVERY_POSITION_POLL_DELAY_MS = 500L
 
+/**
+ * Periodic recovery only touches PENDING rows at least this old. A younger row may still have a
+ * LIVE entry loop laddering it (the loop replaces order ids, so an armed-watch check alone cannot
+ * prove the row is abandoned) — meddling with it would cancel/adopt an entry mid-chase.
+ */
+private val PERIODIC_MIN_PENDING_AGE: Duration = Duration.ofMinutes(60)
+
 @Component
 class StartupRecoveryService(
     private val spreadPort: BullPutSpreadPort,
@@ -37,19 +48,45 @@ class StartupRecoveryService(
     private val client: EClientSocket,
     private val orderCancellationService: OrderCancellationService,
     private val positionsPort: PositionsPort,
+    private val connectionStatusPort: ConnectionStatusPort,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val mutex = Mutex()
+
+    /**
+     * Periodic re-evaluation of PENDING rows, so a row left PENDING (e.g. its fill watcher was
+     * flushed by a disconnect) is resolved within minutes instead of waiting for the next restart.
+     * The MU 860/850 incident (2026-07-09): a flushed watcher was misread as a broker cancel, the
+     * row was written off, the order stayed working at IBKR and filled — an untracked live spread.
+     */
+    @Scheduled(
+        fixedDelayString = "\${spread-recovery.delay-ms:300000}",
+        initialDelayString = "\${spread-recovery.initial-delay-ms:240000}",
+    )
+    fun scheduledRecoverPending() {
+        if (!connectionStatusPort.isConnected()) {
+            logger.debug { "Spread recovery skipped: IBKR not connected" }
+            return
+        }
+        scope.launch {
+            runCatching { recoverPending(startup = false) }
+                .onFailure { e -> logger.error(e) { "Periodic spread recovery failed: ${e.message}" } }
+        }
+    }
 
     suspend fun recover() {
-        val pendingSpreads = spreadPort.findByStatus(SpreadStatus.PENDING)
+        recoverClosing()
+        recoverPending(startup = true)
+    }
+
+    private suspend fun recoverClosing() {
         val closingSpreads = spreadPort.findByStatus(SpreadStatus.CLOSING)
-        if (pendingSpreads.isEmpty() && closingSpreads.isEmpty()) return
+        if (closingSpreads.isEmpty()) return
 
         val openOrders =
             runCatching { openOrdersAdapter.getOpenOrders() }
                 .onFailure { e -> logger.warn(e) { "Recovery: could not fetch open IBKR orders" } }
                 .getOrDefault(emptyList<OpenOrder>())
-        val openOrderIds = openOrders.map { it.orderId }.toSet()
 
         // Cancel any orphaned orders for symbols stuck in CLOSING state.
         // BUY orders: placed by the previous engine run's close attempt; without cancellation
@@ -57,7 +94,7 @@ class StartupRecoveryService(
         // SELL orders: orphaned entry orders from failed trades; these can execute when the close
         //             completes, reversing the position (e.g., AMD bug: +18 LONG closed but -18 SHORT
         //             opened due to stale SELL orders filling simultaneously).
-        if (closingSpreads.isNotEmpty()) {
+        run {
             val closingSymbols = closingSpreads.map { it.symbol.value }.toSet()
             val staleBuyOrders = openOrders.filter { it.symbol in closingSymbols && it.action.equals("BUY", ignoreCase = true) }
             val staleSellOrders = openOrders.filter { it.symbol in closingSymbols && it.action.equals("SELL", ignoreCase = true) }
@@ -97,10 +134,32 @@ class StartupRecoveryService(
                 logger.info { "Recovery: ${closingSpreads.size} CLOSING spread(s) found — no orphaned orders to cancel" }
             }
         }
+    }
 
-        if (pendingSpreads.isEmpty()) return
-        logger.info { "Recovery: found ${pendingSpreads.size} PENDING spread(s)" }
+    private suspend fun recoverPending(startup: Boolean) =
+        mutex.withLock {
+            val cutoff = Instant.now().minus(PERIODIC_MIN_PENDING_AGE)
+            val pendingSpreads =
+                spreadPort.findByStatus(SpreadStatus.PENDING).filter { startup || it.openedAt < cutoff }
+            if (pendingSpreads.isEmpty()) return@withLock
 
+            // No trustworthy open-orders list → no verdicts this pass. Treating a failed fetch as
+            // "no orders" would route every row to the not-found branch and decide on bad data.
+            val openOrderIds =
+                runCatching { openOrdersAdapter.getOpenOrders() }
+                    .onFailure { e -> logger.warn(e) { "Recovery: could not fetch open IBKR orders — skipping PENDING pass" } }
+                    .getOrNull()
+                    ?.map { it.orderId }
+                    ?.toSet() ?: return@withLock
+            logger.info { "Recovery: found ${pendingSpreads.size} PENDING spread(s)${if (startup) "" else " (periodic pass)"}" }
+
+            processPending(pendingSpreads, openOrderIds)
+        }
+
+    private suspend fun processPending(
+        pendingSpreads: List<BullPutSpread>,
+        openOrderIds: Set<Int>,
+    ) {
         for (spread in pendingSpreads) {
             val orderId = spread.soldLeg.orderId
             if (orderId == 0) {
@@ -112,21 +171,45 @@ class StartupRecoveryService(
             }
 
             if (orderId in openOrderIds) {
-                // Order still open — register a deferred so the fill is handled
-                val deferred = CompletableDeferred<OrderStatus>()
-                orderRegistry.pendingOrderStatus[orderId] = deferred
+                if (orderRegistry.hasActiveWatch(orderId)) {
+                    logger.debug { "Recovery: orderId=$orderId for ${spread.symbol} already has an armed watcher — skipping" }
+                    continue
+                }
+                // Order still working at the broker — arm a fresh fill watch. A fill that already
+                // landed this session is caught via isFilled (recorded before deferreds complete).
+                orderRegistry.ensureWatch(orderId)
+                if (orderRegistry.isFilled(orderId)) {
+                    orderRegistry.pendingOrderStatus.remove(orderId)
+                    spreadPort.update(spread.copy(status = SpreadStatus.OPEN))
+                    logger.warn { "Recovery: orderId=$orderId already FILLED — spread ${spread.id} promoted to OPEN" }
+                    continue
+                }
+                val deferred = orderRegistry.pendingOrderStatus[orderId] ?: continue
                 logger.info {
                     "Recovery: re-registered orderId=$orderId for ${spread.symbol} ${spread.soldLeg.contract.strike}P/${spread.boughtLeg.contract.strike}P"
                 }
 
                 scope.launch {
-                    val status = runCatching { deferred.await() }.getOrDefault(OrderStatus.CANCELLED)
-                    when (status) {
-                        OrderStatus.FILLED -> {
+                    val result = runCatching { deferred.await() }
+                    when {
+                        result.getOrNull() == OrderStatus.FILLED || orderRegistry.isFilled(orderId) -> {
                             spreadPort.update(spread.copy(status = SpreadStatus.OPEN))
                             logger.info { "Recovery: orderId=$orderId filled — spread ${spread.id} promoted to OPEN" }
                         }
+                        result.isFailure -> {
+                            // Exceptional completion (disconnect flush, broker error) is NOT a broker
+                            // cancel — the order may still be working. Writing the row off here is how
+                            // MU 860/850 became an untracked live spread (2026-07-09): the order stayed
+                            // live at IBKR and filled after the row was closed. Leave PENDING; the
+                            // periodic pass re-evaluates against the broker's actual order/position state.
+                            logger.warn {
+                                "Recovery: fill watch for orderId=$orderId (${spread.symbol}) completed exceptionally " +
+                                    "(${result.exceptionOrNull()?.message}) — leaving PENDING for re-evaluation, NOT closing"
+                            }
+                        }
                         else -> {
+                            // Broker-confirmed terminal cancel (onOrderStatus/onError completed the
+                            // deferred normally) — safe to write the attempt off.
                             spreadPort.update(
                                 spread.copy(
                                     status = SpreadStatus.CLOSED_TIMEOUT,
@@ -224,9 +307,12 @@ class StartupRecoveryService(
         val leg = if (isShort) spread.soldLeg else spread.boughtLeg
         val c = leg.contract
         val expectedQty = if (isShort) -spread.quantity else spread.quantity
+        // compareTo, not equals: BigDecimal equality is scale-sensitive and the broker feed reports
+        // strikes as 280.0 while the DB stores 280.00 — equals() would false-negative every leg and
+        // route actually-filled spreads to recovery_unknown.
         return p.secType == "OPT" &&
             p.symbol == c.symbol.value &&
-            p.strike == c.strike &&
+            p.strike?.compareTo(c.strike) == 0 &&
             p.optionRight == c.type.ibkrCode &&
             p.expiry == c.expiry &&
             p.quantity.toInt() == expectedQty

@@ -164,6 +164,7 @@ class PositionReversalIntegrationTest {
                     client = mockClient,
                     orderCancellationService = mockCancellationService,
                     positionsPort = mockk(relaxed = true),
+                    connectionStatusPort = mockk(relaxed = true),
                 )
 
             recoveryService.recover()
@@ -345,6 +346,7 @@ class PositionReversalIntegrationTest {
                     client = mockClient,
                     orderCancellationService = mockk(relaxed = true),
                     positionsPort = mockk(relaxed = true),
+                    connectionStatusPort = mockk(relaxed = true),
                 )
 
             recoveryService.recover()
