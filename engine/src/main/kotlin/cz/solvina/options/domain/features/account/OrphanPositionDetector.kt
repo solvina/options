@@ -26,6 +26,19 @@ class OrphanPositionDetector {
         val reason: String,
     )
 
+    /**
+     * A contract the engine expects to hold (leg of an OPEN spread / flag stock) that the broker
+     * account does not fully hold. The inverse of an orphan — [detect] iterates held positions, so
+     * a leg that is entirely ABSENT never surfaces there (COHR 280/270 incident, 2026-07-10: the
+     * long 270P vanished from the account and nothing alerted while the short ran naked).
+     */
+    data class MissingLeg(
+        val description: String,
+        val expected: Int,
+        val held: Int,
+        val owners: List<String>,
+    )
+
     private data class PosKey(
         val symbol: String,
         val strike: BigDecimal?,
@@ -68,7 +81,7 @@ class OrphanPositionDetector {
                     }
                 }
                 "OPT" -> {
-                    val key = PosKey(p.symbol, p.strike, p.optionRight, p.expiry)
+                    val key = PosKey(p.symbol, p.strike?.normalized(), p.optionRight, p.expiry)
                     val exp = expected[key] ?: 0
                     if (qty != exp) {
                         val reason =
@@ -86,7 +99,55 @@ class OrphanPositionDetector {
         return orphans
     }
 
-    private fun keyOf(c: OptionContract) = PosKey(c.symbol.value, c.strike, c.type.ibkrCode, c.expiry)
+    /**
+     * The reverse check of [detect]: contracts the engine expects (legs of OPEN spreads, flag
+     * stock) whose held quantity at the broker differs from the expectation. Keys with a matching
+     * hold are fine; a key held at 0 is invisible to [detect] and only caught here. BigDecimal
+     * strikes are normalized so 280 and 280.00 compare equal.
+     */
+    fun detectMissing(
+        openSpreads: List<Spread>,
+        openFlags: List<FlagPosition>,
+        accountPositions: List<AccountPosition>,
+    ): List<MissingLeg> {
+        val expected = HashMap<PosKey, Int>()
+        val owners = HashMap<PosKey, MutableList<String>>()
+        for (spread in openSpreads) {
+            val label = "${spread.symbol.value} ${spread.soldLeg.contract.strike}/${spread.boughtLeg.contract.strike} " +
+                "exp ${spread.soldLeg.contract.expiry} [${spread.strategyId} ${spread.status}]"
+            addLeg(expected, keyOf(spread.soldLeg.contract), -spread.quantity)
+            addLeg(expected, keyOf(spread.boughtLeg.contract), spread.quantity)
+            owners.getOrPut(keyOf(spread.soldLeg.contract)) { mutableListOf() }.add(label)
+            owners.getOrPut(keyOf(spread.boughtLeg.contract)) { mutableListOf() }.add(label)
+        }
+        for (flag in openFlags) {
+            addLeg(expected, stockKey(flag.symbol.value), flag.shares)
+            owners.getOrPut(stockKey(flag.symbol.value)) { mutableListOf() }.add("${flag.symbol.value} flag ×${flag.shares}")
+        }
+
+        val held = HashMap<PosKey, Int>()
+        for (p in accountPositions) {
+            val key =
+                if (p.secType == "OPT") PosKey(p.symbol, p.strike?.normalized(), p.optionRight, p.expiry) else stockKey(p.symbol)
+            held[key] = (held[key] ?: 0) + p.quantity.toInt()
+        }
+
+        return expected.mapNotNull { (key, exp) ->
+            val have = held[key] ?: 0
+            if (have == exp) return@mapNotNull null
+            val desc =
+                if (key.strike != null) {
+                    "${key.symbol} ${key.right}${key.strike} exp ${key.expiry}"
+                } else {
+                    "${key.symbol} STK"
+                }
+            MissingLeg(description = desc, expected = exp, held = have, owners = owners[key] ?: emptyList())
+        }
+    }
+
+    private fun keyOf(c: OptionContract) = PosKey(c.symbol.value, c.strike.normalized(), c.type.ibkrCode, c.expiry)
+
+    private fun BigDecimal.normalized(): BigDecimal = stripTrailingZeros()
 
     private fun stockKey(symbol: String) = PosKey(symbol, null, null, null)
 

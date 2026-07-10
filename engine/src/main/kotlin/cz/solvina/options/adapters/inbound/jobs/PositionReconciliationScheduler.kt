@@ -80,19 +80,32 @@ class PositionReconciliationScheduler(
         val openSpreads = spreadClosers.allOpen() + spreadClosers.allClosing()
         val openFlags = flagPort.findOpen()
         val positions = positionsPort.getPositions()
+        // An empty snapshot from a feed still warming up looks identical to a flat account — deciding
+        // on it would flag EVERY leg of every open position as missing. Skip the run instead.
+        if (positions.isEmpty() && (openSpreads.isNotEmpty() || openFlags.isNotEmpty())) {
+            logger.warn { "Reconciliation skipped: broker position snapshot empty while positions are open (feed warming up?)" }
+            return
+        }
         val orphans = detector.detect(openSpreads, openFlags, positions)
+        val missing = detector.detectMissing(openSpreads, openFlags, positions)
 
-        if (orphans.isEmpty()) {
-            if (lastSignature != null) logger.info { "Reconciliation: orphans cleared" }
+        if (orphans.isEmpty() && missing.isEmpty()) {
+            if (lastSignature != null) logger.info { "Reconciliation: orphans/missing legs cleared" }
             lastSignature = null
             return
         }
 
-        val signature = orphans.map { "${it.position.conId}:${it.position.quantity.toInt()}" }.sorted().joinToString(",")
+        val signature =
+            (
+                orphans.map { "${it.position.conId}:${it.position.quantity.toInt()}" } +
+                    missing.map { "miss:${it.description}:${it.held}/${it.expected}" }
+            ).sorted().joinToString(",")
         val now = Instant.now()
         val shouldReAlert = Duration.between(lastAlertAt, now) >= Duration.ofHours(reAlertHours)
         if (signature == lastSignature && !shouldReAlert) {
-            logger.debug { "Reconciliation: ${orphans.size} known orphan(s), alert suppressed (deduped)" }
+            logger.debug {
+                "Reconciliation: ${orphans.size} orphan(s) + ${missing.size} missing leg(s) known, alert suppressed (deduped)"
+            }
             return
         }
 
@@ -101,23 +114,43 @@ class PositionReconciliationScheduler(
 
         val body =
             buildString {
-                append("${orphans.size} IBKR position(s) NOT managed by any OPEN spread ")
-                append("(no TP/SL/DTE exit runs on these):\n")
-                for (o in orphans) {
-                    val p = o.position
-                    val desc =
-                        if (p.secType == "OPT") {
-                            "${p.symbol} ${p.optionRight}${p.strike} exp ${p.expiry}"
-                        } else {
-                            "${p.symbol} ${p.secType}"
-                        }
-                    val pnl = p.unrealizedPnL?.let { " uPnL=%.2f".format(it) } ?: ""
-                    append("\n• ${"%+d".format(p.quantity.toInt())} $desc — ${o.reason}$pnl")
+                if (missing.isNotEmpty()) {
+                    append("${missing.size} contract(s) the engine manages are NOT (fully) held at the broker — ")
+                    append("the remaining legs may be running UNHEDGED, and closing via the engine would ")
+                    append("trade the absent leg (opening a new naked position):\n")
+                    for (m in missing) {
+                        append("\n• ${m.description} — expected ${"%+d".format(m.expected)}, held ${"%+d".format(m.held)}")
+                        for (owner in m.owners) append("\n    managed by: $owner")
+                    }
+                    append("\n\nFix in TWS (re-buy the leg or flatten the rest) — do NOT use the dashboard Close.\n")
                 }
-                append("\n\nReview/flatten manually in TWS — the engine will not act on these.")
+                if (orphans.isNotEmpty()) {
+                    if (missing.isNotEmpty()) append("\n")
+                    append("${orphans.size} IBKR position(s) NOT managed by any OPEN spread ")
+                    append("(no TP/SL/DTE exit runs on these):\n")
+                    for (o in orphans) {
+                        val p = o.position
+                        val desc =
+                            if (p.secType == "OPT") {
+                                "${p.symbol} ${p.optionRight}${p.strike} exp ${p.expiry}"
+                            } else {
+                                "${p.symbol} ${p.secType}"
+                            }
+                        val pnl = p.unrealizedPnL?.let { " uPnL=%.2f".format(it) } ?: ""
+                        append("\n• ${"%+d".format(p.quantity.toInt())} $desc — ${o.reason}$pnl")
+                    }
+                    append("\n\nReview/flatten manually in TWS — the engine will not act on these.")
+                }
             }
 
-        logger.warn { "Reconciliation: ${orphans.size} orphaned position(s) detected — alerting" }
-        alertPort.send(AlertLevel.CRITICAL, "Orphaned positions: ${orphans.size} untracked", body)
+        val title =
+            when {
+                missing.isNotEmpty() && orphans.isNotEmpty() ->
+                    "Position mismatch: ${missing.size} missing leg(s), ${orphans.size} orphan(s)"
+                missing.isNotEmpty() -> "Spread leg MISSING at broker: ${missing.size}"
+                else -> "Orphaned positions: ${orphans.size} untracked"
+            }
+        logger.warn { "Reconciliation: ${orphans.size} orphan(s), ${missing.size} missing leg(s) — alerting" }
+        alertPort.send(AlertLevel.CRITICAL, title, body)
     }
 }

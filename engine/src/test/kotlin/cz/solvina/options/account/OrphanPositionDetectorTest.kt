@@ -184,4 +184,72 @@ class OrphanPositionDetectorTest {
         val orphans = detector.detect(emptyList(), emptyList(), listOf(pos("AMD", "OPT", qty = 0, strike = "420", right = "P")))
         assertEquals(0, orphans.size)
     }
+
+    // -------------------------------------------------------------------------
+    // Missing legs — the reverse check (COHR 280/270 incident, 2026-07-10)
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `a spread leg entirely absent from the account is reported missing`() {
+        // The COHR case: engine manages short 420 + long 415, broker holds ONLY the short.
+        // detect() cannot see this (it iterates held positions); detectMissing() must.
+        val spreads = listOf(openSpread(sold = "420", bought = "415"))
+        val positions = listOf(pos("AMD", "OPT", qty = -1, strike = "420", right = "P"))
+
+        assertEquals(0, detector.detect(spreads, emptyList(), positions).size, "no orphans — the short is tracked")
+        val missing = detector.detectMissing(spreads, emptyList(), positions)
+        assertEquals(1, missing.size)
+        assertEquals(1, missing[0].expected)
+        assertEquals(0, missing[0].held)
+        assertTrue(missing[0].description.contains("415"))
+        assertTrue(missing[0].owners.single().contains("420/415"))
+    }
+
+    @Test
+    fun `a fully-held spread reports nothing missing`() {
+        val spreads = listOf(openSpread(sold = "420", bought = "415"))
+        val positions =
+            listOf(
+                pos("AMD", "OPT", qty = -1, strike = "420", right = "P"),
+                pos("AMD", "OPT", qty = 1, strike = "415", right = "P"),
+            )
+        assertEquals(0, detector.detectMissing(spreads, emptyList(), positions).size)
+    }
+
+    @Test
+    fun `strike scale differences do not produce false missing legs`() {
+        // DB strikes are numeric(10,2) ("420.00"), the IBKR feed reports "420" — same contract.
+        val spreads = listOf(openSpread(sold = "420.00", bought = "415.00"))
+        val positions =
+            listOf(
+                pos("AMD", "OPT", qty = -1, strike = "420", right = "P"),
+                pos("AMD", "OPT", qty = 1, strike = "415", right = "P"),
+            )
+        assertEquals(0, detector.detectMissing(spreads, emptyList(), positions).size)
+        assertEquals(0, detector.detect(spreads, emptyList(), positions).size)
+    }
+
+    @Test
+    fun `flag stock not held at the broker is reported missing`() {
+        val flags = listOf(openFlag("TSLA", shares = 58))
+        val missing = detector.detectMissing(emptyList(), flags, listOf(pos("AMD", "STK", qty = 5)))
+        assertEquals(1, missing.size)
+        assertEquals(58, missing[0].expected)
+        assertEquals(0, missing[0].held)
+        assertTrue(missing[0].description.contains("TSLA"))
+    }
+
+    @Test
+    fun `partial shortfall against a managed spread is reported with held and expected quantities`() {
+        val spreads = listOf(openSpread(sold = "420", bought = "415", qty = 2))
+        val positions =
+            listOf(
+                pos("AMD", "OPT", qty = -2, strike = "420", right = "P"),
+                pos("AMD", "OPT", qty = 1, strike = "415", right = "P"),
+            )
+        val missing = detector.detectMissing(spreads, emptyList(), positions)
+        assertEquals(1, missing.size)
+        assertEquals(2, missing[0].expected)
+        assertEquals(1, missing[0].held)
+    }
 }
