@@ -5,7 +5,7 @@ import cz.solvina.options.domain.features.account.AccountPort
 import cz.solvina.options.domain.features.account.EffectiveAccountService
 import cz.solvina.options.domain.features.flag.BracketOrderIds
 import cz.solvina.options.domain.features.flag.BracketOrderPort
-import cz.solvina.options.domain.features.flag.EntryFill
+import cz.solvina.options.domain.features.flag.OrderFill
 import cz.solvina.options.domain.features.flag.FlagExecutionService
 import cz.solvina.options.domain.features.flag.FlagPage
 import cz.solvina.options.domain.features.flag.FlagPort
@@ -169,6 +169,153 @@ class FlagExecutionServiceTest {
     }
 
     // -------------------------------------------------------------------------
+    // Exit booking — the close must reflect the ACTUAL trail fill, not a theoretical price
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `trail fill above entry books CLOSED_PROFIT at the actual fill price`() {
+        // Entry $10.00, trail fill reported at $13.50 — well past the nominal 2R "target" of $12.
+        // The old code booked $12.00 (profitTargetPrice); the close must carry the real $13.50.
+        val flagPort = CapturingFlagPort()
+        val service = buildService(flagPort = flagPort, bracketPort = trailFillPort(OrderFill(OrderStatus.FILLED, BigDecimal("13.50"))))
+        val open = openTrailPosition(flagPort)
+
+        service.launchExitWatch(open)
+        Thread.sleep(500)
+
+        val closed = flagPort.saved.last()
+        assertEquals(FlagStatus.CLOSED_PROFIT, closed.status)
+        assertEquals("trail_exit_profit", closed.closeReason)
+        assertEquals(0, BigDecimal("13.50").compareTo(closed.closePriceActual))
+        assertEquals(0, BigDecimal("350.00").compareTo(closed.realizedPnl), "pnl = (13.50 − 10.00) × 100 shares")
+    }
+
+    @Test
+    fun `trail fill below entry books CLOSED_STOP with a loss even though it is the same order id`() {
+        // The single TRAIL order exits winners and losers alike — a fill at $9.20 is a stop-out,
+        // regardless of the order id being stored as both stopLossOrderId and profitTargetOrderId.
+        val flagPort = CapturingFlagPort()
+        val service = buildService(flagPort = flagPort, bracketPort = trailFillPort(OrderFill(OrderStatus.FILLED, BigDecimal("9.20"))))
+        val open = openTrailPosition(flagPort)
+
+        service.launchExitWatch(open)
+        Thread.sleep(500)
+
+        val closed = flagPort.saved.last()
+        assertEquals(FlagStatus.CLOSED_STOP, closed.status)
+        assertEquals("trail_exit_loss", closed.closeReason)
+        assertEquals(0, BigDecimal("9.20").compareTo(closed.closePriceActual))
+        assertEquals(0, BigDecimal("-80.00").compareTo(closed.realizedPnl), "pnl = (9.20 − 10.00) × 100 shares")
+    }
+
+    @Test
+    fun `trail fill without a reported price books the ratcheted trigger estimate`() {
+        // No avgFillPrice from the broker: best estimate is highestSeen − trail = 14.00 − 2.00 = 12.00
+        // (above the initial stop, so the ratchet wins), flagged as estimated in the reason.
+        val flagPort = CapturingFlagPort()
+        val service = buildService(flagPort = flagPort, bracketPort = trailFillPort(OrderFill(OrderStatus.FILLED, avgPrice = null)))
+        val open = openTrailPosition(flagPort, highestPriceSeen = BigDecimal("14.00"))
+
+        service.launchExitWatch(open)
+        Thread.sleep(500)
+
+        val closed = flagPort.saved.last()
+        assertEquals(FlagStatus.CLOSED_PROFIT, closed.status)
+        assertEquals("trail_exit_profit_estimated", closed.closeReason)
+        assertEquals(0, BigDecimal("12.00").compareTo(closed.closePriceActual))
+    }
+
+    @Test
+    fun `a single trail order id arms exactly one watcher and books exactly one close`() {
+        // stopLossOrderId == profitTargetOrderId (one TRAIL order): the old code launched two
+        // watchers on it, racing to book two different theoretical closes.
+        val flagPort = CapturingFlagPort()
+        val bracketPort = trailFillPort(OrderFill(OrderStatus.FILLED, BigDecimal("11.00")))
+        val service = buildService(flagPort = flagPort, bracketPort = bracketPort)
+        val open = openTrailPosition(flagPort)
+
+        service.launchExitWatch(open)
+        Thread.sleep(500)
+
+        assertEquals(1, bracketPort.childAwaits.size, "One distinct exit order id → one watcher")
+        assertEquals(1, flagPort.saved.count { it.status == FlagStatus.CLOSED_PROFIT || it.status == FlagStatus.CLOSED_STOP })
+    }
+
+    /** OPEN trail-era position: entry $10, stop $9, trail $2, 100 shares, one exit order id (42). */
+    private fun openTrailPosition(
+        flagPort: CapturingFlagPort,
+        highestPriceSeen: BigDecimal? = null,
+    ): FlagPosition {
+        val position =
+            FlagPosition(
+                id = UUID.randomUUID(),
+                symbol = symbol,
+                status = FlagStatus.OPEN,
+                entryOrderId = 41,
+                stopLossOrderId = 42,
+                profitTargetOrderId = 42,
+                entryPrice = BigDecimal("10.00"),
+                stopLossPrice = BigDecimal("9.00"),
+                profitTargetPrice = BigDecimal("12.00"),
+                trailAmount = BigDecimal("2.00"),
+                shares = 100,
+                riskAmount = BigDecimal("100.00"),
+                flagpoleHeight = null,
+                flagRetracement = null,
+                resistanceAtEntry = null,
+                patternStartedAt = null,
+                openedAt = Instant.parse("2025-06-05T13:00:00Z"),
+                highestPriceSeen = highestPriceSeen,
+            )
+        kotlinx.coroutines.runBlocking { flagPort.save(position) }
+        return position
+    }
+
+    /** Bracket port whose child watch resolves immediately with [fill], recording each awaited id. */
+    private fun trailFillPort(fill: OrderFill) = TrailFillBracketPort(fill)
+
+    private class TrailFillBracketPort(
+        private val childFill: OrderFill,
+    ) : BracketOrderPort {
+        val childAwaits = mutableListOf<Int>()
+
+        override suspend fun submitBracketOrder(
+            symbol: Symbol,
+            shares: Int,
+            entryPrice: BigDecimal,
+            stopLossPrice: BigDecimal,
+            trailAmount: BigDecimal,
+        ) = BracketOrderIds(entryOrderId = 41, stopLossOrderId = 42, profitTargetOrderId = 42)
+
+        override suspend fun cancelOrder(orderId: Int) {}
+
+        override suspend fun awaitParentFill(orderId: Int) = OrderFill(OrderStatus.FILLED)
+
+        override suspend fun rewatchParentFill(orderId: Int) = awaitParentFill(orderId)
+
+        override suspend fun awaitChildFill(orderId: Int): OrderFill {
+            childAwaits.add(orderId)
+            return childFill
+        }
+
+        override suspend fun rewatchChildFill(orderId: Int) = awaitChildFill(orderId)
+
+        override fun hasActiveWatch(orderId: Int) = false
+
+        override suspend fun submitTrailingStopSell(
+            symbol: Symbol,
+            shares: Int,
+            initialStop: BigDecimal,
+            trailAmount: BigDecimal,
+        ) = 98
+
+        override suspend fun submitMarketSell(
+            symbol: Symbol,
+            shares: Int,
+        ) = 99
+    }
+
+    // -------------------------------------------------------------------------
     // Test infrastructure
     // -------------------------------------------------------------------------
 
@@ -250,11 +397,11 @@ class FlagExecutionServiceTest {
 
         override suspend fun cancelOrder(orderId: Int) {}
 
-        override suspend fun awaitParentFill(orderId: Int) = EntryFill(status = OrderStatus.FILLED, avgPrice = entryFillPrice)
+        override suspend fun awaitParentFill(orderId: Int) = OrderFill(status = OrderStatus.FILLED, avgPrice = entryFillPrice)
 
         override suspend fun rewatchParentFill(orderId: Int) = awaitParentFill(orderId)
 
-        override suspend fun rewatchChildFill(orderId: Int): OrderStatus = awaitChildFill(orderId)
+        override suspend fun rewatchChildFill(orderId: Int): OrderFill = awaitChildFill(orderId)
 
         override fun hasActiveWatch(orderId: Int) = false
 
@@ -266,8 +413,8 @@ class FlagExecutionServiceTest {
         ) = 98
 
         // Children never fill — we only test up to entry in these tests
-        override suspend fun awaitChildFill(orderId: Int): OrderStatus =
-            kotlinx.coroutines.delay(Long.MAX_VALUE).let { OrderStatus.CANCELLED }
+        override suspend fun awaitChildFill(orderId: Int): OrderFill =
+            kotlinx.coroutines.delay(Long.MAX_VALUE).let { OrderFill(OrderStatus.CANCELLED) }
 
         override suspend fun submitMarketSell(
             symbol: Symbol,

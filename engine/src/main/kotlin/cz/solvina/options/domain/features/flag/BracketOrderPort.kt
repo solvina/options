@@ -10,7 +10,12 @@ data class BracketOrderIds(
     val profitTargetOrderId: Int,
 )
 
-data class EntryFill(
+/**
+ * Terminal outcome of an order: its status plus the broker-reported average fill price when
+ * FILLED. [avgPrice] can be null even on a fill (the status callback carried no price) — callers
+ * must fall back to an estimate, never to a theoretical order parameter.
+ */
+data class OrderFill(
     val status: OrderStatus,
     val avgPrice: BigDecimal? = null,
 )
@@ -38,20 +43,20 @@ interface BracketOrderPort {
     suspend fun cancelOrder(orderId: Int)
 
     /** Suspends until the parent entry order reaches a terminal state. Returns fill status + actual avg price. */
-    suspend fun awaitParentFill(orderId: Int): EntryFill
+    suspend fun awaitParentFill(orderId: Int): OrderFill
 
-    /** Suspends until a child order (SL or PT) reaches a terminal state. */
-    suspend fun awaitChildFill(orderId: Int): OrderStatus
+    /** Suspends until a protective child order reaches a terminal state. Returns fill status + actual avg price. */
+    suspend fun awaitChildFill(orderId: Int): OrderFill
 
     /**
      * Like [awaitParentFill] but for an entry order restored from persistence (placed by a previous
      * engine run and confirmed still working at the broker): re-arms the fill watch first instead of
      * expecting one registered at placement.
      */
-    suspend fun rewatchParentFill(orderId: Int): EntryFill
+    suspend fun rewatchParentFill(orderId: Int): OrderFill
 
     /** Like [awaitChildFill] but for a protective order restored from persistence — re-arms the watch first. */
-    suspend fun rewatchChildFill(orderId: Int): OrderStatus
+    suspend fun rewatchChildFill(orderId: Int): OrderFill
 
     /** True while a fill watcher is armed for [orderId]. Lets recovery skip positions already being watched. */
     fun hasActiveWatch(orderId: Int): Boolean

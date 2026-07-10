@@ -1,7 +1,6 @@
 package cz.solvina.options.domain.features.flag
 
 import cz.solvina.options.domain.features.account.EffectiveAccountService
-import cz.solvina.options.domain.features.flag.EntryFill
 import cz.solvina.options.domain.features.flag.config.FlagTradingConfig
 import cz.solvina.options.domain.features.flag.model.FlagPosition
 import cz.solvina.options.domain.features.flag.model.FlagStatus
@@ -200,7 +199,7 @@ class FlagExecutionService(
                     if (rewatch) bracketOrderPort.rewatchParentFill(entryOrderId) else bracketOrderPort.awaitParentFill(entryOrderId)
                 }.getOrElse { e ->
                     logger.warn(e) { "[${position.symbol}] Parent fill await failed: ${e.message}" }
-                    EntryFill(OrderStatus.CANCELLED)
+                    OrderFill(OrderStatus.CANCELLED)
                 }
 
             if (entryFill.status != OrderStatus.FILLED) {
@@ -221,7 +220,7 @@ class FlagExecutionService(
                     "entry=${position.entryPrice} actualFill=${entryFill.avgPrice} slippage=$entrySlippage"
             }
 
-            // Now watch both children — whichever fills first wins (OCA cancels the other)
+            // Entry is live — arm the protective-exit watch
             launchExitWatch(open, rewatch)
         }
     }
@@ -229,83 +228,81 @@ class FlagExecutionService(
     /**
      * Watches the protective child orders of an OPEN position and books the close when one fills.
      * Public so recovery can re-attach watches to positions restored from persistence ([rewatch]).
+     *
+     * The protective exit is a single TRAIL order (its id stored as both stopLossOrderId and
+     * profitTargetOrderId); legacy rows may still carry two distinct child ids. Exactly one watcher
+     * is armed per distinct id — two watchers on the same id raced each other, and whichever won
+     * booked its own theoretical price (stop or target) instead of the actual fill.
      */
     fun launchExitWatch(
         position: FlagPosition,
         rewatch: Boolean = false,
     ) {
-        val ids = BracketOrderIds(position.entryOrderId, position.stopLossOrderId, position.profitTargetOrderId)
-        // Wait for SL
-        scope.launch {
-            val status = runCatching { childFill(ids.stopLossOrderId, rewatch) }.getOrNull()
-            if (status == OrderStatus.FILLED) {
-                val closedAt = Instant.now(clock)
-                val latest = position.id?.let { flagPort.findById(it) } ?: position
-                if (latest.status.isTerminal) {
-                    logger.debug { "[${position.symbol}] SL fill ignored — position already ${latest.status}" }
-                    return@launch
-                }
-                val effectiveEntry = latest.actualEntryPrice ?: latest.entryPrice
-                val pnl =
-                    latest.stopLossPrice
-                        .subtract(effectiveEntry)
-                        .multiply(BigDecimal(latest.shares))
-                        .setScale(2, RoundingMode.HALF_UP)
-                flagPort.update(
-                    withCloseMetrics(
-                        latest.copy(
-                            status = FlagStatus.CLOSED_STOP,
-                            closedAt = closedAt,
-                            closeReason = "stop_loss",
-                            closePriceActual = latest.stopLossPrice,
-                            realizedPnl = pnl,
-                        ),
-                        pnl,
-                        closedAt,
-                    ),
-                )
-                tradeLogger.info { "CLOSED_STOP ${position.symbol} pnl=\$$pnl" }
+        for (orderId in setOf(position.stopLossOrderId, position.profitTargetOrderId)) {
+            scope.launch {
+                val exit = runCatching { childFill(orderId, rewatch) }.getOrNull() ?: return@launch
+                if (exit.status == OrderStatus.FILLED) bookExitFill(position, exit.avgPrice)
             }
         }
+    }
 
-        // Wait for PT
-        scope.launch {
-            val status = runCatching { childFill(ids.profitTargetOrderId, rewatch) }.getOrNull()
-            if (status == OrderStatus.FILLED) {
-                val closedAt = Instant.now(clock)
-                val latest = position.id?.let { flagPort.findById(it) } ?: position
-                if (latest.status.isTerminal) {
-                    logger.debug { "[${position.symbol}] PT fill ignored — position already ${latest.status}" }
-                    return@launch
-                }
-                val effectiveEntry = latest.actualEntryPrice ?: latest.entryPrice
-                val pnl =
-                    latest.profitTargetPrice
-                        .subtract(effectiveEntry)
-                        .multiply(BigDecimal(latest.shares))
-                        .setScale(2, RoundingMode.HALF_UP)
-                flagPort.update(
-                    withCloseMetrics(
-                        latest.copy(
-                            status = FlagStatus.CLOSED_PROFIT,
-                            closedAt = closedAt,
-                            closeReason = "profit_target",
-                            closePriceActual = latest.profitTargetPrice,
-                            realizedPnl = pnl,
-                        ),
-                        pnl,
-                        closedAt,
-                    ),
-                )
-                tradeLogger.info { "CLOSED_PROFIT ${position.symbol} pnl=\$$pnl" }
-            }
+    /**
+     * Books the close of [position] after its protective order filled. A TRAIL SELL exits winners
+     * and losers alike, so profit-vs-stop is decided by the realized P&L of the actual fill — not
+     * by which order id filled. When the broker reported no fill price, the ratcheted trigger
+     * (highest seen − trail) is the best estimate and the close reason says so.
+     */
+    private suspend fun bookExitFill(
+        position: FlagPosition,
+        fillPrice: BigDecimal?,
+    ) {
+        val closedAt = Instant.now(clock)
+        val latest = position.id?.let { flagPort.findById(it) } ?: position
+        if (latest.status.isTerminal) {
+            logger.debug { "[${position.symbol}] Exit fill ignored — position already ${latest.status}" }
+            return
         }
+        val closePrice = fillPrice ?: estimatedTrailExitPrice(latest)
+        val effectiveEntry = latest.actualEntryPrice ?: latest.entryPrice
+        val pnl =
+            closePrice
+                .subtract(effectiveEntry)
+                .multiply(BigDecimal(latest.shares))
+                .setScale(2, RoundingMode.HALF_UP)
+        val profitable = pnl.signum() >= 0
+        val status = if (profitable) FlagStatus.CLOSED_PROFIT else FlagStatus.CLOSED_STOP
+        val reason = (if (profitable) "trail_exit_profit" else "trail_exit_loss") + if (fillPrice == null) "_estimated" else ""
+        flagPort.update(
+            withCloseMetrics(
+                latest.copy(
+                    status = status,
+                    closedAt = closedAt,
+                    closeReason = reason,
+                    closePriceActual = closePrice,
+                    realizedPnl = pnl,
+                ),
+                pnl,
+                closedAt,
+            ),
+        )
+        tradeLogger.info { "${status.name} ${position.symbol} fill=$closePrice reason=$reason pnl=\$$pnl" }
+    }
+
+    /**
+     * Where the trailing stop most plausibly filled when no fill price was reported: the ratcheted
+     * trigger max(initial stop, highest seen − trail). Falls back to the initial stop for pre-v26
+     * rows without a persisted trail.
+     */
+    private fun estimatedTrailExitPrice(position: FlagPosition): BigDecimal {
+        val trail = position.trailAmount ?: return position.stopLossPrice
+        val ratcheted = position.highestPriceSeen?.subtract(trail)
+        return if (ratcheted != null && ratcheted > position.stopLossPrice) ratcheted else position.stopLossPrice
     }
 
     private suspend fun childFill(
         orderId: Int,
         rewatch: Boolean,
-    ): OrderStatus = if (rewatch) bracketOrderPort.rewatchChildFill(orderId) else bracketOrderPort.awaitChildFill(orderId)
+    ): OrderFill = if (rewatch) bracketOrderPort.rewatchChildFill(orderId) else bracketOrderPort.awaitChildFill(orderId)
 
     private fun withCloseMetrics(
         position: FlagPosition,

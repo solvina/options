@@ -10,7 +10,7 @@ import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import cz.solvina.options.domain.features.flag.BracketOrderIds
 import cz.solvina.options.domain.features.flag.BracketOrderPort
-import cz.solvina.options.domain.features.flag.EntryFill
+import cz.solvina.options.domain.features.flag.OrderFill
 import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -104,21 +104,26 @@ class IbkrBracketOrderAdapter(
     }
 
     // Parent is a DAY order — can't survive past a single trading session
-    override suspend fun awaitParentFill(orderId: Int): EntryFill {
+    override suspend fun awaitParentFill(orderId: Int): OrderFill {
         val status = awaitFill(orderId, PARENT_TIMEOUT_MS)
-        val avgPrice = registry.consumeFillPrice(orderId)
-        return EntryFill(status, avgPrice)
+        return OrderFill(status, registry.consumeFillPrice(orderId))
     }
 
     // Children are GTC — give them a generous safety-net before treating as stuck
-    override suspend fun awaitChildFill(orderId: Int): OrderStatus = awaitFill(orderId, CHILD_TIMEOUT_MS)
-
-    override suspend fun rewatchParentFill(orderId: Int): EntryFill {
-        val status = rewatchFill(orderId, PARENT_TIMEOUT_MS)
-        return EntryFill(status, registry.consumeFillPrice(orderId))
+    override suspend fun awaitChildFill(orderId: Int): OrderFill {
+        val status = awaitFill(orderId, CHILD_TIMEOUT_MS)
+        return OrderFill(status, registry.consumeFillPrice(orderId))
     }
 
-    override suspend fun rewatchChildFill(orderId: Int): OrderStatus = rewatchFill(orderId, CHILD_TIMEOUT_MS)
+    override suspend fun rewatchParentFill(orderId: Int): OrderFill {
+        val status = rewatchFill(orderId, PARENT_TIMEOUT_MS)
+        return OrderFill(status, registry.consumeFillPrice(orderId))
+    }
+
+    override suspend fun rewatchChildFill(orderId: Int): OrderFill {
+        val status = rewatchFill(orderId, CHILD_TIMEOUT_MS)
+        return OrderFill(status, registry.consumeFillPrice(orderId))
+    }
 
     override fun hasActiveWatch(orderId: Int): Boolean = registry.hasActiveWatch(orderId)
 

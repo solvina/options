@@ -3,7 +3,7 @@ package cz.solvina.options.flags
 import cz.solvina.options.domain.features.account.AccountPosition
 import cz.solvina.options.domain.features.account.PositionsPort
 import cz.solvina.options.domain.features.flag.BracketOrderPort
-import cz.solvina.options.domain.features.flag.EntryFill
+import cz.solvina.options.domain.features.flag.OrderFill
 import cz.solvina.options.domain.features.flag.FlagManagementService
 import cz.solvina.options.domain.features.flag.FlagPage
 import cz.solvina.options.domain.features.flag.FlagPort
@@ -395,13 +395,13 @@ class FlagManagementServiceTest {
             cancelledOrders.add(orderId)
         }
 
-        override suspend fun awaitParentFill(orderId: Int) = EntryFill(status = OrderStatus.FILLED, avgPrice = BigDecimal("150.00"))
+        override suspend fun awaitParentFill(orderId: Int) = OrderFill(status = OrderStatus.FILLED, avgPrice = BigDecimal("150.00"))
 
-        override suspend fun awaitChildFill(orderId: Int): OrderStatus = OrderStatus.FILLED
+        override suspend fun awaitChildFill(orderId: Int): OrderFill = OrderFill(status = OrderStatus.FILLED)
 
         override suspend fun rewatchParentFill(orderId: Int) = awaitParentFill(orderId)
 
-        override suspend fun rewatchChildFill(orderId: Int): OrderStatus = awaitChildFill(orderId)
+        override suspend fun rewatchChildFill(orderId: Int): OrderFill = awaitChildFill(orderId)
 
         override fun hasActiveWatch(orderId: Int) = false
 
