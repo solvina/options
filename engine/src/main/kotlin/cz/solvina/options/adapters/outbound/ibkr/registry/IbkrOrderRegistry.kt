@@ -131,6 +131,14 @@ class IbkrOrderRegistry {
             pendingOrderStatus.remove(id)?.complete(OrderStatus.CANCELLED)
             return
         }
+        // 103 = "Duplicate order id" — TWS's answer to a placeOrder(sameId) modify that raced the
+        // original order's ack (seen amending ~4s after placement, WDC 2026-07-09). The WORKING
+        // order is untouched; only that one amend was dropped. Failing the deferred here killed the
+        // fill watcher of a healthy entry — log and let the next ladder step re-amend instead.
+        if (code == 103) {
+            logger.warn { "Order $id amend rejected [code=103 duplicate order id] — order still working, amend dropped" }
+            return
+        }
         if (code == 201 || code == 202) {
             val isPaperAccountLimit =
                 msg.contains("Guaranteed-to-Lose", ignoreCase = true) ||

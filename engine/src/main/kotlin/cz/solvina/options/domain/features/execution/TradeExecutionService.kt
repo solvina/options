@@ -294,8 +294,22 @@ class TradeExecutionService(
         fun launchFillWatcher(orderId: Int) {
             fillJobs.addLast(
                 scope.launch {
-                    val status = orderExecutionPort.awaitFill(orderId)
-                    eventChannel.trySend(ExecutionEvent.Fill(status, orderId))
+                    try {
+                        val status = orderExecutionPort.awaitFill(orderId)
+                        eventChannel.trySend(ExecutionEvent.Fill(status, orderId))
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        // Exceptional completion (broker error tied to this id, disconnect flush) is
+                        // NOT a terminal order state — the order may well still be working. Emit no
+                        // event: the entry loop's floor/timeout path cancels-and-checks-fill and is
+                        // the authoritative resolver. Crashing here instead orphaned the watch while
+                        // the ladder kept amending a healthy order (WDC 5510, 2026-07-09).
+                        logger.warn(e) {
+                            "[${request.underlyingSymbol}] Fill watcher for order $orderId hit a broker error — " +
+                                "riding the order to floor/timeout resolution"
+                        }
+                    }
                 },
             )
         }
