@@ -13,7 +13,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-class IbkrRateLimiterTest {
+class IbkrAdmissionControllerTest {
     /** A Clock backed by the coroutine test scheduler's virtual time, so delay() and the limiter's
      *  window math advance in lockstep — making time-dependent behaviour deterministic. */
     private fun schedulerClock(scheduler: TestCoroutineScheduler): Clock =
@@ -31,8 +31,8 @@ class IbkrRateLimiterTest {
     fun `historical requests beyond the window wait until the window frees`() =
         runTest {
             val limiter =
-                IbkrRateLimiter(
-                    IbkrRateLimitConfig(historicalMaxPer10Min = 2, historicalMinSpacingMs = 0, historicalMaxInFlight = 10),
+                IbkrAdmissionController(
+                    IbkrAdmissionConfig(historicalMaxPer10Min = 2, historicalMinSpacingMs = 0, historicalMaxInFlight = 10),
                     schedulerClock(testScheduler),
                 )
 
@@ -52,8 +52,8 @@ class IbkrRateLimiterTest {
     fun `historical min-spacing is enforced between consecutive requests`() =
         runTest {
             val limiter =
-                IbkrRateLimiter(
-                    IbkrRateLimitConfig(historicalMaxPer10Min = 100, historicalMinSpacingMs = 2_000, historicalMaxInFlight = 10),
+                IbkrAdmissionController(
+                    IbkrAdmissionConfig(historicalMaxPer10Min = 100, historicalMinSpacingMs = 2_000, historicalMaxInFlight = 10),
                     schedulerClock(testScheduler),
                 )
             limiter.acquireHistorical()
@@ -68,8 +68,8 @@ class IbkrRateLimiterTest {
     fun `in-flight cap blocks the next acquire until a release`() =
         runTest {
             val limiter =
-                IbkrRateLimiter(
-                    IbkrRateLimitConfig(historicalMaxPer10Min = 100, historicalMinSpacingMs = 0, historicalMaxInFlight = 2),
+                IbkrAdmissionController(
+                    IbkrAdmissionConfig(historicalMaxPer10Min = 100, historicalMinSpacingMs = 0, historicalMaxInFlight = 2),
                     schedulerClock(testScheduler),
                 )
             limiter.acquireHistorical()
@@ -94,11 +94,11 @@ class IbkrRateLimiterTest {
     fun `a pacing violation delays the next historical request`() =
         runTest {
             val limiter =
-                IbkrRateLimiter(
-                    IbkrRateLimitConfig(historicalMaxPer10Min = 100, historicalMinSpacingMs = 0, pacingBackoffMs = 15_000),
+                IbkrAdmissionController(
+                    IbkrAdmissionConfig(historicalMaxPer10Min = 100, historicalMinSpacingMs = 0, pacingBackoffMs = 15_000),
                     schedulerClock(testScheduler),
                 )
-            limiter.notePacingViolation()
+            limiter.notePacingViolation(162)
             val before = testScheduler.currentTime
             limiter.acquireHistorical()
             limiter.releaseHistorical()
@@ -108,7 +108,7 @@ class IbkrRateLimiterTest {
     @Test
     fun `contract-details lookups serialise under the in-flight cap`() =
         runTest {
-            val limiter = IbkrRateLimiter(IbkrRateLimitConfig(contractDetailsMaxInFlight = 1), schedulerClock(testScheduler))
+            val limiter = IbkrAdmissionController(IbkrAdmissionConfig(contractDetailsMaxInFlight = 1), schedulerClock(testScheduler))
             val firstStarted = CompletableDeferred<Unit>()
             val release = CompletableDeferred<Unit>()
             var secondStarted = false
@@ -135,7 +135,7 @@ class IbkrRateLimiterTest {
     @Test
     fun `market-data lines are bounded and released`() =
         runTest {
-            val limiter = IbkrRateLimiter(IbkrRateLimitConfig(marketDataLines = 2), schedulerClock(testScheduler))
+            val limiter = IbkrAdmissionController(IbkrAdmissionConfig(marketDataLines = 2), schedulerClock(testScheduler))
             limiter.acquireMarketDataLine()
             limiter.acquireMarketDataLine()
             assertEquals(0, limiter.availableMarketDataLines())

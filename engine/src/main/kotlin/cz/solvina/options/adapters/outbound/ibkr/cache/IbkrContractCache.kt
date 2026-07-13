@@ -3,7 +3,7 @@ package cz.solvina.options.adapters.outbound.ibkr.cache
 import com.ib.client.EClientSocket
 import com.ib.client.PriceIncrement
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
-import cz.solvina.options.adapters.outbound.ibkr.IbkrRateLimiter
+import cz.solvina.options.adapters.outbound.ibkr.IbkrAdmissionController
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrContractRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.PendingContractRequest
 import cz.solvina.options.domain.models.OptionType
@@ -36,7 +36,7 @@ class IbkrContractCache(
     private val registry: IbkrContractRegistry,
     private val client: EClientSocket,
     private val contractFactory: IbkrContractFactory,
-    private val rateLimiter: IbkrRateLimiter,
+    private val admission: IbkrAdmissionController,
     private val tradingHoursCache: cz.solvina.options.adapters.outbound.ibkr.TradingHoursCache,
 ) {
     @Lazy @Autowired
@@ -114,7 +114,7 @@ class IbkrContractCache(
         val deferred = CompletableDeferred<List<com.ib.client.ContractDetails>>()
         registry.pendingContractDetails[reqId] = PendingContractRequest(deferred, CopyOnWriteArrayList())
 
-        return rateLimiter.withContractDetails {
+        return admission.withContractDetails {
             client.reqContractDetails(reqId, contractFactory.stockContract(symbol))
             try {
                 withTimeout(5000L) {
@@ -247,7 +247,7 @@ class IbkrContractCache(
         // Serialised via the rate limiter: IBKR paces concurrent contract-details for the same
         // underlying (~5s), so one lookup fires at a time.
         val details: List<com.ib.client.ContractDetails> =
-            rateLimiter.withContractDetails {
+            admission.withContractDetails {
                 client.reqContractDetails(reqId, searchContract)
                 withTimeoutOrNull(5000L) { deferred.await() }
                     ?: run {
@@ -346,7 +346,7 @@ class IbkrContractCache(
             }
 
         val details: List<com.ib.client.ContractDetails> =
-            rateLimiter.withContractDetails {
+            admission.withContractDetails {
                 client.reqContractDetails(reqId, searchContract)
                 withTimeoutOrNull(30000L) { deferred.await() }
                     ?: run {

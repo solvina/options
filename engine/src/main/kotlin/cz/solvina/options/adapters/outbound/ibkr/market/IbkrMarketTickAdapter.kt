@@ -4,7 +4,7 @@ import com.ib.client.Contract
 import com.ib.client.EClientSocket
 import cz.solvina.options.adapters.outbound.ibkr.IbkrConnectionConfig
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
-import cz.solvina.options.adapters.outbound.ibkr.IbkrRateLimiter
+import cz.solvina.options.adapters.outbound.ibkr.IbkrAdmissionController
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrOptionParamsCache
 import cz.solvina.options.adapters.outbound.ibkr.cache.OptionContractKey
@@ -43,7 +43,7 @@ class IbkrMarketTickAdapter(
     private val contractFactory: IbkrContractFactory,
     private val contractCache: IbkrContractCache,
     private val optionParamsCache: IbkrOptionParamsCache,
-    private val rateLimiter: IbkrRateLimiter,
+    private val admission: IbkrAdmissionController,
     private val connectionConfig: IbkrConnectionConfig,
     // Independent scope for conId resolution so a bounded caller-side wait never cancels (and thus
     // poisons) an in-flight IBKR contract lookup — a late-but-successful response still caches.
@@ -56,7 +56,7 @@ class IbkrMarketTickAdapter(
     override fun streamUnderlyingPrice(symbol: Symbol): Flow<Double> =
         callbackFlow {
             val reqId = registry.nextReqId()
-            rateLimiter.acquireMarketDataLine()
+            admission.acquireMarketDataLine()
             registry.pendingContinuousMarketData[reqId] =
                 PendingContinuousMarketDataRequest(
                     onUpdate = { snapshot ->
@@ -71,7 +71,7 @@ class IbkrMarketTickAdapter(
             awaitClose {
                 registry.pendingContinuousMarketData.remove(reqId)
                 client.cancelMktData(reqId)
-                rateLimiter.releaseMarketDataLine()
+                admission.releaseMarketDataLine()
                 logger.debug { "[$symbol] Cancelled underlying price stream (reqId=$reqId)" }
             }
         }
@@ -194,10 +194,10 @@ class IbkrMarketTickAdapter(
                 // below blocks, delaying the subscription past calculateFreshCredit's 3s tick wait.
                 logger.info {
                     "[${soldContract.symbol}] Spread credit stream acquiring $mktDataLines mkt-data lines " +
-                        "(available=${rateLimiter.availableMarketDataLines()}) for ${soldContract.strike}P/${boughtContract.strike}P"
+                        "(available=${admission.availableMarketDataLines()}) for ${soldContract.strike}P/${boughtContract.strike}P"
                 }
                 repeat(mktDataLines) {
-                    rateLimiter.acquireMarketDataLine()
+                    admission.acquireMarketDataLine()
                     linesAcquired++
                 }
                 // From here on nothing suspends until awaitClose, so the requests below and the
@@ -213,7 +213,7 @@ class IbkrMarketTickAdapter(
                 registry.pendingTickByTick.remove(boughtTickReqId)
                 registry.pendingContinuousMarketData.remove(soldGreeksReqId)
                 registry.pendingContinuousMarketData.remove(boughtGreeksReqId)
-                repeat(linesAcquired) { rateLimiter.releaseMarketDataLine() }
+                repeat(linesAcquired) { admission.releaseMarketDataLine() }
                 logger.info {
                     "[${soldContract.symbol}] Spread credit stream setup aborted " +
                         "(${e.javaClass.simpleName}) — released $linesAcquired mkt-data lines"
@@ -237,7 +237,7 @@ class IbkrMarketTickAdapter(
                 client.cancelMktData(soldGreeksReqId)
                 registry.pendingContinuousMarketData.remove(boughtGreeksReqId)
                 client.cancelMktData(boughtGreeksReqId)
-                repeat(mktDataLines) { rateLimiter.releaseMarketDataLine() }
+                repeat(mktDataLines) { admission.releaseMarketDataLine() }
                 logger.debug {
                     "Cancelled spread credit stream for " +
                         "${soldContract.strike}P/${boughtContract.strike}P"

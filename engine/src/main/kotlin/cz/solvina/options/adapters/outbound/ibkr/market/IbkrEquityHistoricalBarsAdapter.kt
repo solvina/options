@@ -3,7 +3,7 @@ package cz.solvina.options.adapters.outbound.ibkr.market
 import com.ib.client.Bar
 import com.ib.client.EClientSocket
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
-import cz.solvina.options.adapters.outbound.ibkr.IbkrRateLimiter
+import cz.solvina.options.adapters.outbound.ibkr.IbkrAdmissionController
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrHistoricalDataRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.PendingRawBarsRequest
 import cz.solvina.options.domain.features.bars.EquityHistoricalBarsPort
@@ -39,7 +39,7 @@ class IbkrEquityHistoricalBarsAdapter(
     private val registry: IbkrHistoricalDataRegistry,
     private val client: EClientSocket,
     private val contractFactory: IbkrContractFactory,
-    private val rateLimiter: IbkrRateLimiter,
+    private val admission: IbkrAdmissionController,
 ) : EquityHistoricalBarsPort {
     override suspend fun fetch5MinBars(
         symbol: Symbol,
@@ -80,7 +80,7 @@ class IbkrEquityHistoricalBarsAdapter(
             val reqId = registry.nextReqId()
             val contract = contractFactory.stockContract(symbol)
             // Rate-limited: suspends to respect IBKR's historical pacing before firing.
-            rateLimiter.acquireHistorical()
+            admission.acquireHistorical()
             registry.pendingRawBars[reqId] =
                 PendingRawBarsRequest(
                     onBar = { bar -> parseBar(bar)?.let { trySend(it) } },
@@ -108,7 +108,7 @@ class IbkrEquityHistoricalBarsAdapter(
             )
             awaitClose {
                 registry.pendingRawBars.remove(reqId)
-                rateLimiter.releaseHistorical()
+                admission.releaseHistorical()
             }
         }.buffer(Channel.UNLIMITED)
             .toList()

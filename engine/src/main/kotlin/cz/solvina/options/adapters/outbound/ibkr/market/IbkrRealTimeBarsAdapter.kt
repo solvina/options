@@ -2,7 +2,7 @@ package cz.solvina.options.adapters.outbound.ibkr.market
 
 import com.ib.client.EClientSocket
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
-import cz.solvina.options.adapters.outbound.ibkr.IbkrRateLimiter
+import cz.solvina.options.adapters.outbound.ibkr.IbkrAdmissionController
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.PendingRealTimeBarsRequest
 import cz.solvina.options.domain.features.alert.AlertLevel
@@ -28,7 +28,7 @@ class IbkrRealTimeBarsAdapter(
     private val registry: IbkrMarketDataRegistry,
     private val client: EClientSocket,
     private val contractFactory: IbkrContractFactory,
-    private val rateLimiter: IbkrRateLimiter,
+    private val admission: IbkrAdmissionController,
     private val alertPort: AlertPort,
     // Shared executionCoroutineScope bean: alerts must outlive the (possibly cancelled) flow.
     private val alertScope: CoroutineScope,
@@ -42,7 +42,7 @@ class IbkrRealTimeBarsAdapter(
             val alerted = AtomicBoolean(false)
 
             // Each real-time bar subscription holds one IBKR market-data line for the session.
-            rateLimiter.acquireMarketDataLine()
+            admission.acquireMarketDataLine()
             registry.pendingRealTimeBars[reqId] =
                 PendingRealTimeBarsRequest(
                     onBar = { bar -> trySend(bar) },
@@ -74,7 +74,7 @@ class IbkrRealTimeBarsAdapter(
                 registry.pendingRealTimeBars.remove(reqId)
                 runCatching { client.cancelRealTimeBars(reqId) }
                     .onFailure { e -> logger.warn { "[${symbol.value}] cancelRealTimeBars failed: ${e.message}" } }
-                rateLimiter.releaseMarketDataLine()
+                admission.releaseMarketDataLine()
                 logger.info { "[${symbol.value}] Unsubscribed from real-time bars (reqId=$reqId)" }
             }
         }.buffer(Channel.UNLIMITED)
