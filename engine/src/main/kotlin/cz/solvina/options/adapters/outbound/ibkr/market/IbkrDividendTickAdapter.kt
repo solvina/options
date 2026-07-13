@@ -1,6 +1,7 @@
 package cz.solvina.options.adapters.outbound.ibkr.market
 
 import com.ib.client.EClientSocket
+import cz.solvina.options.adapters.outbound.ibkr.IbkrAdmissionController
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrDividendTickRegistry
 import cz.solvina.options.domain.features.universe.DividendDataPort
@@ -48,6 +49,7 @@ internal fun parseIbDividends(raw: String): DividendInfo {
 class IbkrDividendTickAdapter(
     private val registry: IbkrDividendTickRegistry,
     private val client: EClientSocket,
+    private val admission: IbkrAdmissionController,
     private val contractFactory: IbkrContractFactory,
 ) : DividendDataPort {
     override suspend fun fetchDividendInfo(symbol: Symbol): DividendInfo? = fetchDividendTick(symbol)?.let { parseIbDividends(it) }
@@ -56,6 +58,9 @@ class IbkrDividendTickAdapter(
         symbol: Symbol,
         timeoutMs: Long = 15_000,
     ): String? {
+        // Holds one market-data line between reqMktData and cancelMktData, like every other
+        // subscription — previously this bypassed the line budget.
+        admission.acquireMarketDataLine()
         val reqId = registry.nextReqId()
         val deferred = registry.register(reqId)
         return try {
@@ -70,6 +75,7 @@ class IbkrDividendTickAdapter(
         } finally {
             registry.remove(reqId)
             runCatching { client.cancelMktData(reqId) }
+            admission.releaseMarketDataLine()
         }
     }
 }

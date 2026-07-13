@@ -1,6 +1,7 @@
 package cz.solvina.options.adapters.outbound.ibkr.market
 
 import com.ib.client.EClientSocket
+import cz.solvina.options.adapters.outbound.ibkr.IbkrAdmissionController
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrOptionParamsCache
@@ -28,6 +29,7 @@ private val logger = KotlinLogging.logger {}
 class IbkrOptionChainAdapter(
     private val registry: IbkrMarketDataRegistry,
     private val client: EClientSocket,
+    private val admission: IbkrAdmissionController,
     private val strategyParams: StrategyParamsRegistry,
     private val optionParamsCache: IbkrOptionParamsCache,
     private val contractCache: IbkrContractCache,
@@ -174,6 +176,7 @@ class IbkrOptionChainAdapter(
                     reqMktDataSnapshot(
                         registry,
                         client,
+                        admission,
                         mdContract,
                         "",
                         SnapshotReady.OPTION_QUOTE,

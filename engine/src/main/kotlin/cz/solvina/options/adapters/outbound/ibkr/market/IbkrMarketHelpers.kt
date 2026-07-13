@@ -2,6 +2,7 @@ package cz.solvina.options.adapters.outbound.ibkr.market
 
 import com.ib.client.Contract
 import com.ib.client.EClientSocket
+import cz.solvina.options.adapters.outbound.ibkr.IbkrAdmissionController
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.MarketDataSnapshot
 import cz.solvina.options.adapters.outbound.ibkr.registry.PendingMarketDataRequest
@@ -33,25 +34,34 @@ internal object SnapshotReady {
 internal suspend fun reqMktDataSnapshot(
     registry: IbkrMarketDataRegistry,
     client: EClientSocket,
+    admission: IbkrAdmissionController,
     contract: Contract,
     genericTickList: String,
     isReady: (MarketDataSnapshot) -> Boolean,
 ): MarketDataSnapshot {
-    val reqId = registry.nextReqId()
-    val deferred = CompletableDeferred<MarketDataSnapshot>()
-    val pending = PendingMarketDataRequest(deferred, isReady)
-    registry.pendingMarketData[reqId] = pending
-    client.reqMktData(reqId, contract, genericTickList, false, false, null)
-    return try {
-        withTimeout(5_000L) { deferred.await() }
-    } catch (_: TimeoutCancellationException) {
-        // Streaming mode: never got every field in time. Return whatever real ticks did arrive
-        // rather than discarding them — partial bid/ask still beats an all-NaN snapshot, and the
-        // caller's own NaN checks (e.g. delta → BS-fallback) decide what's usable.
-        pending.snapshot
+    // Even a short-lived snapshot holds a market-data line between reqMktData and cancelMktData.
+    // Acquiring here (the one place every snapshot flows through) keeps the account's line cap a
+    // true invariant — previously these requests bypassed the budget entirely.
+    admission.acquireMarketDataLine()
+    try {
+        val reqId = registry.nextReqId()
+        val deferred = CompletableDeferred<MarketDataSnapshot>()
+        val pending = PendingMarketDataRequest(deferred, isReady)
+        registry.pendingMarketData[reqId] = pending
+        return try {
+            client.reqMktData(reqId, contract, genericTickList, false, false, null)
+            withTimeout(5_000L) { deferred.await() }
+        } catch (_: TimeoutCancellationException) {
+            // Streaming mode: never got every field in time. Return whatever real ticks did arrive
+            // rather than discarding them — partial bid/ask still beats an all-NaN snapshot, and the
+            // caller's own NaN checks (e.g. delta → BS-fallback) decide what's usable.
+            pending.snapshot
+        } finally {
+            registry.pendingMarketData.remove(reqId)
+            client.cancelMktData(reqId)
+        }
     } finally {
-        registry.pendingMarketData.remove(reqId)
-        client.cancelMktData(reqId)
+        admission.releaseMarketDataLine()
     }
 }
 

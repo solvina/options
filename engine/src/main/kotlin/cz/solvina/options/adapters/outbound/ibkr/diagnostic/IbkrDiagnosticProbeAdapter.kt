@@ -1,6 +1,7 @@
 package cz.solvina.options.adapters.outbound.ibkr.diagnostic
 
 import com.ib.client.EClientSocket
+import cz.solvina.options.adapters.outbound.ibkr.IbkrAdmissionController
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOpenOrdersAdapter
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrPositionsAdapter
@@ -47,6 +48,7 @@ class IbkrDiagnosticProbeAdapter(
     private val volatilityPort: VolatilityPort,
     private val registry: IbkrMarketDataRegistry,
     private val client: EClientSocket,
+    private val admission: IbkrAdmissionController,
     private val contractFactory: IbkrContractFactory,
     private val positionsAdapter: IbkrPositionsAdapter,
     private val openOrdersAdapter: IbkrOpenOrdersAdapter,
@@ -119,7 +121,7 @@ class IbkrDiagnosticProbeAdapter(
         val start = System.currentTimeMillis()
         return runCatching {
             logger.info { "[$symbol] DIAG reqMktData snapshot (stock spot)" }
-            val snapshot = reqMktDataSnapshot(registry, client, contractFactory.stockContract(symbol), "", SnapshotReady.STOCK_PRICE)
+            val snapshot = reqMktDataSnapshot(registry, client, admission, contractFactory.stockContract(symbol), "", SnapshotReady.STOCK_PRICE)
             val ms = System.currentTimeMillis() - start
             logger.info {
                 "[$symbol] DIAG reqMktData stock → bid=${snapshot.bid} ask=${snapshot.ask} " +
@@ -152,7 +154,7 @@ class IbkrDiagnosticProbeAdapter(
     override suspend fun probeOptionSnapshot(contract: OptionContract): SymbolHealthReport.OptionMidSample {
         val start = System.currentTimeMillis()
         logger.info { "[${contract.symbol}] DIAG reqMktData snapshot (option ${contract.strike}P exp=${contract.expiry})" }
-        val snapshot = reqMktDataSnapshot(registry, client, contractFactory.optionContract(contract), "", SnapshotReady.OPTION_QUOTE)
+        val snapshot = reqMktDataSnapshot(registry, client, admission, contractFactory.optionContract(contract), "", SnapshotReady.OPTION_QUOTE)
         val ms = System.currentTimeMillis() - start
         logger.info {
             "[${contract.symbol}] DIAG reqMktData option ${contract.strike}P → " +
@@ -173,7 +175,7 @@ class IbkrDiagnosticProbeAdapter(
             val spot =
                 runCatching {
                     val stock = contractFactory.stockContract(contract.symbol)
-                    val snap = reqMktDataSnapshot(registry, client, stock, "", SnapshotReady.STOCK_PRICE)
+                    val snap = reqMktDataSnapshot(registry, client, admission, stock, "", SnapshotReady.STOCK_PRICE)
                     snap.last.takeIf { !it.isNaN() } ?: snap.close.takeIf { !it.isNaN() }
                 }.getOrNull()
             val sigma = runCatching { volatilityPort.getIvRank(contract.symbol).currentIv }.getOrNull()
