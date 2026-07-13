@@ -18,10 +18,9 @@ import cz.solvina.options.domain.features.account.AccountPosition
 import cz.solvina.options.domain.features.account.OrphanPositionDetector
 import cz.solvina.options.domain.features.account.PositionsPort
 import cz.solvina.options.domain.features.flag.FlagPort
-import cz.solvina.options.domain.features.spread.BullPutSpreadPort
 import cz.solvina.options.domain.features.spread.SpreadCloserRegistry
-import cz.solvina.options.domain.features.spread.model.BullPutSpread
 import cz.solvina.options.domain.features.spread.model.Spread
+import cz.solvina.options.domain.models.OptionType
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.RequestMapping
@@ -38,7 +37,6 @@ private val logger = KotlinLogging.logger {}
 @RequestMapping
 class AccountApiImpl(
     private val accountPort: AccountPort,
-    private val spreadPort: BullPutSpreadPort,
     private val spreadClosers: SpreadCloserRegistry,
     private val flagPort: FlagPort,
     private val orphanDetector: OrphanPositionDetector,
@@ -58,7 +56,9 @@ class AccountApiImpl(
 
     override suspend fun getAccountOverview(): ResponseEntity<AccountOverviewDto> {
         val detail = accountPort.accountDetail.value
-        val openSpreads = spreadPort.findOpen()
+        // OPEN spreads across every strategy (bull put + bear call) via the closer registry, so the
+        // overview's tracked-positions list isn't silently bull-put-only.
+        val openSpreads = spreadClosers.allOpen()
         val today = LocalDate.now(clock)
 
         val ibkrPositions =
@@ -147,7 +147,7 @@ class AccountApiImpl(
         return ResponseEntity.noContent().build()
     }
 
-    private fun BullPutSpread.toDto(today: LocalDate): OpenPositionDto {
+    private fun Spread.toDto(today: LocalDate): OpenPositionDto {
         val expiry = soldLeg.contract.expiry
         val dte = ChronoUnit.DAYS.between(today, expiry).toInt()
         val maxRiskTotal =
@@ -169,7 +169,10 @@ class AccountApiImpl(
             ivRankAtEntry = ivRankAtEntry?.toBigDecimal(),
             underlyingPriceAtEntry = underlyingPriceAtEntry,
             underlyingPriceNow = lastUnderlyingPrice,
-            distanceToShortStrikePct = cushionPct(lastUnderlyingPrice, soldLeg.contract.strike, bullish = true),
+            // Direction from the sold leg: bull put sells a PUT (safe ABOVE the short strike), bear call
+            // sells a CALL (safe BELOW it) — so the cushion sign is correct for both strategies.
+            distanceToShortStrikePct =
+                cushionPct(lastUnderlyingPrice, soldLeg.contract.strike, bullish = soldLeg.contract.type == OptionType.PUT),
             unrealizedPnL =
                 lastSpreadValue?.let { sv ->
                     creditPerShare

@@ -4,8 +4,7 @@ import cz.solvina.options.domain.features.scanner.ScannerConfig
 import cz.solvina.options.domain.features.scanner.ScannerPort
 import cz.solvina.options.domain.features.scanner.ScannerService
 import cz.solvina.options.domain.features.scanner.TradingKillSwitch
-import cz.solvina.options.domain.features.spread.BullPutSpreadPort
-import cz.solvina.options.domain.features.spread.model.SpreadStatus
+import cz.solvina.options.domain.features.spread.SpreadQueryFacade
 import `cz.solvina.options.spreads`.api.MonitorApi
 import `cz.solvina.options.spreads`.api.ScannerApi
 import `cz.solvina.options.spreads`.dto.ScannerStatusDto
@@ -25,7 +24,7 @@ private val logger = KotlinLogging.logger {}
 class ScannerApiImpl(
     private val scannerPort: ScannerPort,
     private val scannerService: ScannerService,
-    private val spreadPort: BullPutSpreadPort,
+    private val spreadQuery: SpreadQueryFacade,
     private val killSwitch: TradingKillSwitch,
     private val scannerConfig: ScannerConfig,
 ) : ScannerApi,
@@ -42,7 +41,9 @@ class ScannerApiImpl(
     }
 
     override suspend fun getScannerStatus(): ResponseEntity<ScannerStatusDto> {
-        val openCount = spreadPort.countByStatus(SpreadStatus.OPEN)
+        // Match the scanner's own cap gate (ScannerService uses activeSpreadCount = PENDING+OPEN+CLOSING,
+        // across bull-put + bear-call) so the "X / maxOpenSpreads" readout reflects what actually throttles entries.
+        val openCount = spreadQuery.activeSpreadCount()
         val dto =
             ScannerStatusDto(
                 lastRunAt = scannerService.getLastRunAt()?.atOffset(ZoneOffset.UTC),
