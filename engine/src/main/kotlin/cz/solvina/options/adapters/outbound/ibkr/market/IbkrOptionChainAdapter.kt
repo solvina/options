@@ -1,11 +1,13 @@
 package cz.solvina.options.adapters.outbound.ibkr.market
 
 import com.ib.client.EClientSocket
+import cz.solvina.options.adapters.outbound.ibkr.IbkrAdmissionConfig
 import cz.solvina.options.adapters.outbound.ibkr.IbkrAdmissionController
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrOptionParamsCache
 import cz.solvina.options.adapters.outbound.ibkr.cache.OptionContractKey
+import cz.solvina.options.adapters.outbound.ibkr.cache.OptionParams
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
 import cz.solvina.options.domain.features.market.OptionChainPort
 import cz.solvina.options.domain.features.market.model.OptionQuote
@@ -17,6 +19,9 @@ import cz.solvina.options.domain.models.OptionGreeks
 import cz.solvina.options.domain.models.OptionType
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
 import java.math.RoundingMode
@@ -30,6 +35,7 @@ class IbkrOptionChainAdapter(
     private val registry: IbkrMarketDataRegistry,
     private val client: EClientSocket,
     private val admission: IbkrAdmissionController,
+    private val admissionConfig: IbkrAdmissionConfig,
     private val strategyParams: StrategyParamsRegistry,
     private val optionParamsCache: IbkrOptionParamsCache,
     private val contractCache: IbkrContractCache,
@@ -143,76 +149,94 @@ class IbkrOptionChainAdapter(
                 "(${nearest.size} sold + ${boughtLegs.size} bought-leg)"
         }
 
-        return candidateStrikes.mapNotNull { strike ->
-            runCatching {
-                val contract = OptionContract(symbol, expiry, strike, optionType)
-                // Prefer the conId warmed by the verified-strikes lookup — it identifies the exact
-                // series unambiguously. Re-specifying by symbol/exchange/tradingClass/multiplier from
-                // reqSecDefOptParams can disagree with the series the strikes were verified against
-                // (seen on EUREX: verified strikes exist, yet every spec-based reqMktData gets error
-                // 200 "no security definition"). Same approach the execution path already uses.
-                val contractKey = OptionContractKey(symbol, expiry, strike, optionType)
-                val conId = contractCache.getCachedOptionConId(contractKey)
-                // Route with the venue the conId's series actually lists on (recorded when the strikes
-                // were verified) — the configured/params exchange can disagree with the real listing on
-                // EU venues. Fall back to the params venue, then the configured option exchange.
-                val routingExchange =
-                    contractCache.getCachedOptionConIdExchange(contractKey)
-                        ?: params.exchange.takeIf { it != "SMART" }
-                        ?: contractFactory.defFor(symbol).optionExchange
-                val mdContract =
-                    if (conId != null) {
-                        contractFactory.conIdContract(conId, routingExchange)
-                    } else {
-                        contractFactory.optionContract(contract, params.exchange, params.tradingClass, params.multiplier)
-                    }
-                val requestDesc =
-                    if (conId != null) {
-                        "conId=$conId route=$routingExchange"
-                    } else {
-                        "spec exchange=${params.exchange} tradingClass=${params.tradingClass} multiplier=${params.multiplier}"
-                    }
-                val snapshot =
-                    reqMktDataSnapshot(
-                        registry,
-                        client,
-                        admission,
-                        mdContract,
-                        "",
-                        SnapshotReady.OPTION_QUOTE,
-                    )
-
-                // Live market data only — never fabricate prices/greeks. A NaN delta means no live
-                // option-computation tick arrived. Skip the strike and log it for investigation
-                // instead of falling back to Black-Scholes.
-                if (snapshot.delta.isNaN()) {
-                    logger.warn {
-                        "[$symbol] No live greeks for strike $strike $expiry " +
-                            "(bid=${snapshot.bid} ask=${snapshot.ask}, via $requestDesc) — skipping, no BS fallback"
-                    }
-                    return@runCatching null
-                }
-
-                val bid = snapshot.bid.takeIf { !it.isNaN() } ?: 0.0
-                val ask = snapshot.ask.takeIf { !it.isNaN() } ?: 0.0
-                OptionQuote(
-                    contract = contract,
-                    bid = Money(BigDecimal(bid).setScale(4, RoundingMode.HALF_UP)),
-                    ask = Money(BigDecimal(ask).setScale(4, RoundingMode.HALF_UP)),
-                    mid = Money(midPrice(bid, ask)),
-                    greeks =
-                        OptionGreeks(
-                            delta = snapshot.delta,
-                            gamma = snapshot.gamma.takeIf { !it.isNaN() } ?: 0.0,
-                            theta = snapshot.theta.takeIf { !it.isNaN() } ?: 0.0,
-                            vega = snapshot.vega.takeIf { !it.isNaN() } ?: 0.0,
-                            iv = snapshot.impliedVol.takeIf { !it.isNaN() } ?: 0.0,
-                        ),
-                )
-            }.getOrElse { e ->
-                logger.warn { "[$symbol] Failed to get greeks for strike $strike: ${e.message}" }
-                null
-            }
+        // Bounded-parallel greeks fetch: candidates fan out as async snapshots, but actual
+        // concurrency is bounded by the SCANNER admission gate (line sub-cap + message-token
+        // floor) inside reqMktDataSnapshot — safe by construction, no separate semaphore. This
+        // is the scan-time win: ~candidateCount × snapshot-timeout serial worst case collapses
+        // to ~ceil(count / scanner-line-concurrency).
+        return coroutineScope {
+            candidateStrikes
+                .map { strike -> async { fetchQuote(symbol, expiry, strike, optionType, params) } }
+                .awaitAll()
+                .filterNotNull()
         }
     }
+
+    private suspend fun fetchQuote(
+        symbol: Symbol,
+        expiry: LocalDate,
+        strike: BigDecimal,
+        optionType: OptionType,
+        params: OptionParams,
+    ): OptionQuote? =
+        runCatching {
+            val contract = OptionContract(symbol, expiry, strike, optionType)
+            // Prefer the conId warmed by the verified-strikes lookup — it identifies the exact
+            // series unambiguously. Re-specifying by symbol/exchange/tradingClass/multiplier from
+            // reqSecDefOptParams can disagree with the series the strikes were verified against
+            // (seen on EUREX: verified strikes exist, yet every spec-based reqMktData gets error
+            // 200 "no security definition"). Same approach the execution path already uses.
+            val contractKey = OptionContractKey(symbol, expiry, strike, optionType)
+            val conId = contractCache.getCachedOptionConId(contractKey)
+            // Route with the venue the conId's series actually lists on (recorded when the strikes
+            // were verified) — the configured/params exchange can disagree with the real listing on
+            // EU venues. Fall back to the params venue, then the configured option exchange.
+            val routingExchange =
+                contractCache.getCachedOptionConIdExchange(contractKey)
+                    ?: params.exchange.takeIf { it != "SMART" }
+                    ?: contractFactory.defFor(symbol).optionExchange
+            val mdContract =
+                if (conId != null) {
+                    contractFactory.conIdContract(conId, routingExchange)
+                } else {
+                    contractFactory.optionContract(contract, params.exchange, params.tradingClass, params.multiplier)
+                }
+            val requestDesc =
+                if (conId != null) {
+                    "conId=$conId route=$routingExchange"
+                } else {
+                    "spec exchange=${params.exchange} tradingClass=${params.tradingClass} multiplier=${params.multiplier}"
+                }
+            val snapshot =
+                reqMktDataSnapshot(
+                    registry,
+                    client,
+                    admission,
+                    mdContract,
+                    "",
+                    SnapshotReady.OPTION_QUOTE,
+                    timeoutMs = admissionConfig.greeksSnapshotTimeoutMs,
+                )
+
+            // Live market data only — never fabricate prices/greeks. A NaN delta means no live
+            // option-computation tick arrived. Skip the strike and log it for investigation
+            // instead of falling back to Black-Scholes.
+            if (snapshot.delta.isNaN()) {
+                logger.warn {
+                    "[$symbol] No live greeks for strike $strike $expiry " +
+                        "(bid=${snapshot.bid} ask=${snapshot.ask}, via $requestDesc) — skipping, no BS fallback"
+                }
+                return@runCatching null
+            }
+
+            val bid = snapshot.bid.takeIf { !it.isNaN() } ?: 0.0
+            val ask = snapshot.ask.takeIf { !it.isNaN() } ?: 0.0
+            OptionQuote(
+                contract = contract,
+                bid = Money(BigDecimal(bid).setScale(4, RoundingMode.HALF_UP)),
+                ask = Money(BigDecimal(ask).setScale(4, RoundingMode.HALF_UP)),
+                mid = Money(midPrice(bid, ask)),
+                greeks =
+                    OptionGreeks(
+                        delta = snapshot.delta,
+                        gamma = snapshot.gamma.takeIf { !it.isNaN() } ?: 0.0,
+                        theta = snapshot.theta.takeIf { !it.isNaN() } ?: 0.0,
+                        vega = snapshot.vega.takeIf { !it.isNaN() } ?: 0.0,
+                        iv = snapshot.impliedVol.takeIf { !it.isNaN() } ?: 0.0,
+                    ),
+            )
+        }.getOrElse { e ->
+            logger.warn { "[$symbol] Failed to get greeks for strike $strike: ${e.message}" }
+            null
+        }
 }
