@@ -6,11 +6,13 @@ import cz.solvina.options.adapters.outbound.ibkr.IbkrAdmissionController
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.MarketDataSnapshot
 import cz.solvina.options.adapters.outbound.ibkr.registry.PendingMarketDataRequest
+import cz.solvina.options.domain.features.market.MarketDataPriority
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
 import java.math.BigDecimal
 import java.math.RoundingMode
+import kotlin.coroutines.coroutineContext
 
 /** Readiness predicates for streaming [reqMktDataSnapshot] requests. A streaming subscription
  *  (snapshot=false) never emits tickSnapshotEnd, so the request must declare which fields make its
@@ -31,6 +33,11 @@ internal object SnapshotReady {
     val OPTION_PRICE: (MarketDataSnapshot) -> Boolean = { it.bid > 0 && it.ask > 0 }
 }
 
+/** A SCANNER request found no free market-data line within its bounded wait — skip, don't hang. */
+internal class MarketDataLineTimeoutException(
+    message: String,
+) : RuntimeException(message)
+
 internal suspend fun reqMktDataSnapshot(
     registry: IbkrMarketDataRegistry,
     client: EClientSocket,
@@ -38,11 +45,25 @@ internal suspend fun reqMktDataSnapshot(
     contract: Contract,
     genericTickList: String,
     isReady: (MarketDataSnapshot) -> Boolean,
+    timeoutMs: Long = 5_000L,
 ): MarketDataSnapshot {
     // Even a short-lived snapshot holds a market-data line between reqMktData and cancelMktData.
     // Acquiring here (the one place every snapshot flows through) keeps the account's line cap a
-    // true invariant — previously these requests bypassed the budget entirely.
-    admission.acquireMarketDataLine()
+    // true invariant — previously these requests bypassed the budget entirely. The caller's
+    // MarketDataPriority decides which partition pays: SCANNER waits bounded (skip beats hang) and
+    // first yields message-bucket headroom to orders/exits; reserved classes acquire directly.
+    val priority = coroutineContext[MarketDataPriority] ?: MarketDataPriority.EXEC
+    if (priority == MarketDataPriority.SCANNER) {
+        admission.awaitScannerMessageHeadroom()
+        if (!admission.tryAcquireScannerLine()) {
+            throw MarketDataLineTimeoutException(
+                "no SCANNER market-data line freed in time for ${contract.symbol()} — " +
+                    "scanner is being throttled by open-position load (see health component ibkrAdmission)",
+            )
+        }
+    } else {
+        admission.acquireMarketDataLine(priority)
+    }
     try {
         val reqId = registry.nextReqId()
         val deferred = CompletableDeferred<MarketDataSnapshot>()
@@ -50,7 +71,7 @@ internal suspend fun reqMktDataSnapshot(
         registry.pendingMarketData[reqId] = pending
         return try {
             client.reqMktData(reqId, contract, genericTickList, false, false, null)
-            withTimeout(5_000L) { deferred.await() }
+            withTimeout(timeoutMs) { deferred.await() }
         } catch (_: TimeoutCancellationException) {
             // Streaming mode: never got every field in time. Return whatever real ticks did arrive
             // rather than discarding them — partial bid/ask still beats an all-NaN snapshot, and the
@@ -61,7 +82,7 @@ internal suspend fun reqMktDataSnapshot(
             client.cancelMktData(reqId)
         }
     } finally {
-        admission.releaseMarketDataLine()
+        admission.releaseMarketDataLine(priority)
     }
 }
 

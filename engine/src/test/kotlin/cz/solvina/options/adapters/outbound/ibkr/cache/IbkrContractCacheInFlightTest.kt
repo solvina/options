@@ -3,11 +3,12 @@ package cz.solvina.options.adapters.outbound.ibkr.cache
 import com.ib.client.Contract
 import com.ib.client.ContractDetails
 import com.ib.client.EClientSocket
-import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
-import cz.solvina.options.adapters.outbound.ibkr.IbkrInstrumentsConfig
 import cz.solvina.options.adapters.outbound.ibkr.IbkrAdmissionConfig
 import cz.solvina.options.adapters.outbound.ibkr.IbkrAdmissionController
+import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
+import cz.solvina.options.adapters.outbound.ibkr.IbkrInstrumentsConfig
 import cz.solvina.options.adapters.outbound.ibkr.InstrumentDef
+import cz.solvina.options.adapters.outbound.ibkr.NoopAlertPort
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrContractRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrIdCounter
 import cz.solvina.options.domain.models.OptionType
@@ -43,7 +44,13 @@ class IbkrContractCacheInFlightTest {
             registry = registry,
             client = client,
             contractFactory = contractFactory,
-            admission = IbkrAdmissionController(IbkrAdmissionConfig(), java.time.Clock.systemUTC()),
+            admission =
+                IbkrAdmissionController(
+                    IbkrAdmissionConfig(),
+                    java.time.Clock.systemUTC(),
+                    NoopAlertPort,
+                    kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined),
+                ),
             tradingHoursCache =
                 cz.solvina.options.adapters.outbound.ibkr
                     .TradingHoursCache(),

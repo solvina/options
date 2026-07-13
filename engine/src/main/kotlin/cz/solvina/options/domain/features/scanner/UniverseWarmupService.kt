@@ -1,5 +1,6 @@
 package cz.solvina.options.domain.features.scanner
 
+import cz.solvina.options.domain.features.market.MarketDataPriority
 import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.features.volatility.VolatilityPort
 import cz.solvina.options.domain.models.Symbol
@@ -8,6 +9,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.springframework.boot.context.event.ApplicationReadyEvent
 import org.springframework.context.event.EventListener
 import org.springframework.stereotype.Service
@@ -50,7 +52,12 @@ class UniverseWarmupService(
         scope.launch { warmAll() }
     }
 
-    suspend fun warmAll() {
+    suspend fun warmAll(): Unit =
+        withContext(MarketDataPriority.SCANNER) {
+            doWarmAll()
+        }
+
+    private suspend fun doWarmAll() {
         val symbols =
             universePort
                 .getWatchlist()

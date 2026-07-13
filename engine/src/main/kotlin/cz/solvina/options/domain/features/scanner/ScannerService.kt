@@ -3,6 +3,7 @@ package cz.solvina.options.domain.features.scanner
 import cz.solvina.options.domain.features.account.EffectiveAccountService
 import cz.solvina.options.domain.features.execution.TradeExecutionPort
 import cz.solvina.options.domain.features.execution.model.TradeExecutionRequest
+import cz.solvina.options.domain.features.market.MarketDataPriority
 import cz.solvina.options.domain.features.regime.DirectionalBias
 import cz.solvina.options.domain.features.regime.TrendRegimeService
 import cz.solvina.options.domain.features.regime.alignment
@@ -15,6 +16,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.springframework.stereotype.Service
 import java.time.Clock
 import java.time.Instant
@@ -42,7 +44,14 @@ class ScannerService(
 
     @Volatile private var lastRunAt: Instant? = null
 
-    override suspend fun scan() {
+    // SCANNER priority: every market-data request below (chains, greeks snapshots, prices) draws
+    // from the leftover line budget and yields message headroom — never from exec/exit/flag reserves.
+    override suspend fun scan(): Unit =
+        withContext(MarketDataPriority.SCANNER) {
+            runScan()
+        }
+
+    private suspend fun runScan() {
         lastRunAt = Instant.now(clock)
         logger.info { "Scanner run started" }
 

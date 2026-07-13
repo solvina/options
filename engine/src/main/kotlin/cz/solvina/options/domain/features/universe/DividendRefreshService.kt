@@ -1,7 +1,9 @@
 package cz.solvina.options.domain.features.universe
 
+import cz.solvina.options.domain.features.market.MarketDataPriority
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 
@@ -27,7 +29,12 @@ class DividendRefreshService(
     @Scheduled(initialDelay = 240_000, fixedDelay = Long.MAX_VALUE)
     fun startupRefresh() = runBlocking { refresh() }
 
-    suspend fun refresh() {
+    suspend fun refresh(): Unit =
+        withContext(MarketDataPriority.SCANNER) {
+            doRefresh()
+        }
+
+    private suspend fun doRefresh() {
         val usInstruments =
             universePort
                 .getAll()

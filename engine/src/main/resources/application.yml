@@ -50,6 +50,22 @@ ibkr:
       currency: EUR
       optionExchange: DTB
       marketExchange: EU
+  # Admission control: hard invariants under IBKR's ceilings (~100 market-data lines, ~50 msgs/s).
+  # Lines are partitioned — EXIT/FLAG/EXEC keep guaranteed reserves, the scanner draws leftover
+  # only (≤ scanner-line-concurrency, bounded wait). Live view: /actuator/health → ibkrAdmission.
+  # Rollback lever if anything misbehaves: scanner-line-concurrency: 1 + scanner-token-floor: 45.
+  admission:
+    market-data-lines: 90            # TODO verify against the account's real line allowance
+    exit-reserve: 40                 # scanner.max-open-spreads × 2 leg streams
+    flag-reserve: 15                 # flag real-time-bars universe size
+    exec-reserve: 8
+    scanner-line-concurrency: 5
+    scanner-line-timeout-ms: 30000
+    messages-per-second: 45
+    scanner-token-floor: 10
+    greeks-snapshot-timeout-ms: 5000
+    starvation-alert-ms: 2000
+    starvation-alert-cooldown-ms: 900000
   connection:
     host: 100.65.216.36
     port: 7497

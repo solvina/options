@@ -50,7 +50,8 @@ class IbkrMarketDataAdapter(
     }
 
     override suspend fun getOptionMidLive(contract: OptionContract): Money? {
-        val snapshot = reqMktDataSnapshot(registry, client, admission, contractFactory.optionContract(contract), "", SnapshotReady.OPTION_PRICE)
+        val snapshot =
+            reqMktDataSnapshot(registry, client, admission, contractFactory.optionContract(contract), "", SnapshotReady.OPTION_PRICE)
         val mid = midPrice(snapshot.bid, snapshot.ask)
         // Live bid/ask only — deliberately no Black-Scholes / previous-day fallback. Price-based
         // exit decisions must not run on synthetic data; a null tells the caller to skip the cycle.
@@ -58,7 +59,8 @@ class IbkrMarketDataAdapter(
     }
 
     override suspend fun getOptionMid(contract: OptionContract): Money {
-        val snapshot = reqMktDataSnapshot(registry, client, admission, contractFactory.optionContract(contract), "", SnapshotReady.OPTION_PRICE)
+        val snapshot =
+            reqMktDataSnapshot(registry, client, admission, contractFactory.optionContract(contract), "", SnapshotReady.OPTION_PRICE)
         val mid = midPrice(snapshot.bid, snapshot.ask)
         if (mid > BigDecimal.ZERO) return Money(mid)
 

@@ -4,6 +4,7 @@ import com.ib.client.EClientSocket
 import cz.solvina.options.adapters.outbound.ibkr.IbkrAdmissionController
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrDividendTickRegistry
+import cz.solvina.options.domain.features.market.MarketDataPriority
 import cz.solvina.options.domain.features.universe.DividendDataPort
 import cz.solvina.options.domain.features.universe.DividendInfo
 import cz.solvina.options.domain.models.Symbol
@@ -14,6 +15,7 @@ import org.springframework.stereotype.Component
 import java.math.BigDecimal
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
+import kotlin.coroutines.coroutineContext
 
 private val logger = KotlinLogging.logger {}
 
@@ -59,8 +61,10 @@ class IbkrDividendTickAdapter(
         timeoutMs: Long = 15_000,
     ): String? {
         // Holds one market-data line between reqMktData and cancelMktData, like every other
-        // subscription — previously this bypassed the line budget.
-        admission.acquireMarketDataLine()
+        // subscription — previously this bypassed the line budget. The daily refresh job runs
+        // tagged SCANNER, so a 15s dividend wait can never displace exec/exit/flag lines.
+        val priority = coroutineContext[MarketDataPriority] ?: MarketDataPriority.EXEC
+        admission.acquireMarketDataLine(priority)
         val reqId = registry.nextReqId()
         val deferred = registry.register(reqId)
         return try {
@@ -75,7 +79,7 @@ class IbkrDividendTickAdapter(
         } finally {
             registry.remove(reqId)
             runCatching { client.cancelMktData(reqId) }
-            admission.releaseMarketDataLine()
+            admission.releaseMarketDataLine(priority)
         }
     }
 }

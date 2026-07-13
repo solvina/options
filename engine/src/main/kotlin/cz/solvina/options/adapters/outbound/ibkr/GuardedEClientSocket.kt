@@ -114,8 +114,16 @@ class GuardedEClientSocket(
     ) {
         admission.paceMessage()
         super.reqHistoricalData(
-            tickerId, contract, endDateTime, durationStr, barSizeSetting, whatToShow,
-            useRTH, formatDate, keepUpToDate, chartOptions,
+            tickerId,
+            contract,
+            endDateTime,
+            durationStr,
+            barSizeSetting,
+            whatToShow,
+            useRTH,
+            formatDate,
+            keepUpToDate,
+            chartOptions,
         )
     }
 

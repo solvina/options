@@ -2,15 +2,16 @@ package cz.solvina.options.adapters.outbound.ibkr.market
 
 import com.ib.client.Contract
 import com.ib.client.EClientSocket
+import cz.solvina.options.adapters.outbound.ibkr.IbkrAdmissionController
 import cz.solvina.options.adapters.outbound.ibkr.IbkrConnectionConfig
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
-import cz.solvina.options.adapters.outbound.ibkr.IbkrAdmissionController
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrOptionParamsCache
 import cz.solvina.options.adapters.outbound.ibkr.cache.OptionContractKey
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.PendingContinuousMarketDataRequest
 import cz.solvina.options.adapters.outbound.ibkr.registry.PendingTickByTickRequest
+import cz.solvina.options.domain.features.market.MarketDataPriority
 import cz.solvina.options.domain.features.market.MarketTickPort
 import cz.solvina.options.domain.features.market.SpreadCreditTick
 import cz.solvina.options.domain.models.OptionContract
@@ -56,7 +57,9 @@ class IbkrMarketTickAdapter(
     override fun streamUnderlyingPrice(symbol: Symbol): Flow<Double> =
         callbackFlow {
             val reqId = registry.nextReqId()
-            admission.acquireMarketDataLine()
+            // Collector's priority class pays for the line (EXEC entry pricing vs EXIT monitoring).
+            val priority = coroutineContext[MarketDataPriority] ?: MarketDataPriority.EXEC
+            admission.acquireMarketDataLine(priority)
             registry.pendingContinuousMarketData[reqId] =
                 PendingContinuousMarketDataRequest(
                     onUpdate = { snapshot ->
@@ -71,7 +74,7 @@ class IbkrMarketTickAdapter(
             awaitClose {
                 registry.pendingContinuousMarketData.remove(reqId)
                 client.cancelMktData(reqId)
-                admission.releaseMarketDataLine()
+                admission.releaseMarketDataLine(priority)
                 logger.debug { "[$symbol] Cancelled underlying price stream (reqId=$reqId)" }
             }
         }
@@ -88,6 +91,8 @@ class IbkrMarketTickAdapter(
     ): Flow<SpreadCreditTick> =
         callbackFlow {
             val streamStartNanos = System.nanoTime()
+            // Collector's priority class pays for the leg lines (EXEC entry pricing vs EXIT monitoring).
+            val priority = coroutineContext[MarketDataPriority] ?: MarketDataPriority.EXEC
             val firstTickLogged = AtomicBoolean(false)
             val soldTickReqId = registry.nextReqId()
             val boughtTickReqId = registry.nextReqId()
@@ -197,7 +202,7 @@ class IbkrMarketTickAdapter(
                         "(available=${admission.availableMarketDataLines()}) for ${soldContract.strike}P/${boughtContract.strike}P"
                 }
                 repeat(mktDataLines) {
-                    admission.acquireMarketDataLine()
+                    admission.acquireMarketDataLine(priority)
                     linesAcquired++
                 }
                 // From here on nothing suspends until awaitClose, so the requests below and the
@@ -213,7 +218,7 @@ class IbkrMarketTickAdapter(
                 registry.pendingTickByTick.remove(boughtTickReqId)
                 registry.pendingContinuousMarketData.remove(soldGreeksReqId)
                 registry.pendingContinuousMarketData.remove(boughtGreeksReqId)
-                repeat(linesAcquired) { admission.releaseMarketDataLine() }
+                repeat(linesAcquired) { admission.releaseMarketDataLine(priority) }
                 logger.info {
                     "[${soldContract.symbol}] Spread credit stream setup aborted " +
                         "(${e.javaClass.simpleName}) — released $linesAcquired mkt-data lines"
@@ -237,7 +242,7 @@ class IbkrMarketTickAdapter(
                 client.cancelMktData(soldGreeksReqId)
                 registry.pendingContinuousMarketData.remove(boughtGreeksReqId)
                 client.cancelMktData(boughtGreeksReqId)
-                repeat(mktDataLines) { admission.releaseMarketDataLine() }
+                repeat(mktDataLines) { admission.releaseMarketDataLine(priority) }
                 logger.debug {
                     "Cancelled spread credit stream for " +
                         "${soldContract.strike}P/${boughtContract.strike}P"

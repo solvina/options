@@ -121,7 +121,8 @@ class IbkrDiagnosticProbeAdapter(
         val start = System.currentTimeMillis()
         return runCatching {
             logger.info { "[$symbol] DIAG reqMktData snapshot (stock spot)" }
-            val snapshot = reqMktDataSnapshot(registry, client, admission, contractFactory.stockContract(symbol), "", SnapshotReady.STOCK_PRICE)
+            val snapshot =
+                reqMktDataSnapshot(registry, client, admission, contractFactory.stockContract(symbol), "", SnapshotReady.STOCK_PRICE)
             val ms = System.currentTimeMillis() - start
             logger.info {
                 "[$symbol] DIAG reqMktData stock → bid=${snapshot.bid} ask=${snapshot.ask} " +
@@ -154,7 +155,8 @@ class IbkrDiagnosticProbeAdapter(
     override suspend fun probeOptionSnapshot(contract: OptionContract): SymbolHealthReport.OptionMidSample {
         val start = System.currentTimeMillis()
         logger.info { "[${contract.symbol}] DIAG reqMktData snapshot (option ${contract.strike}P exp=${contract.expiry})" }
-        val snapshot = reqMktDataSnapshot(registry, client, admission, contractFactory.optionContract(contract), "", SnapshotReady.OPTION_QUOTE)
+        val snapshot =
+            reqMktDataSnapshot(registry, client, admission, contractFactory.optionContract(contract), "", SnapshotReady.OPTION_QUOTE)
         val ms = System.currentTimeMillis() - start
         logger.info {
             "[${contract.symbol}] DIAG reqMktData option ${contract.strike}P → " +

@@ -1,5 +1,6 @@
 package cz.solvina.options.domain.features.diagnostic
 
+import cz.solvina.options.domain.features.market.MarketDataPriority
 import cz.solvina.options.domain.features.market.OptionChainPort
 import cz.solvina.options.domain.features.spread.model.StrategyId
 import cz.solvina.options.domain.features.universe.UniversePort
@@ -7,6 +8,7 @@ import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
+import kotlinx.coroutines.withContext
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.time.Clock
@@ -29,7 +31,12 @@ class DiagnosticService(
     @Volatile
     private var accountReport: AccountHealthReport? = null
 
-    override suspend fun probeSymbol(symbol: Symbol): SymbolHealthReport {
+    override suspend fun probeSymbol(symbol: Symbol): SymbolHealthReport =
+        withContext(MarketDataPriority.SCANNER) {
+            doProbeSymbol(symbol)
+        }
+
+    private suspend fun doProbeSymbol(symbol: Symbol): SymbolHealthReport {
         logger.info { "[$symbol] Starting diagnostic probe" }
         val errors = mutableListOf<String>()
 
@@ -102,7 +109,12 @@ class DiagnosticService(
         return report
     }
 
-    override suspend fun probeAccount(): AccountHealthReport {
+    override suspend fun probeAccount(): AccountHealthReport =
+        withContext(MarketDataPriority.SCANNER) {
+            doProbeAccount()
+        }
+
+    private suspend fun doProbeAccount(): AccountHealthReport {
         logger.info { "Starting account diagnostic probe" }
         val report =
             runCatching { probePort.probeAccount() }
