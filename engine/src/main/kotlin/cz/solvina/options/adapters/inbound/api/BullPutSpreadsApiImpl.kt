@@ -89,7 +89,7 @@ class BullPutSpreadsApiImpl(
         }
 
     override suspend fun getSpreadAnalytics(): ResponseEntity<SpreadAnalyticsDto> {
-        val a = spreadAnalyticsService.compute()
+        val a = spreadAnalyticsService.compute(spreadPort.findAll())
         return ResponseEntity.ok(
             SpreadAnalyticsDto(
                 summary =

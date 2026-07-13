@@ -1,6 +1,6 @@
 package cz.solvina.options.domain.features.spread
 
-import cz.solvina.options.domain.features.spread.model.BullPutSpread
+import cz.solvina.options.domain.features.spread.model.Spread
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
@@ -10,9 +10,7 @@ import java.time.ZoneOffset
 import java.time.temporal.ChronoUnit
 
 @Service
-class SpreadAnalyticsService(
-    private val spreadPort: BullPutSpreadPort,
-) {
+class SpreadAnalyticsService {
     data class Analytics(
         val summary: Summary,
         val byStatus: List<StatusBreakdown>,
@@ -69,8 +67,8 @@ class SpreadAnalyticsService(
             SpreadStatus.CLOSED_MANUAL,
         )
 
-    suspend fun compute(): Analytics {
-        val all = spreadPort.findAll()
+    /** Strategy-agnostic — the caller supplies its own strategy's [Spread]s (bull put or bear call). */
+    fun compute(all: List<Spread>): Analytics {
         val closed = all.filter { it.status in terminalStatuses && it.closePricePerShare != null && it.closedAt != null }
         val open = all.filter { it.status == SpreadStatus.OPEN || it.status == SpreadStatus.CLOSING }
 
@@ -107,7 +105,7 @@ class SpreadAnalyticsService(
         )
     }
 
-    private fun byStatus(closed: List<BullPutSpread>): List<StatusBreakdown> =
+    private fun byStatus(closed: List<Spread>): List<StatusBreakdown> =
         closed
             .groupBy { it.status.name }
             .map { (status, trades) ->
@@ -121,7 +119,7 @@ class SpreadAnalyticsService(
                 )
             }.sortedByDescending { it.count }
 
-    private fun bySymbol(closed: List<BullPutSpread>): List<SymbolBreakdown> =
+    private fun bySymbol(closed: List<Spread>): List<SymbolBreakdown> =
         closed
             .groupBy { it.symbol.value }
             .map { (symbol, trades) ->
@@ -148,7 +146,7 @@ class SpreadAnalyticsService(
                 )
             }.sortedByDescending { it.totalPnl }
 
-    private fun byIvBucket(closed: List<BullPutSpread>): List<IvBucketBreakdown> {
+    private fun byIvBucket(closed: List<Spread>): List<IvBucketBreakdown> {
         data class Bucket(
             val label: String,
             val lo: Double?,
@@ -183,7 +181,7 @@ class SpreadAnalyticsService(
         }
     }
 
-    private fun pnlTimeline(closed: List<BullPutSpread>): List<PnlTimelinePoint> {
+    private fun pnlTimeline(closed: List<Spread>): List<PnlTimelinePoint> {
         val byDay =
             closed
                 .groupBy { it.closedAt!!.atOffset(ZoneOffset.UTC).toLocalDate() }
@@ -196,7 +194,7 @@ class SpreadAnalyticsService(
         }
     }
 
-    private fun BullPutSpread.realizedPnl(): BigDecimal {
+    private fun Spread.realizedPnl(): BigDecimal {
         val closePrice = closePricePerShare ?: return BigDecimal.ZERO
         return creditPerShare
             .subtract(closePrice)
@@ -204,5 +202,5 @@ class SpreadAnalyticsService(
             .multiply(BigDecimal(quantity))
     }
 
-    private fun BullPutSpread.holdDays(): Double? = closedAt?.let { ChronoUnit.DAYS.between(openedAt, it).toDouble() }
+    private fun Spread.holdDays(): Double? = closedAt?.let { ChronoUnit.DAYS.between(openedAt, it).toDouble() }
 }

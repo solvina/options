@@ -1,10 +1,17 @@
 package cz.solvina.options.adapters.inbound.api
 
 import `cz.solvina.options.bearcall`.api.BearCallSpreadsApi
+import `cz.solvina.options.bearcall`.dto.BearCallAnalyticsDto
+import `cz.solvina.options.bearcall`.dto.BearCallAnalyticsSummaryDto
+import `cz.solvina.options.bearcall`.dto.BearCallIvBucketBreakdownDto
+import `cz.solvina.options.bearcall`.dto.BearCallPnlTimelinePointDto
 import `cz.solvina.options.bearcall`.dto.BearCallSpreadDto
+import `cz.solvina.options.bearcall`.dto.BearCallStatusBreakdownDto
+import `cz.solvina.options.bearcall`.dto.BearCallSymbolBreakdownDto
 import `cz.solvina.options.bearcall`.dto.PagedBearCallSpreadsDto
 import cz.solvina.options.domain.features.scanner.BearCallScannerConfig
 import cz.solvina.options.domain.features.spread.BearCallSpreadPort
+import cz.solvina.options.domain.features.spread.SpreadAnalyticsService
 import cz.solvina.options.domain.features.spread.SpreadManagementService
 import cz.solvina.options.domain.features.spread.model.BearCallSpread
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
@@ -25,6 +32,7 @@ import java.util.UUID
 @RequestMapping
 class BearCallSpreadsApiImpl(
     private val spreadPort: BearCallSpreadPort,
+    private val spreadAnalyticsService: SpreadAnalyticsService,
     private val spreadManagementService: SpreadManagementService,
     private val universePort: UniversePort,
     private val config: BearCallScannerConfig,
@@ -52,6 +60,62 @@ class BearCallSpreadsApiImpl(
 
     override suspend fun getBearCallSpreadById(id: UUID): ResponseEntity<BearCallSpreadDto> =
         spreadPort.findById(id)?.let { ResponseEntity.ok(it.toDto()) } ?: ResponseEntity.notFound().build()
+
+    override suspend fun getBearCallAnalytics(): ResponseEntity<BearCallAnalyticsDto> {
+        val a = spreadAnalyticsService.compute(spreadPort.findAll())
+        return ResponseEntity.ok(
+            BearCallAnalyticsDto(
+                summary =
+                    BearCallAnalyticsSummaryDto(
+                        totalTrades = a.summary.totalTrades,
+                        openTrades = a.summary.openTrades,
+                        winRate = a.summary.winRate.toBigDecimal(),
+                        totalRealizedPnl = a.summary.totalRealizedPnl,
+                        avgPnlPerTrade = a.summary.avgPnlPerTrade,
+                        avgHoldDays = a.summary.avgHoldDays.toBigDecimal(),
+                    ),
+                byStatus =
+                    a.byStatus.map { s ->
+                        BearCallStatusBreakdownDto(
+                            status = s.status,
+                            count = s.count,
+                            totalPnl = s.totalPnl,
+                            avgPnl = s.avgPnl,
+                            avgHoldDays = s.avgHoldDays.toBigDecimal(),
+                        )
+                    },
+                bySymbol =
+                    a.bySymbol.map { s ->
+                        BearCallSymbolBreakdownDto(
+                            symbol = s.symbol,
+                            count = s.count,
+                            wins = s.wins,
+                            winRate = s.winRate.toBigDecimal(),
+                            totalPnl = s.totalPnl,
+                            avgPnl = s.avgPnl,
+                            avgCreditRatio = s.avgCreditRatio.toBigDecimal(),
+                        )
+                    },
+                byEntryIvBucket =
+                    a.byEntryIvBucket.map { b ->
+                        BearCallIvBucketBreakdownDto(
+                            bucket = b.bucket,
+                            count = b.count,
+                            winRate = b.winRate.toBigDecimal(),
+                            avgPnl = b.avgPnl,
+                        )
+                    },
+                pnlTimeline =
+                    a.pnlTimeline.map { p ->
+                        BearCallPnlTimelinePointDto(
+                            date = p.date,
+                            dailyPnl = p.dailyPnl,
+                            cumulativePnl = p.cumulativePnl,
+                        )
+                    },
+            ),
+        )
+    }
 
     override fun listBearCallDividendRisk(): ResponseEntity<Flow<BearCallSpreadDto>> =
         ResponseEntity.ok(
