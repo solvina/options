@@ -113,8 +113,9 @@ class OrphanPositionDetector {
         val expected = HashMap<PosKey, Int>()
         val owners = HashMap<PosKey, MutableList<String>>()
         for (spread in openSpreads) {
-            val label = "${spread.symbol.value} ${spread.soldLeg.contract.strike}/${spread.boughtLeg.contract.strike} " +
-                "exp ${spread.soldLeg.contract.expiry} [${spread.strategyId} ${spread.status}]"
+            val label =
+                "${spread.symbol.value} ${spread.soldLeg.contract.strike}/${spread.boughtLeg.contract.strike} " +
+                    "exp ${spread.soldLeg.contract.expiry} [${spread.strategyId} ${spread.status}]"
             addLeg(expected, keyOf(spread.soldLeg.contract), -spread.quantity)
             addLeg(expected, keyOf(spread.boughtLeg.contract), spread.quantity)
             owners.getOrPut(keyOf(spread.soldLeg.contract)) { mutableListOf() }.add(label)

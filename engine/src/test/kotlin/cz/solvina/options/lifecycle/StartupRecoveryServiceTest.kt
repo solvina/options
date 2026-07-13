@@ -9,6 +9,7 @@ import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import cz.solvina.options.domain.features.account.AccountPosition
 import cz.solvina.options.domain.features.account.PositionsPort
 import cz.solvina.options.domain.features.order.LegAction
+import cz.solvina.options.domain.features.spread.BearCallSpreadPort
 import cz.solvina.options.domain.features.spread.BullPutSpreadPort
 import cz.solvina.options.domain.features.spread.model.BullPutSpread
 import cz.solvina.options.domain.features.spread.model.SpreadLeg
@@ -31,6 +32,7 @@ import kotlin.test.assertEquals
 
 class StartupRecoveryServiceTest {
     private val spreadPort = mockk<BullPutSpreadPort>(relaxed = true)
+    private val bearCallPort = mockk<BearCallSpreadPort>(relaxed = true)
     private val orderRegistry = mockk<IbkrOrderRegistry>(relaxed = true)
     private val openOrdersAdapter = mockk<IbkrOpenOrdersAdapter>()
     private val client = mockk<EClientSocket>(relaxed = true)
@@ -38,7 +40,16 @@ class StartupRecoveryServiceTest {
     private val positionsPort = mockk<PositionsPort>()
 
     private val service =
-        StartupRecoveryService(spreadPort, orderRegistry, openOrdersAdapter, client, orderCancellationService, positionsPort, mockk(relaxed = true))
+        StartupRecoveryService(
+            spreadPort = spreadPort,
+            bearCallPort = bearCallPort,
+            orderRegistry = orderRegistry,
+            openOrdersAdapter = openOrdersAdapter,
+            client = client,
+            orderCancellationService = orderCancellationService,
+            positionsPort = positionsPort,
+            connectionStatusPort = mockk(relaxed = true),
+        )
 
     private val expiry = LocalDate.of(2026, 7, 17)
 

@@ -159,6 +159,7 @@ class PositionReversalIntegrationTest {
             val recoveryService =
                 StartupRecoveryService(
                     spreadPort = spreadPort,
+                    bearCallPort = mockk(relaxed = true),
                     orderRegistry = mockOrderRegistry,
                     openOrdersAdapter = openOrdersAdapter,
                     client = mockClient,
@@ -341,6 +342,7 @@ class PositionReversalIntegrationTest {
             val recoveryService =
                 StartupRecoveryService(
                     spreadPort = spreadPort,
+                    bearCallPort = mockk(relaxed = true),
                     orderRegistry = mockOrderRegistry,
                     openOrdersAdapter = openOrdersAdapter,
                     client = mockClient,

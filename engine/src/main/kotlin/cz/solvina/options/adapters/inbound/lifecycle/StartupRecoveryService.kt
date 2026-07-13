@@ -9,8 +9,11 @@ import cz.solvina.options.domain.features.account.AccountPosition
 import cz.solvina.options.domain.features.account.PositionsPort
 import cz.solvina.options.domain.features.connection.status.ConnectionStatusPort
 import cz.solvina.options.domain.features.order.OrderStatus
+import cz.solvina.options.domain.features.spread.BearCallSpreadPort
 import cz.solvina.options.domain.features.spread.BullPutSpreadPort
+import cz.solvina.options.domain.features.spread.model.BearCallSpread
 import cz.solvina.options.domain.features.spread.model.BullPutSpread
+import cz.solvina.options.domain.features.spread.model.Spread
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CoroutineScope
@@ -43,6 +46,7 @@ private val PERIODIC_MIN_PENDING_AGE: Duration = Duration.ofMinutes(60)
 @Component
 class StartupRecoveryService(
     private val spreadPort: BullPutSpreadPort,
+    private val bearCallPort: BearCallSpreadPort,
     private val orderRegistry: IbkrOrderRegistry,
     private val openOrdersAdapter: IbkrOpenOrdersAdapter,
     private val client: EClientSocket,
@@ -80,7 +84,7 @@ class StartupRecoveryService(
     }
 
     private suspend fun recoverClosing() {
-        val closingSpreads = spreadPort.findByStatus(SpreadStatus.CLOSING)
+        val closingSpreads = spreadPort.findByStatus(SpreadStatus.CLOSING) + bearCallPort.findByStatus(SpreadStatus.CLOSING)
         if (closingSpreads.isEmpty()) return
 
         val openOrders =
@@ -140,7 +144,8 @@ class StartupRecoveryService(
         mutex.withLock {
             val cutoff = Instant.now().minus(PERIODIC_MIN_PENDING_AGE)
             val pendingSpreads =
-                spreadPort.findByStatus(SpreadStatus.PENDING).filter { startup || it.openedAt < cutoff }
+                (spreadPort.findByStatus(SpreadStatus.PENDING) + bearCallPort.findByStatus(SpreadStatus.PENDING))
+                    .filter { startup || it.openedAt < cutoff }
             if (pendingSpreads.isEmpty()) return@withLock
 
             // No trustworthy open-orders list → no verdicts this pass. Treating a failed fetch as
@@ -157,15 +162,15 @@ class StartupRecoveryService(
         }
 
     private suspend fun processPending(
-        pendingSpreads: List<BullPutSpread>,
+        pendingSpreads: List<Spread>,
         openOrderIds: Set<Int>,
     ) {
         for (spread in pendingSpreads) {
             val orderId = spread.soldLeg.orderId
             if (orderId == 0) {
                 logger.warn { "Recovery: PENDING spread ${spread.id} has no orderId, closing as unknown" }
-                spreadPort.update(
-                    spread.copy(status = SpreadStatus.CLOSED_REJECTED, closeReason = "recovery_no_order", closedAt = Instant.now()),
+                persist(
+                    statusChanged(spread, SpreadStatus.CLOSED_REJECTED, "recovery_no_order", Instant.now()),
                 )
                 continue
             }
@@ -180,20 +185,22 @@ class StartupRecoveryService(
                 orderRegistry.ensureWatch(orderId)
                 if (orderRegistry.isFilled(orderId)) {
                     orderRegistry.pendingOrderStatus.remove(orderId)
-                    spreadPort.update(spread.copy(status = SpreadStatus.OPEN))
+                    persist(statusChanged(spread, SpreadStatus.OPEN))
                     logger.warn { "Recovery: orderId=$orderId already FILLED — spread ${spread.id} promoted to OPEN" }
                     continue
                 }
                 val deferred = orderRegistry.pendingOrderStatus[orderId] ?: continue
                 logger.info {
-                    "Recovery: re-registered orderId=$orderId for ${spread.symbol} ${spread.soldLeg.contract.strike}P/${spread.boughtLeg.contract.strike}P"
+                    "Recovery: re-registered orderId=$orderId for ${spread.symbol} " +
+                        "${spread.soldLeg.contract.strike}${spread.soldLeg.contract.type.ibkrCode}/" +
+                        "${spread.boughtLeg.contract.strike}${spread.boughtLeg.contract.type.ibkrCode}"
                 }
 
                 scope.launch {
                     val result = runCatching { deferred.await() }
                     when {
                         result.getOrNull() == OrderStatus.FILLED || orderRegistry.isFilled(orderId) -> {
-                            spreadPort.update(spread.copy(status = SpreadStatus.OPEN))
+                            persist(statusChanged(spread, SpreadStatus.OPEN))
                             logger.info { "Recovery: orderId=$orderId filled — spread ${spread.id} promoted to OPEN" }
                         }
                         result.isFailure -> {
@@ -210,11 +217,12 @@ class StartupRecoveryService(
                         else -> {
                             // Broker-confirmed terminal cancel (onOrderStatus/onError completed the
                             // deferred normally) — safe to write the attempt off.
-                            spreadPort.update(
-                                spread.copy(
-                                    status = SpreadStatus.CLOSED_TIMEOUT,
-                                    closeReason = "recovered_cancelled",
-                                    closedAt = Instant.now(),
+                            persist(
+                                statusChanged(
+                                    spread,
+                                    SpreadStatus.CLOSED_TIMEOUT,
+                                    "recovered_cancelled",
+                                    Instant.now(),
                                 ),
                             )
                             logger.info { "Recovery: orderId=$orderId cancelled/rejected — spread ${spread.id} closed" }
@@ -241,7 +249,7 @@ class StartupRecoveryService(
                         }
                     }
                     bothLegsHeld(spread, positions) -> {
-                        spreadPort.update(spread.copy(status = SpreadStatus.OPEN))
+                        persist(statusChanged(spread, SpreadStatus.OPEN))
                         logger.warn {
                             "Recovery: orderId=$orderId for ${spread.symbol} vanished from open orders but BOTH legs are " +
                                 "held — adopting spread ${spread.id} as OPEN so it gets managed"
@@ -252,11 +260,12 @@ class StartupRecoveryService(
                             "Recovery: orderId=$orderId for ${spread.symbol} not in open orders and legs confirmed not held — " +
                                 "closing as recovery_unknown (any stranded leg will be flagged by reconciliation)"
                         }
-                        spreadPort.update(
-                            spread.copy(
-                                status = SpreadStatus.CLOSED_RECOVERY_UNKNOWN,
-                                closeReason = "recovery_unknown",
-                                closedAt = Instant.now(),
+                        persist(
+                            statusChanged(
+                                spread,
+                                SpreadStatus.CLOSED_RECOVERY_UNKNOWN,
+                                "recovery_unknown",
+                                Instant.now(),
                             ),
                         )
                     }
@@ -273,7 +282,7 @@ class StartupRecoveryService(
      * successful snapshot otherwise, or null only when EVERY attempt threw — in which case the caller
      * must NOT treat the spread as flat.
      */
-    private suspend fun fetchPositionsForRecovery(spread: BullPutSpread): List<AccountPosition>? {
+    private suspend fun fetchPositionsForRecovery(spread: Spread): List<AccountPosition>? {
         var last: List<AccountPosition>? = null
         repeat(RECOVERY_POSITION_POLLS) { attempt ->
             val snapshot =
@@ -291,7 +300,7 @@ class StartupRecoveryService(
 
     /** True if both legs of [spread] are present at the broker with the expected signed quantities. */
     private fun bothLegsHeld(
-        spread: BullPutSpread,
+        spread: Spread,
         positions: List<AccountPosition>,
     ): Boolean {
         val shortHeld = positions.any { legMatches(it, spread, isShort = true) }
@@ -301,7 +310,7 @@ class StartupRecoveryService(
 
     private fun legMatches(
         p: AccountPosition,
-        spread: BullPutSpread,
+        spread: Spread,
         isShort: Boolean,
     ): Boolean {
         val leg = if (isShort) spread.soldLeg else spread.boughtLeg
@@ -317,4 +326,23 @@ class StartupRecoveryService(
             p.expiry == c.expiry &&
             p.quantity.toInt() == expectedQty
     }
+
+    /** Route a status write to the correct strategy's port — the sealed [Spread] type keeps this exhaustive. */
+    private suspend fun persist(spread: Spread): Spread =
+        when (spread) {
+            is BullPutSpread -> spreadPort.update(spread)
+            is BearCallSpread -> bearCallPort.update(spread)
+        }
+
+    /** Strategy-agnostic status change: copies the row with a new status, dispatched over the sealed type. */
+    private fun statusChanged(
+        spread: Spread,
+        status: SpreadStatus,
+        closeReason: String? = spread.closeReason,
+        closedAt: Instant? = spread.closedAt,
+    ): Spread =
+        when (spread) {
+            is BullPutSpread -> spread.copy(status = status, closeReason = closeReason, closedAt = closedAt)
+            is BearCallSpread -> spread.copy(status = status, closeReason = closeReason, closedAt = closedAt)
+        }
 }
