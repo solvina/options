@@ -66,14 +66,17 @@ function PnlSpan({ val, children }: { val: number | null | undefined; children: 
 const MAJOR_FIX_EPOCH = '2026-07-10'
 
 const PRESETS: { label: string; from: () => string }[] = [
+  { label: 'Today', from: () => isoDate(new Date()) },
   { label: '7d', from: () => daysAgo(7) },
   { label: '30d', from: () => daysAgo(30) },
   { label: 'This month', from: startOfMonth },
   { label: 'YTD', from: startOfYear },
+  { label: 'Since fix', from: () => MAJOR_FIX_EPOCH },
 ]
 
 export function ReportsPage() {
-  const [from, setFrom] = useState(MAJOR_FIX_EPOCH)
+  // Default to Today; the post-fix era stays reachable via the 'Since fix' preset.
+  const [from, setFrom] = useState(() => isoDate(new Date()))
   const [to, setTo] = useState(() => isoDate(new Date()))
 
   const { data, isLoading, isError } = useQuery({
