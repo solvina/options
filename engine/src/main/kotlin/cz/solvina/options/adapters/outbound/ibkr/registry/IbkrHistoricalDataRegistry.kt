@@ -66,8 +66,14 @@ class IbkrHistoricalDataRegistry(
         code: Int,
         msg: String,
     ) {
-        // 162 = historical-data pacing violation; 420 = "max rate of messages" pacing.
-        if (code == 162 || code == 420) admission.notePacingViolation(code)
+        // 162 is IBKR's generic "Historical Market Data Service error message" bucket — the text
+        // decides the meaning. Only an actual pacing violation should back off the historical rate
+        // limiter and count as a broker limit hit; other 162s (competing session / "different IP
+        // address", "query returned no data", missing permissions) are unrelated and must NOT
+        // inflate the broker-limit metric or trigger a spurious back-off. 420 = message-rate pacing.
+        if (code == 420 || (code == 162 && msg.contains("pacing", ignoreCase = true))) {
+            admission.notePacingViolation(code)
+        }
         val ex = RuntimeException("IBKR error [code=$code]: $msg")
         pendingHistoricalBars.remove(id)?.onError?.invoke(ex)
         pendingRawBars.remove(id)?.onError?.invoke(ex)
