@@ -206,6 +206,7 @@ class IbkrOptionChainAdapter(
                     "",
                     SnapshotReady.OPTION_QUOTE,
                     timeoutMs = admissionConfig.greeksSnapshotTimeoutMs,
+                    quiescenceMs = admissionConfig.scannerGreeksQuiescenceMs,
                 )
 
             // Live market data only — never fabricate prices/greeks. A NaN delta means no live

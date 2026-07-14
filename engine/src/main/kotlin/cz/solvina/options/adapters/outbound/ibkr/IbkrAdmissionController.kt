@@ -42,7 +42,10 @@ data class IbkrAdmissionConfig(
     val scannerLineConcurrency: Int = 5, // scanner's own cap, even when leftover is larger
     val scannerLineTimeoutMs: Long = 30_000, // scanner skips the strike when no line frees in time
     val scannerTokenFloor: Int = 10, // scanner sends only while the message bucket has this headroom
-    val greeksSnapshotTimeoutMs: Long = 5_000, // per-strike snapshot wait during a scan
+    val greeksSnapshotTimeoutMs: Long = 5_000, // per-strike snapshot hard ceiling during a scan
+    // Scanner snapshot early-out: once a quote has arrived and no further tick lands for this long, the
+    // scanner stops waiting (a not-yet-live delta at the open would otherwise stall the full timeout).
+    val scannerGreeksQuiescenceMs: Long = 400,
     val starvationAlertMs: Long = 2_000, // high-priority line wait that triggers an operator alert
     val starvationAlertCooldownMs: Long = 900_000, // one starvation alert per class per 15 min
     val historicalMaxPer10Min: Int = 55,

@@ -64,6 +64,7 @@ ibkr:
     messages-per-second: 45
     scanner-token-floor: 10
     greeks-snapshot-timeout-ms: 5000
+    scanner-greeks-quiescence-ms: 400   # scanner returns this long after a quote goes quiet w/o greeks (0 = old timeout-only behaviour)
     starvation-alert-ms: 2000
     starvation-alert-cooldown-ms: 900000
   connection:
