@@ -1,0 +1,105 @@
+databaseChangeLog:
+  # ---------------------------------------------------------------------------
+  # Sector diversification of the SPREAD universe (2026-07-14).
+  # The universe was ~44% Information Technology, so the spread scanner produced
+  # a tech-correlated book. This adds 76 liquid-optionable non-tech names and
+  # rebalances `enabled` to a ~9-10-per-GICS-sector active set (105 single names
+  # + 7 index/sector ETFs = 112 enabled). Only the `enabled` (spread-scanner)
+  # flag is touched; `flag_enabled` (bull-flag strategy) is left at its default
+  # false on the new rows and untouched on existing rows.
+  # Rationale + full ticker list: docs/UNIVERSE_DIVERSIFICATION.md
+  # Already applied live to the paper DB via the /universe API on 2026-07-14;
+  # this changeset is authored idempotently to reproduce that state.
+  # ---------------------------------------------------------------------------
+  - changeSet:
+      id: v27__universe_sector_diversification
+      author: solvina
+      changes:
+        - sql:
+            splitStatements: true
+            stripComments: false
+            sql: >
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'T', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='T');  -- Communication Services
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'TMUS', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='TMUS');  -- Communication Services
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'DIS', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='DIS');  -- Communication Services
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'CMCSA', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='CMCSA');  -- Communication Services
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'CHTR', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='CHTR');  -- Communication Services
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'WBD', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='WBD');  -- Communication Services
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'EA', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='EA');  -- Communication Services
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'TTWO', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='TTWO');  -- Communication Services
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'SPOT', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='SPOT');  -- Communication Services
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'NKE', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='NKE');  -- Consumer Discretionary
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'SBUX', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='SBUX');  -- Consumer Discretionary
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'LOW', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='LOW');  -- Consumer Discretionary
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'TGT', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='TGT');  -- Consumer Discretionary
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'LULU', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='LULU');  -- Consumer Discretionary
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'CMG', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='CMG');  -- Consumer Discretionary
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'ABNB', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='ABNB');  -- Consumer Discretionary
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'GM', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='GM');  -- Consumer Discretionary
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'F', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='F');  -- Consumer Discretionary
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'RCL', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='RCL');  -- Consumer Discretionary
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'KO', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='KO');  -- Consumer Staples
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'PM', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='PM');  -- Consumer Staples
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'MO', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='MO');  -- Consumer Staples
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'MDLZ', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='MDLZ');  -- Consumer Staples
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'CL', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='CL');  -- Consumer Staples
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'KMB', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='KMB');  -- Consumer Staples
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'GIS', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='GIS');  -- Consumer Staples
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'KR', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='KR');  -- Consumer Staples
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'ABBV', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='ABBV');  -- Health Care
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'AMGN', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='AMGN');  -- Health Care
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'GILD', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='GILD');  -- Health Care
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'BMY', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='BMY');  -- Health Care
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'ISRG', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='ISRG');  -- Health Care
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'WFC', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='WFC');  -- Financials
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'AXP', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='AXP');  -- Financials
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'BLK', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='BLK');  -- Financials
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'ICE', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='ICE');  -- Financials
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'CME', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='CME');  -- Financials
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'UPS', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='UPS');  -- Industrials
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'FDX', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='FDX');  -- Industrials
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'LMT', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='LMT');  -- Industrials
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'RTX', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='RTX');  -- Industrials
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'DE', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='DE');  -- Industrials
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'UNP', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='UNP');  -- Industrials
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'COP', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='COP');  -- Energy
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'SLB', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='SLB');  -- Energy
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'OXY', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='OXY');  -- Energy
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'EOG', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='EOG');  -- Energy
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'MPC', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='MPC');  -- Energy
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'VLO', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='VLO');  -- Energy
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'HAL', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='HAL');  -- Energy
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'FCX', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='FCX');  -- Materials
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'NEM', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='NEM');  -- Materials
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'NUE', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='NUE');  -- Materials
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'DOW', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='DOW');  -- Materials
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'APD', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='APD');  -- Materials
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'SHW', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='SHW');  -- Materials
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'CF', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='CF');  -- Materials
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'ALB', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='ALB');  -- Materials
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'NEE', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='NEE');  -- Utilities
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'DUK', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='DUK');  -- Utilities
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'SO', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='SO');  -- Utilities
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'D', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='D');  -- Utilities
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'AEP', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='AEP');  -- Utilities
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'EXC', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='EXC');  -- Utilities
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'VST', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='VST');  -- Utilities
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'CEG', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='CEG');  -- Utilities
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'PCG', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='PCG');  -- Utilities
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'AMT', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='AMT');  -- Real Estate
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'PLD', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='PLD');  -- Real Estate
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'SPG', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='SPG');  -- Real Estate
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'O', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='O');  -- Real Estate
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'CCI', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='CCI');  -- Real Estate
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'EQIX', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='EQIX');  -- Real Estate
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'DLR', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='DLR');  -- Real Estate
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'VICI', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='VICI');  -- Real Estate
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled) SELECT 'WELL', true, false WHERE NOT EXISTS (SELECT 1 FROM instrument_universe WHERE symbol='WELL');  -- Real Estate
+              UPDATE instrument_universe SET enabled = true  WHERE symbol IN ('AAPL','ABBV','ABNB','AEP','ALB','AMD','AMGN','AMT','APD','AVGO','AXP','BA','BAC','BLK','BMY','CAT','CCI','CEG','CF','CHTR','CL','CMCSA','CME','CMG','COP','COST','CRM','CVX','D','DE','DIA','DIS','DLR','DOW','DUK','EA','EOG','EQIX','EXC','F','FCX','FDX','GE','GILD','GIS','GM','GS','HAL','HON','ICE','ISRG','IWM','JNJ','JPM','KMB','KO','KR','LIN','LLY','LMT','LOW','LULU','MA','MDLZ','MO','MPC','MRK','MSFT','MU','NEE','NEM','NKE','NUE','NVDA','O','ORCL','OXY','PCG','PG','PLD','PLTR','PM','QCOM','QQQ','RCL','RTX','SBUX','SHW','SLB','SO','SPG','SPOT','SPY','T','TGT','TMO','TMUS','TTWO','UNH','UNP','UPS','V','VICI','VLO','VST','WBD','WELL','WFC','XLE','XLF','XLV','XOM');
+              UPDATE instrument_universe SET enabled = false WHERE symbol IN ('AAL','AAOI','ABT','ADBE','ADI','ADSK','ALAB','ALV','AMAT','AMZN','ANET','APH','APP','ASML','ASTS','AXTI','BE','BKNG','C','CBRS','CIEN','COHR','COIN','CRDO','CRWD','CRWV','CSCO','CVS','DDOG','DELL','ECHO','GEV','GLW','GOOG','GOOGL','HD','HOOD','HPE','IBM','INTC','INTU','IONQ','IREN','KLAC','LITE','LRCX','MCD','META','MRVL','MS','MSTR','NBIS','NFLX','NOW','PANW','PEP','PFE','RKLB','ROKU','SAP','SCHW','SIE','SMCI','SNDK','SNOW','SPCX','STX','SYK','TER','TSLA','TXN','UBER','VRT','VZ','WDC','WMT');
+      rollback:
+        - sql:
+            splitStatements: true
+            sql: >
+              UPDATE instrument_universe SET enabled = true WHERE symbol IN ('AAL','AAOI','ABT','ADBE','ADI','ADSK','ALAB','ALV','AMAT','AMZN','ANET','APH','APP','ASML','ASTS','AXTI','BE','BKNG','C','CBRS','CIEN','COHR','COIN','CRDO','CRWD','CRWV','CSCO','CVS','DDOG','DELL','ECHO','GEV','GLW','GOOG','GOOGL','HD','HOOD','HPE','IBM','INTC','INTU','IONQ','IREN','KLAC','LITE','LRCX','MCD','META','MRVL','MS','MSTR','NBIS','NFLX','NOW','PANW','PEP','PFE','RKLB','ROKU','SAP','SCHW','SIE','SMCI','SNDK','SNOW','SPCX','STX','SYK','TER','TSLA','TXN','UBER','VRT','VZ','WDC','WMT');
+              DELETE FROM instrument_universe WHERE symbol IN ('ABBV','ABNB','AEP','ALB','AMGN','AMT','APD','AXP','BLK','BMY','CCI','CEG','CF','CHTR','CL','CMCSA','CME','CMG','COP','D','DE','DIS','DLR','DOW','DUK','EA','EOG','EQIX','EXC','F','FCX','FDX','GILD','GIS','GM','HAL','ICE','ISRG','KMB','KO','KR','LMT','LOW','LULU','MDLZ','MO','MPC','NEE','NEM','NKE','NUE','O','OXY','PCG','PLD','PM','RCL','RTX','SBUX','SHW','SLB','SO','SPG','SPOT','T','TGT','TMUS','TTWO','UNP','UPS','VICI','VLO','VST','WBD','WELL','WFC');

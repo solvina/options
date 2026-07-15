@@ -41,3 +41,5 @@ databaseChangeLog:
       file: db/changelog/v25__spread_last_underlying_price.yaml
   - include:
       file: db/changelog/v26__flag_trail_amount.yaml
+  - include:
+      file: db/changelog/v27__universe_sector_diversification.yaml
