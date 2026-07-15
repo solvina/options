@@ -10,6 +10,13 @@ interface UniversePort {
 
     fun getActiveSymbols(): List<Symbol>
 
+    /**
+     * GICS sector label for [symbol] (e.g. "Information Technology"), or null when unknown.
+     * Backs the per-sector open-spread cap. Defaults to null; the persistence adapter overrides it
+     * with the cached universe value so unit-test fakes need no sector wiring.
+     */
+    fun sectorOf(symbol: Symbol): String? = null
+
     /** Returns true if the underlying exchange for [symbol] is currently within regular trading hours. */
     fun isMarketOpen(symbol: Symbol): Boolean
 

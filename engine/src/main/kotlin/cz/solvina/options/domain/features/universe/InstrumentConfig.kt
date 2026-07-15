@@ -9,6 +9,9 @@ data class InstrumentConfig(
     val enabled: Boolean = true,
     // Flag-strategy membership (intraday momentum). Independent of [enabled] (spread membership).
     val flagEnabled: Boolean = false,
+    // GICS sector label (e.g. "Information Technology"). Backs the per-sector open-spread cap that
+    // keeps one theme from dominating the book. Null = unknown (fails open — not counted/limited).
+    val sector: String? = null,
     // Entry filter overrides — null means use global ScannerConfig default
     val ivRankThreshold: Double? = null,
     val minDte: Int? = null,

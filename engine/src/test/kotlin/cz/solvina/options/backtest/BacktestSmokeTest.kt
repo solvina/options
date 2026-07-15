@@ -137,6 +137,7 @@ class BacktestSmokeTest {
                 marketTickPort = marketTickAdapter,
                 orderExecutionPort = orderExecutionAdapter,
                 spreadQuery = spreadQuery,
+                universePort = universePort,
                 writerRegistry = SpreadEntryWriterRegistry(listOf(BullPutSpreadEntryWriter(spreadAdapter, clock))),
                 validator =
                     cz.solvina.options.domain.features.execution.PreTradeValidator(

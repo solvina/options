@@ -124,6 +124,10 @@ components:
           type: boolean
           default: false
           description: Flag-strategy (intraday momentum) membership. Defaults to false when omitted.
+        sector:
+          type: string
+          nullable: true
+          description: GICS sector label (e.g. "Information Technology"). Backs the per-sector open-spread cap.
         ivRankThreshold:
           type: number
           format: double

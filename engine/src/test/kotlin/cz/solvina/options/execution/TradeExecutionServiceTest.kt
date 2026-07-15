@@ -25,12 +25,15 @@ import cz.solvina.options.domain.features.spread.model.BullPutSpread
 import cz.solvina.options.domain.features.spread.model.SpreadLeg
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
 import cz.solvina.options.domain.features.spread.strategy.bullput.BullPutSpreadEntryWriter
+import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
 import cz.solvina.options.domain.models.OptionType
 import cz.solvina.options.domain.models.Symbol
 import cz.solvina.options.testutil.InMemoryBearCallSpreadPort
 import io.github.oshai.kotlinlogging.KotlinLogging
+import io.mockk.every
+import io.mockk.mockk
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
@@ -122,12 +125,14 @@ class TradeExecutionServiceTest {
         accountPort: AccountPort = buildAccountPort(),
         config: ScannerConfig = baseConfig,
         bullPutConfig: BullPutScannerConfig = baseBullPut,
+        universePort: UniversePort = mockk(relaxed = true),
     ): TradeExecutionService {
         val spreadQuery = SpreadQueryFacade(spreadPort, InMemoryBearCallSpreadPort())
         return TradeExecutionService(
             marketTickPort = marketTickPort,
             orderExecutionPort = orderExecutionPort,
             spreadQuery = spreadQuery,
+            universePort = universePort,
             writerRegistry = SpreadEntryWriterRegistry(listOf(BullPutSpreadEntryWriter(spreadPort, Clock.systemUTC()))),
             validator =
                 PreTradeValidator(
@@ -223,6 +228,62 @@ class TradeExecutionServiceTest {
             val result = service.execute(buildRequest(targetCredit = BigDecimal("1.00")))
 
             assertEquals(ExecutionOutcome.CAP_REACHED, result.outcome)
+        }
+
+    @Test
+    fun `rejects entry with SECTOR_CAP_REACHED when the sector is already at maxOpenSpreadsPerSector`() =
+        runTest {
+            // Two OPEN spreads on other symbols in the SAME sector as the SPY candidate. The global cap
+            // (5) and daily limit are not hit, but the per-sector cap (2) is — the entry must be rejected
+            // so one theme can't dominate the book.
+            val spreadPort = InMemoryBullPutSpreadPort()
+            spreadPort.save(buildOpenSpread().copy(id = UUID.randomUUID(), symbol = Symbol("AAA")))
+            spreadPort.save(buildOpenSpread().copy(id = UUID.randomUUID(), symbol = Symbol("BBB")))
+
+            val universePort = mockk<UniversePort>(relaxed = true)
+            every { universePort.sectorOf(any()) } returns "Information Technology"
+
+            val service =
+                buildService(
+                    marketTickPort = fixedMarketTickPort(500.0, tickFlowAtCredit(1.00)),
+                    orderExecutionPort = noopComboOrderPort(),
+                    spreadPort = spreadPort,
+                    config = baseConfig.copy(maxOpenSpreads = 5, maxOpenSpreadsPerSector = 2),
+                    universePort = universePort,
+                )
+
+            val result = service.execute(buildRequest(targetCredit = BigDecimal("1.00")))
+
+            assertEquals(ExecutionOutcome.SECTOR_CAP_REACHED, result.outcome)
+        }
+
+    @Test
+    fun `allows entry when the candidate's sector is below the per-sector cap`() =
+        runTest {
+            // Same two OPEN spreads, but they are in a DIFFERENT sector than the SPY candidate, so the
+            // per-sector count for the candidate's sector is zero — the entry must proceed to a fill.
+            val spreadPort = InMemoryBullPutSpreadPort()
+            spreadPort.save(buildOpenSpread().copy(id = UUID.randomUUID(), symbol = Symbol("AAA")))
+            spreadPort.save(buildOpenSpread().copy(id = UUID.randomUUID(), symbol = Symbol("BBB")))
+
+            val universePort = mockk<UniversePort>(relaxed = true)
+            every { universePort.sectorOf(Symbol("SPY")) } returns "Energy"
+            every { universePort.sectorOf(Symbol("AAA")) } returns "Information Technology"
+            every { universePort.sectorOf(Symbol("BBB")) } returns "Information Technology"
+
+            val fillChannel = Channel<OrderStatus>(1)
+            val service =
+                buildService(
+                    marketTickPort = fixedMarketTickPort(500.0, tickFlowAtCredit(1.00)),
+                    orderExecutionPort = immediateComboOrderPort(fillChannel) { _, _, _ -> fillChannel.send(OrderStatus.FILLED) },
+                    spreadPort = spreadPort,
+                    config = baseConfig.copy(maxOpenSpreads = 5, maxOpenSpreadsPerSector = 2),
+                    universePort = universePort,
+                )
+
+            val result = service.execute(buildRequest(targetCredit = BigDecimal("1.00")))
+
+            assertEquals(ExecutionOutcome.FILLED, result.outcome)
         }
 
     @Test

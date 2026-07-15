@@ -17,6 +17,7 @@ import cz.solvina.options.domain.features.scanner.StrategyParamsRegistry
 import cz.solvina.options.domain.features.spread.SpreadQueryFacade
 import cz.solvina.options.domain.features.spread.model.Spread
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
+import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -56,6 +57,8 @@ class TradeExecutionService(
     private val orderExecutionPort: OrderExecutionPort,
     // Cross-strategy active-spread count for the shared cap (bull puts + bear calls).
     private val spreadQuery: SpreadQueryFacade,
+    // Sector lookup for the per-sector open-spread cap.
+    private val universePort: UniversePort,
     private val writerRegistry: SpreadEntryWriterRegistry,
     private val validator: PreTradeValidator,
     private val config: ScannerConfig,
@@ -110,10 +113,17 @@ class TradeExecutionService(
                     // tech bull puts into a vol spike). In-flight entries count as prospective fills.
                     val startOfDay = LocalDate.now(clock).atStartOfDay(clock.zone).toInstant()
                     val filledToday = spreadQuery.filledSpreadCountSince(startOfDay) + inFlightSymbols.size
+                    // Per-sector diversification cap: count active spreads (established OPEN/CLOSING +
+                    // in-flight) whose symbol shares this candidate's sector. One spread per symbol, so a
+                    // symbol set count == a spread count. Unknown sector (null) → fail open, never capped.
+                    val candidateSector = universePort.sectorOf(request.underlyingSymbol)
+                    val sectorActive = if (candidateSector == null) 0 else sectorActiveCount(candidateSector)
                     if (active >= config.maxOpenSpreads) {
                         ExecutionOutcome.CAP_REACHED
                     } else if (filledToday >= config.maxNewEntriesPerDay) {
                         ExecutionOutcome.DAILY_LIMIT_REACHED
+                    } else if (candidateSector != null && sectorActive >= config.maxOpenSpreadsPerSector) {
+                        ExecutionOutcome.SECTOR_CAP_REACHED
                     } else {
                         inFlightSymbols[request.underlyingSymbol] = Unit
                         null
@@ -138,6 +148,16 @@ class TradeExecutionService(
                     "REJECT ${request.underlyingSymbol}  ${request.legsLabel}  reason=DAILY_LIMIT_REACHED"
                 }
             }
+            if (reservation == ExecutionOutcome.SECTOR_CAP_REACHED) {
+                val sector = universePort.sectorOf(request.underlyingSymbol)
+                logger.info {
+                    "[${request.underlyingSymbol}] SECTOR_CAP_REACHED — sector '$sector' at " +
+                        "maxOpenSpreadsPerSector=${config.maxOpenSpreadsPerSector}, skipping entry"
+                }
+                tradeLogger.info {
+                    "REJECT ${request.underlyingSymbol}  ${request.legsLabel}  reason=SECTOR_CAP_REACHED  sector=$sector"
+                }
+            }
             return TradeExecutionResult(reservation)
         }
 
@@ -146,6 +166,13 @@ class TradeExecutionService(
         } finally {
             inFlightSymbols.remove(request.underlyingSymbol)
         }
+    }
+
+    /** Active spreads (established OPEN/CLOSING + in-flight) whose symbol belongs to [sector]. */
+    private suspend fun sectorActiveCount(sector: String): Int {
+        val established = spreadQuery.symbolsWithOpenOrClosingSpread().count { universePort.sectorOf(it) == sector }
+        val inFlight = inFlightSymbols.keys.count { universePort.sectorOf(it) == sector }
+        return established + inFlight
     }
 
     override fun isInFlight(symbol: Symbol): Boolean = inFlightSymbols.containsKey(symbol)

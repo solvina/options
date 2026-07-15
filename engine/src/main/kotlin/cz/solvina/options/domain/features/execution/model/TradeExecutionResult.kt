@@ -33,6 +33,9 @@ enum class ExecutionOutcome {
     /** Pre-trade check: spreads already FILLED today reached maxNewEntriesPerDay (correlation throttle). */
     DAILY_LIMIT_REACHED,
 
+    /** Pre-trade check: this symbol's GICS sector already holds maxOpenSpreadsPerSector active spreads. */
+    SECTOR_CAP_REACHED,
+
     /** Pre-trade check: available funds < maxRiskPerContract. */
     CAPITAL_REJECTED,
 

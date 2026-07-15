@@ -40,6 +40,8 @@ class UniversePersistenceAdapter(
 
     override fun getActiveSymbols(): List<Symbol> = getWatchlist().filter { isMarketOpen(it) }
 
+    override fun sectorOf(symbol: Symbol): String? = cache[symbol.value]?.sector
+
     override fun isMarketOpen(symbol: Symbol): Boolean {
         val def = instrumentsConfig.instruments[symbol.value] ?: InstrumentDef()
         val hours = instrumentsConfig.exchanges[def.marketExchange] ?: US_HOURS
@@ -100,6 +102,7 @@ class UniversePersistenceAdapter(
             symbol = Symbol(symbol),
             enabled = enabled,
             flagEnabled = flagEnabled,
+            sector = sector,
             ivRankThreshold = ivRankThreshold?.toDouble(),
             minDte = minDte,
             maxDte = maxDte,
@@ -123,6 +126,7 @@ class UniversePersistenceAdapter(
             symbol = symbol.value,
             enabled = enabled,
             flagEnabled = flagEnabled,
+            sector = sector,
             ivRankThreshold = ivRankThreshold?.toBigDecimal(),
             minDte = minDte,
             maxDte = maxDte,

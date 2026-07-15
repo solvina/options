@@ -1,0 +1,40 @@
+databaseChangeLog:
+  # ---------------------------------------------------------------------------
+  # Per-sector open-spread cap support (2026-07-14).
+  # Adds instrument_universe.sector (GICS label) and backfills it for the whole
+  # universe, so TradeExecutionService can cap active spreads per sector
+  # (scanner.max-open-spreads-per-sector, default 10 — loose for now). Disabled
+  # legacy names are classified too, so an open spread on a now-disabled symbol
+  # still counts toward its sector. Broad-index ETFs are labelled 'Index' and
+  # are never sector-capped in practice (they hold no spreads).
+  # See docs/UNIVERSE_DIVERSIFICATION.md.
+  # ---------------------------------------------------------------------------
+  - changeSet:
+      id: v28__instrument_sector
+      author: solvina
+      changes:
+        - addColumn:
+            tableName: instrument_universe
+            columns:
+              - column:
+                  name: sector
+                  type: TEXT
+        - sql:
+            splitStatements: true
+            sql: >
+              UPDATE instrument_universe SET sector = 'Communication Services' WHERE symbol IN ('ASTS','CHTR','CMCSA','DIS','EA','GOOG','GOOGL','META','NFLX','ROKU','SPOT','T','TMUS','TTWO','VZ','WBD');
+              UPDATE instrument_universe SET sector = 'Consumer Discretionary' WHERE symbol IN ('ABNB','ALV','AMZN','BKNG','CMG','F','GM','HD','LOW','LULU','MCD','NKE','RCL','SBUX','TGT','TSLA');
+              UPDATE instrument_universe SET sector = 'Consumer Staples' WHERE symbol IN ('CL','COST','GIS','KMB','KO','KR','MDLZ','MO','PEP','PG','PM','WMT');
+              UPDATE instrument_universe SET sector = 'Energy' WHERE symbol IN ('COP','CVX','EOG','HAL','MPC','OXY','SLB','VLO','XLE','XOM');
+              UPDATE instrument_universe SET sector = 'Financials' WHERE symbol IN ('AXP','BAC','BLK','C','CME','COIN','GS','HOOD','ICE','JPM','MA','MS','SCHW','V','WFC','XLF');
+              UPDATE instrument_universe SET sector = 'Health Care' WHERE symbol IN ('ABBV','ABT','AMGN','BMY','CVS','GILD','ISRG','JNJ','LLY','MRK','PFE','SYK','TMO','UNH','XLV');
+              UPDATE instrument_universe SET sector = 'Index' WHERE symbol IN ('DIA','IWM','QQQ','SPY');
+              UPDATE instrument_universe SET sector = 'Industrials' WHERE symbol IN ('AAL','BA','BE','CAT','DE','ECHO','FDX','GE','GEV','HON','LMT','RKLB','RTX','SIE','SPCX','UBER','UNP','UPS','VRT');
+              UPDATE instrument_universe SET sector = 'Information Technology' WHERE symbol IN ('AAOI','AAPL','ADBE','ADI','ADSK','ALAB','AMAT','AMD','ANET','APH','APP','ASML','AVGO','AXTI','CBRS','CIEN','COHR','CRDO','CRM','CRWD','CRWV','CSCO','DDOG','DELL','GLW','HPE','IBM','INTC','INTU','IONQ','IREN','KLAC','LITE','LRCX','MRVL','MSFT','MSTR','MU','NBIS','NOW','NVDA','ORCL','PANW','PLTR','QCOM','SAP','SMCI','SNDK','SNOW','STX','TER','TXN','WDC');
+              UPDATE instrument_universe SET sector = 'Materials' WHERE symbol IN ('ALB','APD','CF','DOW','FCX','LIN','NEM','NUE','SHW');
+              UPDATE instrument_universe SET sector = 'Real Estate' WHERE symbol IN ('AMT','CCI','DLR','EQIX','O','PLD','SPG','VICI','WELL');
+              UPDATE instrument_universe SET sector = 'Utilities' WHERE symbol IN ('AEP','CEG','D','DUK','EXC','NEE','PCG','SO','VST');
+      rollback:
+        - dropColumn:
+            tableName: instrument_universe
+            columnName: sector

@@ -14,6 +14,12 @@ data class ScannerConfig(
     val watchlist: List<String> = emptyList(),
     // Shared portfolio cap across all strategies (bull put + bear call)
     val maxOpenSpreads: Int = 5,
+    // Per-GICS-sector open-spread cap (OPEN+CLOSING+in-flight in one sector). Diversification guard on
+    // top of maxOpenSpreads so one theme (e.g. semis) can't fill the book on a correlated IV spike.
+    // Deliberately loose for now — with ~9-10 names/sector and one spread per symbol it is near
+    // non-binding at 10; tighten toward 2-3 once validated. Sector comes from InstrumentConfig.sector;
+    // symbols with an unknown (null) sector are never capped (fail-open).
+    val maxOpenSpreadsPerSector: Int = 10,
     // Fees: IBKR charges per contract; 2 legs × feePerContract / contractMultiplier = fee per share
     val feePerContract: BigDecimal = BigDecimal("0.65"),
     // Shares per option contract (US equity options = 100); used to convert per-contract → per-share

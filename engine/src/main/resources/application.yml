@@ -88,6 +88,8 @@ scanner:
   # not a low cap, is what addresses that. Revisit if the exit monitor saturates again at 20.
   max-open-spreads: 20              # portfolio cap across bull put + bear call combined
   max-new-entries-per-day: 15       # fills per day across strategies — one scan day can't fill the book
+  max-open-spreads-per-sector: 10   # per-GICS-sector diversification cap; loose for now (≈non-binding), tighten to 2-3 later
+
   execution-timeout-minutes: 15
   ticks-before-price-adjust: 5
   price-adjust-interval-seconds: 30
