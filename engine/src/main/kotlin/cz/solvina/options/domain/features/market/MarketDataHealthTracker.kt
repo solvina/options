@@ -37,6 +37,7 @@ class MarketDataHealthTracker(
     private val lock = Any()
     private val successTimes = ArrayDeque<Long>()
     private val failureTimes = ArrayDeque<Long>()
+    private val competingTimes = ArrayDeque<Long>()
 
     @Volatile private var lastSuccessAt: Long? = null
 
@@ -77,8 +78,21 @@ class MarketDataHealthTracker(
 
     /** Called when IBKR reports the "connected from a different IP address" / competing-session error. */
     fun recordCompetingSession() {
-        lastCompetingSessionAt = clock.millis()
+        val now = clock.millis()
+        lastCompetingSessionAt = now
+        synchronized(lock) {
+            competingTimes.addLast(now)
+            while (competingTimes.isNotEmpty() && now - competingTimes.first() > COMPETING_COUNT_WINDOW_MS) competingTimes.removeFirst()
+        }
     }
+
+    /** Count of competing-session denials in the trailing hour — for the "N in last hour" alert body. */
+    fun competingCountLastHour(): Int =
+        synchronized(lock) {
+            val now = clock.millis()
+            while (competingTimes.isNotEmpty() && now - competingTimes.first() > COMPETING_COUNT_WINDOW_MS) competingTimes.removeFirst()
+            competingTimes.size
+        }
 
     fun snapshot(): Snapshot =
         synchronized(lock) {
@@ -111,5 +125,8 @@ class MarketDataHealthTracker(
 
         /** A competing-session error newer than this ⇒ still competing (these errors fire every ~10-20s). */
         const val COMPETING_FRESH_MS = 120_000L // 2 min
+
+        /** Rolling window for the competing-session denial count reported in alerts. */
+        const val COMPETING_COUNT_WINDOW_MS = 3_600_000L // 1 hour
     }
 }
