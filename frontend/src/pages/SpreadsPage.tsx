@@ -9,6 +9,7 @@ import {
 import type { SpreadDto, PagedSpreadsDto } from '../generated/spreads/types.gen'
 import { SpreadStatusBadge } from '../components/spreads/SpreadStatusBadge'
 import { usePersistentSortable, sorted, SortTh } from '../lib/sort'
+import { useLocalStorage } from '../lib/useLocalStorage'
 
 const STATUS_FILTERS = ['ALL', 'OPEN', 'CLOSED_PROFIT', 'CLOSED_STOP', 'CLOSED_TIME', 'CLOSED_MANUAL'] as const
 type StatusFilter = (typeof STATUS_FILTERS)[number]
@@ -137,7 +138,7 @@ function SpreadRow({ spread }: { spread: SpreadDto }) {
 }
 
 export function SpreadsPage() {
-  const [filter, setFilter] = useState<StatusFilter>('ALL')
+  const [filter, setFilter] = useLocalStorage<StatusFilter>('spreads.filter', 'ALL')
   const [page, setPage] = useState(0)
   const { sort, toggle } = usePersistentSortable('spreads', 'openedAt', 'desc')
 

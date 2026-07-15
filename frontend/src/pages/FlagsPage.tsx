@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useLocalStorage } from '../lib/useLocalStorage'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   listFlagsOptions,
@@ -597,7 +598,7 @@ type HistoryFilter = (typeof HISTORY_FILTERS)[number]
 // ─────────────────────────────────────────────
 
 export function FlagsPage() {
-  const [statusFilter, setStatusFilter] = useState<HistoryFilter>('ALL')
+  const [statusFilter, setStatusFilter] = useLocalStorage<HistoryFilter>('flags.statusFilter', 'ALL')
   const [sort, setSort] = useState<SortField>('openedAt')
   const [sortDir, setSortDir] = useState<SortDir>('DESC')
   const [page, setPage] = useState(0)
