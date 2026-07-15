@@ -7,7 +7,7 @@ import {
   pauseMonitorMutation,
   resumeMonitorMutation,
 } from '../generated/spreads/@tanstack/react-query.gen'
-import { useSortable, sorted, SortTh } from '../lib/sort'
+import { TickerStatusTable } from '../components/scanner/TickerStatusTable'
 
 function KillSwitchRow({
   label,
@@ -53,7 +53,6 @@ function KillSwitchRow({
 export function ScannerPage() {
   const qc = useQueryClient()
   const invalidate = () => qc.invalidateQueries({ queryKey: ['getScannerStatus'] })
-  const { sort, toggle } = useSortable('ivRank', 'desc')
 
   const { data, isLoading, isError } = useQuery({
     ...getScannerStatusOptions(),
@@ -66,17 +65,8 @@ export function ScannerPage() {
   const pauseMonitor = useMutation({ ...pauseMonitorMutation(), onSuccess: invalidate })
   const resumeMonitor = useMutation({ ...resumeMonitorMutation(), onSuccess: invalidate })
 
-  const ivRankEntries: [string, number][] = data?.ivRanks
-    ? Object.entries(data.ivRanks as Record<string, number>)
-    : []
-  const sortedIvRanks = sorted(ivRankEntries, sort, ([sym, rank], k) =>
-    k === 'ivRank' ? rank : sym,
-  )
-
-  const thClass = 'px-4 py-2 text-left'
-
   return (
-    <div className="space-y-8 max-w-2xl">
+    <div className="space-y-8 max-w-6xl">
       <h1 className="text-xl font-semibold">Scanner</h1>
 
       {isLoading && <p className="text-muted-foreground text-sm">Loading…</p>}
@@ -132,38 +122,7 @@ export function ScannerPage() {
             )}
           </section>
 
-          {sortedIvRanks.length > 0 && (
-            <section>
-              <h2 className="text-base font-semibold mb-3">IV Ranks</h2>
-              <div className="rounded-lg border border-border overflow-hidden">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-border bg-muted/50 text-muted-foreground text-xs uppercase tracking-wide">
-                      <SortTh label="Symbol" col="symbol" sort={sort} onSort={toggle} className={thClass} />
-                      <SortTh label="IV Rank" col="ivRank" sort={sort} onSort={toggle} className={thClass} />
-                      <th className={thClass}></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {sortedIvRanks.map(([symbol, rank]) => (
-                      <tr key={symbol} className="border-b border-border last:border-0 hover:bg-muted/40">
-                        <td className="px-4 py-2 font-medium">{symbol}</td>
-                        <td className="px-4 py-2 tabular-nums">{rank.toFixed(1)}%</td>
-                        <td className="px-4 py-2 w-32">
-                          <div className="h-1.5 rounded-full bg-muted overflow-hidden">
-                            <div
-                              className={`h-full rounded-full ${rank >= 50 ? 'bg-green-500' : rank >= 30 ? 'bg-amber-400' : 'bg-muted-foreground/30'}`}
-                              style={{ width: `${Math.min(rank, 100)}%` }}
-                            />
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          )}
+          <TickerStatusTable />
         </>
       )}
     </div>

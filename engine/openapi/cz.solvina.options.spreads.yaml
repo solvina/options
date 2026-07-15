@@ -172,6 +172,26 @@ paths:
               schema:
                 $ref: '#/components/schemas/ScannerStatusDto'
 
+  /scanner/ticker-status:
+    get:
+      tags:
+        - Scanner
+      summary: Per-symbol status of the most recent scan pass (in-memory, live)
+      description: >
+        One row per symbol evaluated in the last scan — IV rank, greeks of the selected leg, funnel
+        outcome / reject reason, greek-delivery coverage, directional regime, and freshness. Only the
+        symbols from the latest run are returned.
+      operationId: getTickerStatus
+      responses:
+        '200':
+          description: Per-symbol scan status
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SymbolScanStatusDto'
+
   /scanner/pause:
     post:
       tags:
@@ -434,3 +454,91 @@ components:
           type: boolean
         monitorPaused:
           type: boolean
+
+    SymbolScanStatusDto:
+      type: object
+      required:
+        - symbol
+        - runId
+        - evaluatedAt
+        - outcome
+      properties:
+        symbol:
+          type: string
+        runId:
+          type: integer
+          format: int64
+        evaluatedAt:
+          type: string
+          format: date-time
+          description: When this symbol was evaluated in the latest scan pass
+        outcome:
+          type: string
+          description: ENTERED, REJECTED, ALREADY_OPEN, COOLDOWN, GATE_SUPPRESSED, or ERROR
+        strategyId:
+          type: string
+          nullable: true
+          description: BULL_PUT or BEAR_CALL — which strategy this row reflects
+        rejectReason:
+          type: string
+          nullable: true
+          description: Funnel stage that rejected the symbol (null unless outcome is REJECTED)
+        regime:
+          type: string
+          nullable: true
+          description: Cached trend regime — UPTREND, DOWNTREND, NEUTRAL
+        bias:
+          type: string
+          nullable: true
+          description: Directional bias — BULLISH, BEARISH, NEUTRAL
+        rsi:
+          type: number
+          nullable: true
+        ivRank:
+          type: number
+          nullable: true
+        ivRankThreshold:
+          type: number
+          nullable: true
+        underlyingPrice:
+          type: number
+          nullable: true
+        expiry:
+          type: string
+          format: date
+          nullable: true
+        dte:
+          type: integer
+          nullable: true
+        shortStrike:
+          type: number
+          nullable: true
+        shortDelta:
+          type: number
+          nullable: true
+        longStrike:
+          type: number
+          nullable: true
+        width:
+          type: number
+          nullable: true
+        midCredit:
+          type: number
+          nullable: true
+        bidCredit:
+          type: number
+          nullable: true
+        maxRiskPerShare:
+          type: number
+          nullable: true
+        creditPctOfWidth:
+          type: number
+          nullable: true
+        strikesRequested:
+          type: integer
+          nullable: true
+          description: Candidate strikes requested in the last chain fetch (greek-coverage denominator)
+        strikesWithGreeks:
+          type: integer
+          nullable: true
+          description: Strikes that returned a live greek — a low ratio signals market-data starvation

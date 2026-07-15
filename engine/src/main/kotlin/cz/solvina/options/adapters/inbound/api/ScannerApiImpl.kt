@@ -3,14 +3,18 @@ package cz.solvina.options.adapters.inbound.api
 import cz.solvina.options.domain.features.scanner.ScannerConfig
 import cz.solvina.options.domain.features.scanner.ScannerPort
 import cz.solvina.options.domain.features.scanner.ScannerService
+import cz.solvina.options.domain.features.scanner.SymbolScanStatus
 import cz.solvina.options.domain.features.scanner.TradingKillSwitch
 import cz.solvina.options.domain.features.spread.SpreadQueryFacade
 import `cz.solvina.options.spreads`.api.MonitorApi
 import `cz.solvina.options.spreads`.api.ScannerApi
 import `cz.solvina.options.spreads`.dto.ScannerStatusDto
+import `cz.solvina.options.spreads`.dto.SymbolScanStatusDto
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.asFlow
 import kotlinx.coroutines.launch
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.RequestMapping
@@ -55,6 +59,37 @@ class ScannerApiImpl(
             )
         return ResponseEntity.ok(dto)
     }
+
+    override fun getTickerStatus(): ResponseEntity<Flow<SymbolScanStatusDto>> =
+        ResponseEntity.ok(scannerService.getScanStatus().map { it.toDto() }.asFlow())
+
+    private fun SymbolScanStatus.toDto(): SymbolScanStatusDto =
+        SymbolScanStatusDto(
+            symbol = symbol,
+            runId = runId,
+            evaluatedAt = evaluatedAt.atOffset(ZoneOffset.UTC),
+            outcome = outcome.name,
+            strategyId = strategyId?.name,
+            rejectReason = rejectReason?.name,
+            regime = regime?.name,
+            bias = bias?.name,
+            rsi = rsi?.toBigDecimal(),
+            ivRank = detail?.ivRank?.toBigDecimal(),
+            ivRankThreshold = detail?.ivRankThreshold?.toBigDecimal(),
+            underlyingPrice = detail?.underlyingPrice,
+            expiry = detail?.expiry,
+            dte = detail?.dte,
+            shortStrike = detail?.shortStrike,
+            shortDelta = detail?.shortDelta?.toBigDecimal(),
+            longStrike = detail?.longStrike,
+            width = detail?.width,
+            midCredit = detail?.midCredit,
+            bidCredit = detail?.bidCredit,
+            maxRiskPerShare = detail?.maxRiskPerShare,
+            creditPctOfWidth = detail?.creditPctOfWidth?.toBigDecimal(),
+            strikesRequested = strikesRequested,
+            strikesWithGreeks = strikesWithGreeks,
+        )
 
     override suspend fun pauseScanner(): ResponseEntity<Unit> {
         killSwitch.scannerPaused = true

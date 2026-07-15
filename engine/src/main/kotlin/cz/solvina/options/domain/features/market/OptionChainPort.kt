@@ -1,5 +1,6 @@
 package cz.solvina.options.domain.features.market
 
+import cz.solvina.options.domain.features.market.model.ChainCoverage
 import cz.solvina.options.domain.features.market.model.OptionQuote
 import cz.solvina.options.domain.features.spread.model.StrategyId
 import cz.solvina.options.domain.models.Money
@@ -20,4 +21,11 @@ interface OptionChainPort {
         underlyingPrice: Money,
         strategyId: StrategyId,
     ): List<OptionQuote>
+
+    /**
+     * Greek-delivery coverage for the most recent [getOptionChain] call for [symbol], or null if the
+     * symbol has not been fetched since startup. Observational only — used by the scan-status table
+     * to distinguish "no greeks arrived" from "no tradeable strikes".
+     */
+    fun lastCoverage(symbol: Symbol): ChainCoverage? = null
 }

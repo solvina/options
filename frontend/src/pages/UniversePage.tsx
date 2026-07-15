@@ -7,7 +7,7 @@ import {
   deleteInstrumentMutation,
 } from '../generated/universe/@tanstack/react-query.gen'
 import type { InstrumentConfigDto } from '../generated/universe/types.gen'
-import { useSortable, sorted, SortTh } from '../lib/sort'
+import { usePersistentSortable, sorted, SortTh } from '../lib/sort'
 
 const DEFAULTS = {
   ivRankThreshold: 45,
@@ -247,7 +247,7 @@ export function UniversePage() {
   const { data, isLoading, error } = useQuery(listUniverseOptions())
   const qc = useQueryClient()
   const [addSymbol, setAddSymbol] = useState('')
-  const { sort, toggle } = useSortable('symbol')
+  const { sort, toggle } = usePersistentSortable('universe', 'symbol')
   const save = useMutation({
     ...saveInstrumentMutation(),
     onSuccess: () => {

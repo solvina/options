@@ -188,6 +188,7 @@ class BacktestSmokeTest {
                 spreadQuery = spreadQuery,
                 config = config,
                 clock = clock,
+                optionChainPort = optionChainAdapter,
             )
 
         val spreadManager =

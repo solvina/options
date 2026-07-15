@@ -5,6 +5,7 @@ import cz.solvina.options.domain.features.market.OptionChainPort
 import cz.solvina.options.domain.features.market.model.OptionQuote
 import cz.solvina.options.domain.features.scanner.BearCallCandidateSelector
 import cz.solvina.options.domain.features.scanner.BearCallScannerConfig
+import cz.solvina.options.domain.features.scanner.requestOrNull
 import cz.solvina.options.domain.features.spread.model.StrategyId
 import cz.solvina.options.domain.features.universe.InstrumentConfig
 import cz.solvina.options.domain.features.universe.MarketSchedule
@@ -63,7 +64,7 @@ class BearCallCandidateSelectorTest {
     fun `no candidate when IV rank is below the threshold`() =
         runTest {
             // 40 % < default bear-call threshold 45 %.
-            val result = buildSelector(ivRank = 40.0).select(symbol, capitalOf50k)
+            val result = buildSelector(ivRank = 40.0).select(symbol, capitalOf50k).requestOrNull
             assertNull(result, "Low IV Rank must prevent entry")
         }
 
@@ -75,7 +76,7 @@ class BearCallCandidateSelectorTest {
                     call(strike = soldStrike, delta = 0.10, bid = 0.20, ask = 0.30), // too small
                     call(strike = boughtStrike, delta = 0.45, bid = 1.80, ask = 2.00), // too large
                 )
-            val result = buildSelector(chain = chain).select(symbol, capitalOf50k)
+            val result = buildSelector(chain = chain).select(symbol, capitalOf50k).requestOrNull
             assertNull(result, "No qualifying call delta must prevent entry")
         }
 
@@ -88,7 +89,7 @@ class BearCallCandidateSelectorTest {
                     call(strike = soldStrike, delta = 0.29, bid = 0.20, ask = 0.30),
                     call(strike = boughtStrike, delta = 0.22, bid = 0.05, ask = 0.15),
                 )
-            val result = buildSelector(chain = cheapChain).select(symbol, capitalOf50k)
+            val result = buildSelector(chain = cheapChain).select(symbol, capitalOf50k).requestOrNull
             assertNull(result, "Insufficient credit must prevent entry")
         }
 
@@ -96,14 +97,14 @@ class BearCallCandidateSelectorTest {
     fun `no candidate when position risk exceeds the capital allocation limit`() =
         runTest {
             // maxRiskPerContract $420 > allowed ($1000 × 2.5 % = $25).
-            val result = buildSelector().select(symbol, Money(BigDecimal("1000")))
+            val result = buildSelector().select(symbol, Money(BigDecimal("1000"))).requestOrNull
             assertNull(result, "Position risk exceeding capital limit must prevent entry")
         }
 
     @Test
     fun `happy path sells the lower-strike call, buys the higher, and computes credit and risk`() =
         runTest {
-            val result = buildSelector().select(symbol, capitalOf50k)
+            val result = buildSelector().select(symbol, capitalOf50k).requestOrNull
 
             assertNotNull(result)
             assertEquals(soldContract, result.soldContract)
@@ -129,7 +130,7 @@ class BearCallCandidateSelectorTest {
                         MarketSchedule(ZoneId.of("America/New_York"), LocalTime.of(9, 30), LocalTime.of(16, 0), "US")
                 }
 
-            val result = buildSelector(universePort = universePort).select(symbol, capitalOf50k)
+            val result = buildSelector(universePort = universePort).select(symbol, capitalOf50k).requestOrNull
 
             assertNull(result, "Imminent ex-dividend must block bear-call entry")
         }

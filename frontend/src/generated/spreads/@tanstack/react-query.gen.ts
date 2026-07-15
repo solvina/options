@@ -3,8 +3,8 @@
 import { type DefaultError, type InfiniteData, infiniteQueryOptions, queryOptions, type UseMutationOptions } from '@tanstack/react-query';
 
 import { client } from '../client.gen';
-import { forceCloseSpread, getScannerStatus, getSpreadAnalytics, getSpreadById, listSpreads, type Options, pauseMonitor, pauseScanner, refreshSpreadPnl, resumeMonitor, resumeScanner, softCloseSpread, triggerScan } from '../sdk.gen';
-import type { ForceCloseSpreadData, ForceCloseSpreadResponse, GetScannerStatusData, GetScannerStatusResponse, GetSpreadAnalyticsData, GetSpreadAnalyticsResponse, GetSpreadByIdData, GetSpreadByIdResponse, ListSpreadsData, ListSpreadsResponse, PauseMonitorData, PauseMonitorResponse, PauseScannerData, PauseScannerResponse, RefreshSpreadPnlData, RefreshSpreadPnlResponse, ResumeMonitorData, ResumeMonitorResponse, ResumeScannerData, ResumeScannerResponse, SoftCloseSpreadData, SoftCloseSpreadResponse, TriggerScanData } from '../types.gen';
+import { forceCloseSpread, getScannerStatus, getSpreadAnalytics, getSpreadById, getTickerStatus, listSpreads, type Options, pauseMonitor, pauseScanner, refreshSpreadPnl, resumeMonitor, resumeScanner, softCloseSpread, triggerScan } from '../sdk.gen';
+import type { ForceCloseSpreadData, ForceCloseSpreadResponse, GetScannerStatusData, GetScannerStatusResponse, GetSpreadAnalyticsData, GetSpreadAnalyticsResponse, GetSpreadByIdData, GetSpreadByIdResponse, GetTickerStatusData, GetTickerStatusResponse, ListSpreadsData, ListSpreadsResponse, PauseMonitorData, PauseMonitorResponse, PauseScannerData, PauseScannerResponse, RefreshSpreadPnlData, RefreshSpreadPnlResponse, ResumeMonitorData, ResumeMonitorResponse, ResumeScannerData, ResumeScannerResponse, SoftCloseSpreadData, SoftCloseSpreadResponse, TriggerScanData } from '../types.gen';
 
 export type QueryKey<TOptions extends Options> = [
     Pick<TOptions, 'baseUrl' | 'body' | 'headers' | 'path' | 'query'> & {
@@ -233,6 +233,27 @@ export const getScannerStatusOptions = (options?: Options<GetScannerStatusData>)
         return data;
     },
     queryKey: getScannerStatusQueryKey(options)
+});
+
+export const getTickerStatusQueryKey = (options?: Options<GetTickerStatusData>) => createQueryKey('getTickerStatus', options);
+
+/**
+ * Per-symbol status of the most recent scan pass (in-memory, live)
+ *
+ * One row per symbol evaluated in the last scan — IV rank, greeks of the selected leg, funnel outcome / reject reason, greek-delivery coverage, directional regime, and freshness. Only the symbols from the latest run are returned.
+ *
+ */
+export const getTickerStatusOptions = (options?: Options<GetTickerStatusData>) => queryOptions<GetTickerStatusResponse, DefaultError, GetTickerStatusResponse, ReturnType<typeof getTickerStatusQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await getTickerStatus({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: getTickerStatusQueryKey(options)
 });
 
 /**

@@ -8,7 +8,7 @@ import {
 } from '../generated/spreads/@tanstack/react-query.gen'
 import type { SpreadDto, PagedSpreadsDto } from '../generated/spreads/types.gen'
 import { SpreadStatusBadge } from '../components/spreads/SpreadStatusBadge'
-import { useSortable, sorted, SortTh } from '../lib/sort'
+import { usePersistentSortable, sorted, SortTh } from '../lib/sort'
 
 const STATUS_FILTERS = ['ALL', 'OPEN', 'CLOSED_PROFIT', 'CLOSED_STOP', 'CLOSED_TIME', 'CLOSED_MANUAL'] as const
 type StatusFilter = (typeof STATUS_FILTERS)[number]
@@ -139,7 +139,7 @@ function SpreadRow({ spread }: { spread: SpreadDto }) {
 export function SpreadsPage() {
   const [filter, setFilter] = useState<StatusFilter>('ALL')
   const [page, setPage] = useState(0)
-  const { sort, toggle } = useSortable('openedAt', 'desc')
+  const { sort, toggle } = usePersistentSortable('spreads', 'openedAt', 'desc')
 
   const { data, isLoading, isError } = useQuery({
     ...listSpreadsOptions({

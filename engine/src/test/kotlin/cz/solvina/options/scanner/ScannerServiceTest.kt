@@ -10,6 +10,9 @@ import cz.solvina.options.domain.features.execution.model.TradeExecutionResult
 import cz.solvina.options.domain.features.scanner.BearCallCandidateSelector
 import cz.solvina.options.domain.features.scanner.BearCallScannerConfig
 import cz.solvina.options.domain.features.scanner.BullPutCandidateSelector
+import cz.solvina.options.domain.features.scanner.CandidateResult
+import cz.solvina.options.domain.features.scanner.RejectReason
+import cz.solvina.options.domain.features.scanner.ScanDetail
 import cz.solvina.options.domain.features.scanner.ScannerConfig
 import cz.solvina.options.domain.features.scanner.ScannerService
 import cz.solvina.options.domain.features.spread.BullPutSpreadPort
@@ -18,6 +21,7 @@ import cz.solvina.options.domain.features.spread.SpreadQueryFacade
 import cz.solvina.options.domain.features.spread.model.BullPutSpread
 import cz.solvina.options.domain.features.spread.model.SpreadLeg
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
+import cz.solvina.options.domain.features.spread.model.StrategyId
 import cz.solvina.options.domain.features.universe.InstrumentConfig
 import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.models.Money
@@ -78,6 +82,11 @@ class ScannerServiceTest {
             boughtMid = BigDecimal("0.70"),
             underlyingPriceAtEntry = BigDecimal("500"),
         )
+
+    // Selector results — the sealed CandidateResult replaced the nullable request return.
+    private val selectedResult = CandidateResult.Selected(dummyRequest, ScanDetail(strategyId = StrategyId.BULL_PUT))
+    private val rejectedResult =
+        CandidateResult.Rejected(RejectReason.NO_DELTA_IN_BAND, ScanDetail(strategyId = StrategyId.BULL_PUT))
 
     // -------------------------------------------------------------------------
     // maxOpenSpreads gate
@@ -169,7 +178,7 @@ class ScannerServiceTest {
             val executionPort = FakeExecutionPort()
             // Build scanner first (it registers a default null answer), then override for SPY.
             val scanner = buildScanner(executionPort = executionPort, watchlist = listOf(spy))
-            coEvery { selector.select(spy, any()) } returns dummyRequest
+            coEvery { selector.select(spy, any()) } returns selectedResult
 
             scanner.scan()
 
@@ -196,8 +205,8 @@ class ScannerServiceTest {
                     bearCallSelector = bearSelector,
                     bearCallConfig = BearCallScannerConfig(enabled = true),
                 )
-            coEvery { selector.select(spy, any()) } returns null
-            coEvery { bearSelector.select(spy, any()) } returns dummyRequest
+            coEvery { selector.select(spy, any()) } returns rejectedResult
+            coEvery { bearSelector.select(spy, any()) } returns selectedResult
 
             scanner.scan()
 
@@ -216,7 +225,7 @@ class ScannerServiceTest {
                     bearCallSelector = bearSelector,
                     bearCallConfig = BearCallScannerConfig(enabled = false),
                 )
-            coEvery { selector.select(spy, any()) } returns null
+            coEvery { selector.select(spy, any()) } returns rejectedResult
 
             scanner.scan()
 
@@ -274,7 +283,7 @@ class ScannerServiceTest {
             }
 
         // Default: selector returns no candidate (symbol is skipped after evaluation)
-        coEvery { selector.select(any(), any()) } returns null
+        coEvery { selector.select(any(), any()) } returns rejectedResult
 
         return ScannerService(
             universePort = universePort,
@@ -286,6 +295,7 @@ class ScannerServiceTest {
             spreadQuery = SpreadQueryFacade(spreadPort, InMemoryBearCallSpreadPort()),
             config = config,
             clock = Clock.systemUTC(),
+            optionChainPort = mockk(relaxed = true),
             scope = scope,
         )
     }

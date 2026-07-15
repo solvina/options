@@ -7,7 +7,7 @@ import {
 } from '../generated/bearcall/@tanstack/react-query.gen'
 import type { BearCallSpreadDto, PagedBearCallSpreadsDto } from '../generated/bearcall/types.gen'
 import { SpreadStatusBadge } from '../components/spreads/SpreadStatusBadge'
-import { useSortable, sorted, SortTh } from '../lib/sort'
+import { usePersistentSortable, sorted, SortTh } from '../lib/sort'
 
 const STATUS_FILTERS = ['ALL', 'OPEN', 'CLOSED_PROFIT', 'CLOSED_STOP', 'CLOSED_TIME', 'CLOSED_MANUAL'] as const
 type StatusFilter = (typeof STATUS_FILTERS)[number]
@@ -136,7 +136,7 @@ function BearCallRow({ spread }: { spread: BearCallSpreadDto }) {
 export function BearCallsPage() {
   const [filter, setFilter] = useState<StatusFilter>('ALL')
   const [page, setPage] = useState(0)
-  const { sort, toggle } = useSortable('openedAt', 'desc')
+  const { sort, toggle } = usePersistentSortable('bearcalls', 'openedAt', 'desc')
 
   const { data, isLoading, isError } = useQuery({
     ...listBearCallSpreadsOptions({

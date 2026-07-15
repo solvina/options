@@ -105,6 +105,57 @@ export type ScannerStatusDto = {
     monitorPaused: boolean;
 };
 
+export type SymbolScanStatusDto = {
+    symbol: string;
+    runId: number;
+    /**
+     * When this symbol was evaluated in the latest scan pass
+     */
+    evaluatedAt: string;
+    /**
+     * ENTERED, REJECTED, ALREADY_OPEN, COOLDOWN, GATE_SUPPRESSED, or ERROR
+     */
+    outcome: string;
+    /**
+     * BULL_PUT or BEAR_CALL — which strategy this row reflects
+     */
+    strategyId?: string | null;
+    /**
+     * Funnel stage that rejected the symbol (null unless outcome is REJECTED)
+     */
+    rejectReason?: string | null;
+    /**
+     * Cached trend regime — UPTREND, DOWNTREND, NEUTRAL
+     */
+    regime?: string | null;
+    /**
+     * Directional bias — BULLISH, BEARISH, NEUTRAL
+     */
+    bias?: string | null;
+    rsi?: number | null;
+    ivRank?: number | null;
+    ivRankThreshold?: number | null;
+    underlyingPrice?: number | null;
+    expiry?: string | null;
+    dte?: number | null;
+    shortStrike?: number | null;
+    shortDelta?: number | null;
+    longStrike?: number | null;
+    width?: number | null;
+    midCredit?: number | null;
+    bidCredit?: number | null;
+    maxRiskPerShare?: number | null;
+    creditPctOfWidth?: number | null;
+    /**
+     * Candidate strikes requested in the last chain fetch (greek-coverage denominator)
+     */
+    strikesRequested?: number | null;
+    /**
+     * Strikes that returned a live greek — a low ratio signals market-data starvation
+     */
+    strikesWithGreeks?: number | null;
+};
+
 export type ListSpreadsData = {
     body?: never;
     path?: never;
@@ -278,6 +329,22 @@ export type GetScannerStatusResponses = {
 };
 
 export type GetScannerStatusResponse = GetScannerStatusResponses[keyof GetScannerStatusResponses];
+
+export type GetTickerStatusData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/scanner/ticker-status';
+};
+
+export type GetTickerStatusResponses = {
+    /**
+     * Per-symbol scan status
+     */
+    200: Array<SymbolScanStatusDto>;
+};
+
+export type GetTickerStatusResponse = GetTickerStatusResponses[keyof GetTickerStatusResponses];
 
 export type PauseScannerData = {
     body?: never;

@@ -5,6 +5,7 @@ import cz.solvina.options.domain.features.market.OptionChainPort
 import cz.solvina.options.domain.features.market.model.OptionQuote
 import cz.solvina.options.domain.features.scanner.BullPutCandidateSelector
 import cz.solvina.options.domain.features.scanner.BullPutScannerConfig
+import cz.solvina.options.domain.features.scanner.requestOrNull
 import cz.solvina.options.domain.features.spread.model.StrategyId
 import cz.solvina.options.domain.features.universe.InstrumentConfig
 import cz.solvina.options.domain.features.universe.UniversePort
@@ -76,7 +77,7 @@ class BullPutCandidateSelectorTest {
     fun `no candidate when IV rank is below the threshold`() =
         runTest {
             // IV Rank 25 % is below the default threshold of 30 % — premium is insufficient.
-            val result = buildSelector(ivRank = 25.0).select(symbol, capitalOf50k)
+            val result = buildSelector(ivRank = 25.0).select(symbol, capitalOf50k).requestOrNull
 
             assertNull(result, "Low IV Rank must prevent entry")
         }
@@ -85,7 +86,7 @@ class BullPutCandidateSelectorTest {
     fun `candidate is considered when IV rank meets the threshold`() =
         runTest {
             // IV Rank exactly at the threshold (30 %) is allowed.
-            val result = buildSelector(ivRank = 30.0).select(symbol, capitalOf50k)
+            val result = buildSelector(ivRank = 30.0).select(symbol, capitalOf50k).requestOrNull
 
             assertNotNull(result)
         }
@@ -102,7 +103,7 @@ class BullPutCandidateSelectorTest {
             val result =
                 buildSelector(
                     expirations = setOf(today.plusDays(10), today.plusDays(70)),
-                ).select(symbol, capitalOf50k)
+                ).select(symbol, capitalOf50k).requestOrNull
 
             assertNull(result, "No valid expiry must prevent entry")
         }
@@ -124,7 +125,7 @@ class BullPutCandidateSelectorTest {
                 buildSelector(
                     expirations = setOf(expiry35d, expiry38d, expiry48d),
                     chain = chain48,
-                ).select(symbol, capitalOf50k)
+                ).select(symbol, capitalOf50k).requestOrNull
 
             assertNotNull(result)
             assertEquals(expiry48d, result.soldContract.expiry)
@@ -145,7 +146,7 @@ class BullPutCandidateSelectorTest {
                     put(strike = boughtStrike, delta = -0.25, bid = 0.80, ask = 1.00), // too large
                 )
 
-            val result = buildSelector(chain = chain).select(symbol, capitalOf50k)
+            val result = buildSelector(chain = chain).select(symbol, capitalOf50k).requestOrNull
 
             assertNull(result, "No qualifying delta must prevent entry")
         }
@@ -168,7 +169,7 @@ class BullPutCandidateSelectorTest {
                     put(strike = BigDecimal("475"), delta = -0.08, bid = 0.65, ask = 0.75),
                 )
 
-            val result = buildSelector(chain = chain).select(symbol, capitalOf50k)
+            val result = buildSelector(chain = chain).select(symbol, capitalOf50k).requestOrNull
 
             assertNotNull(result)
             assertEquals(strikeB, result.soldContract.strike)
@@ -188,7 +189,7 @@ class BullPutCandidateSelectorTest {
                     put(strike = boughtStrike, delta = -0.08, bid = 0.05, ask = 0.15),
                 )
 
-            val result = buildSelector(chain = cheapChain).select(symbol, capitalOf50k)
+            val result = buildSelector(chain = cheapChain).select(symbol, capitalOf50k).requestOrNull
 
             assertNull(result, "Insufficient credit must prevent entry")
         }
@@ -204,7 +205,7 @@ class BullPutCandidateSelectorTest {
             // allowedRisk = $1000 × 2.5 % = $25  →  $420 >> $25.
             val tinyCapital = Money(BigDecimal("1000"))
 
-            val result = buildSelector().select(symbol, tinyCapital)
+            val result = buildSelector().select(symbol, tinyCapital).requestOrNull
 
             assertNull(result, "Position risk exceeding capital limit must prevent entry")
         }
@@ -216,7 +217,7 @@ class BullPutCandidateSelectorTest {
     @Test
     fun `happy path returns a well-formed execution request when all filters pass`() =
         runTest {
-            val result = buildSelector().select(symbol, capitalOf50k)
+            val result = buildSelector().select(symbol, capitalOf50k).requestOrNull
 
             assertNotNull(result)
             assertEquals(soldContract, result.soldContract)
@@ -243,7 +244,7 @@ class BullPutCandidateSelectorTest {
                 buildSelector(
                     ivRank = 40.0,
                     instrumentConfig = symbolConfig,
-                ).select(symbol, capitalOf50k)
+                ).select(symbol, capitalOf50k).requestOrNull
 
             assertNull(result, "Symbol-level IV Rank threshold must override the global default")
         }

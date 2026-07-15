@@ -38,7 +38,7 @@ class BullPutCandidateSelector(
     suspend fun select(
         symbol: Symbol,
         totalCapital: Money,
-    ): TradeExecutionRequest? {
+    ): CandidateResult {
         val inst = universePort.get(symbol)
 
         // Resolve per-symbol overrides with global config fallback
@@ -53,15 +53,23 @@ class BullPutCandidateSelector(
         val minCreditPerShare = inst?.minCreditPerShare ?: config.minCreditPerShare
         val maxRiskPercent = inst?.maxRiskPercent ?: config.maxRiskPercent
 
+        // Accumulates what we learn about this symbol; snapshotted into the reject/select result so the
+        // scan-status table shows the full evaluation, not just entries.
+        var detail = ScanDetail(strategyId = StrategyId.BULL_PUT, ivRankThreshold = ivRankThreshold.toDouble())
+
+        fun reject(reason: RejectReason) = CandidateResult.Rejected(reason, detail)
+
         // 1. IV Rank filter
         val ivRank = volatilityPort.getIvRank(symbol)
+        detail = detail.copy(ivRank = ivRank.rank)
         if (ivRank.rank < ivRankThreshold) {
             logger.info { "[$symbol] IV Rank ${"%.1f".format(ivRank.rank)}% < threshold $ivRankThreshold%, skipping" }
             tradeLogger.info { "SKIP   $symbol  iv_rank=${"%.1f".format(ivRank.rank)}% < threshold=$ivRankThreshold%" }
-            return null
+            return reject(RejectReason.IV_BELOW_THRESHOLD)
         }
 
         val underlyingPrice = marketDataPort.getUnderlyingPrice(symbol)
+        detail = detail.copy(underlyingPrice = underlyingPrice.amount)
 
         // 2. Select expiry
         val today = LocalDate.now(clock)
@@ -76,14 +84,19 @@ class BullPutCandidateSelector(
                 }
         if (expiry == null) {
             logger.info { "[$symbol] No valid expiry in [$minDte, $maxDte] DTE, skipping" }
-            return null
+            return reject(RejectReason.NO_EXPIRY_IN_DTE)
         }
         val dte = ChronoUnit.DAYS.between(today, expiry).toInt()
+        detail = detail.copy(expiry = expiry, dte = dte)
         logger.info { "[$symbol] Selected expiry $expiry ($dte DTE)" }
 
         // 3. Get option chain and find the best put
         val chain = optionChainPort.getOptionChain(symbol, expiry, underlyingPrice, StrategyId.BULL_PUT)
         val puts = chain.filter { it.contract.type == OptionType.PUT }
+        if (puts.isEmpty()) {
+            logger.info { "[$symbol] No live put quotes for $expiry, skipping" }
+            return reject(RejectReason.NO_VALID_STRIKES)
+        }
 
         val soldQuote =
             puts
@@ -95,8 +108,9 @@ class BullPutCandidateSelector(
                 }
         if (soldQuote == null) {
             logger.info { "[$symbol] No put with delta in [$deltaMin, $deltaMax] found, skipping" }
-            return null
+            return reject(RejectReason.NO_DELTA_IN_BAND)
         }
+        detail = detail.copy(shortStrike = soldQuote.contract.strike, shortDelta = soldQuote.greeks.delta)
 
         logger.info { "[$symbol] Selected sold put strike=${soldQuote.contract.strike} delta=${soldQuote.greeks.delta}" }
 
@@ -108,30 +122,34 @@ class BullPutCandidateSelector(
                 .maxByOrNull { it.contract.strike }
         if (boughtQuote == null) {
             logger.info { "[$symbol] No valid bought strike ≤ $targetBoughtStrike found, skipping" }
-            return null
+            return reject(RejectReason.NO_BOUGHT_LEG)
         }
+        detail = detail.copy(longStrike = boughtQuote.contract.strike)
 
         // 5. Credit check — use mid for filters, bid side for the initial order price
         val midCredit =
             soldQuote.mid.amount
                 .subtract(boughtQuote.mid.amount)
                 .setScale(4, RoundingMode.HALF_UP)
+        detail = detail.copy(midCredit = midCredit)
         if (midCredit < minCreditPerShare) {
             logger.info { "[$symbol] Credit $midCredit < minimum $minCreditPerShare, skipping" }
-            return null
+            return reject(RejectReason.CREDIT_BELOW_MIN)
         }
 
         val actualSpreadWidth = soldQuote.contract.strike.subtract(boughtQuote.contract.strike)
         val maxRiskPerShare = actualSpreadWidth.subtract(midCredit).setScale(4, RoundingMode.HALF_UP)
+        detail = detail.copy(width = actualSpreadWidth, maxRiskPerShare = maxRiskPerShare)
         if (maxRiskPerShare <= BigDecimal.ZERO) {
             logger.info { "[$symbol] Credit \$$midCredit ≥ spread width \$$actualSpreadWidth (BS pricing artifact), skipping" }
-            return null
+            return reject(RejectReason.CREDIT_EXCEEDS_WIDTH)
         }
 
         // Crash-pricing guard: a true ~30-delta spread prices ~15–30% of width. A higher ratio means
         // the market prices near-even odds of finishing ITM — the greeks that passed the delta band
         // are vol-spike-distorted (NBIS sold at 49.5% of width, a BE candidate hit 90%, 2026-07-06/07).
         val creditPctOfWidth = midCredit.divide(actualSpreadWidth, 4, RoundingMode.HALF_UP).toDouble()
+        detail = detail.copy(creditPctOfWidth = creditPctOfWidth)
         if (creditPctOfWidth > config.maxCreditPctOfWidth) {
             logger.info {
                 "[$symbol] Credit \$$midCredit is ${"%.0f".format(creditPctOfWidth * 100)}% of width \$$actualSpreadWidth " +
@@ -142,7 +160,7 @@ class BullPutCandidateSelector(
                     config.maxCreditPctOfWidth * 100,
                 )}%  (crash-priced)"
             }
-            return null
+            return reject(RejectReason.CRASH_PRICED)
         }
 
         // 6. Money management check
@@ -154,7 +172,7 @@ class BullPutCandidateSelector(
                     "%.2f".format(allowedRiskPerTrade)
                 }, skipping"
             }
-            return null
+            return reject(RejectReason.RISK_EXCEEDS_BUDGET)
         }
 
         // 7. Build execution request — start at mid, floor at bid-side natural cross price
@@ -162,6 +180,7 @@ class BullPutCandidateSelector(
             soldQuote.bid.amount
                 .subtract(boughtQuote.ask.amount)
                 .setScale(4, RoundingMode.HALF_UP)
+        detail = detail.copy(bidCredit = bidCredit)
 
         // P1 — require the ACHIEVABLE combo credit (natural cross = soldBid − boughtAsk) to clear the
         // min-credit floor. Selecting off mid while the real combo bid sits below the floor was the
@@ -171,7 +190,7 @@ class BullPutCandidateSelector(
                 "[$symbol] Skipping — achievable combo bid \$$bidCredit < min credit \$$minCreditPerShare (would never fill at floor)"
             }
             tradeLogger.info { "SKIP   $symbol  combo_bid=\$$bidCredit < floor=\$$minCreditPerShare" }
-            return null
+            return reject(RejectReason.COMBO_BID_BELOW_FLOOR)
         }
 
         val floorCredit = bidCredit.max(minCreditPerShare).setScale(4, RoundingMode.HALF_UP)
@@ -224,20 +243,22 @@ class BullPutCandidateSelector(
             ),
         )
 
-        return TradeExecutionRequest(
-            soldContract = soldQuote.contract,
-            boughtContract = boughtQuote.contract,
-            underlyingSymbol = symbol,
-            targetCredit = midCredit,
-            floorCredit = floorCredit,
-            maxRiskPerShare = maxRiskPerShare,
-            ivRankAtEntry = ivRank.rank,
-            soldBid = soldQuote.bid.amount,
-            soldAsk = soldQuote.ask.amount,
-            boughtBid = boughtQuote.bid.amount,
-            boughtAsk = boughtQuote.ask.amount,
-            boughtMid = boughtQuote.mid.amount,
-            underlyingPriceAtEntry = underlyingPrice.amount,
-        )
+        val request =
+            TradeExecutionRequest(
+                soldContract = soldQuote.contract,
+                boughtContract = boughtQuote.contract,
+                underlyingSymbol = symbol,
+                targetCredit = midCredit,
+                floorCredit = floorCredit,
+                maxRiskPerShare = maxRiskPerShare,
+                ivRankAtEntry = ivRank.rank,
+                soldBid = soldQuote.bid.amount,
+                soldAsk = soldQuote.ask.amount,
+                boughtBid = boughtQuote.bid.amount,
+                boughtAsk = boughtQuote.ask.amount,
+                boughtMid = boughtQuote.mid.amount,
+                underlyingPriceAtEntry = underlyingPrice.amount,
+            )
+        return CandidateResult.Selected(request, detail)
     }
 }

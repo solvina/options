@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { ForceCloseSpreadData, ForceCloseSpreadErrors, ForceCloseSpreadResponses, GetScannerStatusData, GetScannerStatusResponses, GetSpreadAnalyticsData, GetSpreadAnalyticsResponses, GetSpreadByIdData, GetSpreadByIdErrors, GetSpreadByIdResponses, ListSpreadsData, ListSpreadsResponses, PauseMonitorData, PauseMonitorResponses, PauseScannerData, PauseScannerResponses, RefreshSpreadPnlData, RefreshSpreadPnlErrors, RefreshSpreadPnlResponses, ResumeMonitorData, ResumeMonitorResponses, ResumeScannerData, ResumeScannerResponses, SoftCloseSpreadData, SoftCloseSpreadErrors, SoftCloseSpreadResponses, TriggerScanData, TriggerScanResponses } from './types.gen';
+import type { ForceCloseSpreadData, ForceCloseSpreadErrors, ForceCloseSpreadResponses, GetScannerStatusData, GetScannerStatusResponses, GetSpreadAnalyticsData, GetSpreadAnalyticsResponses, GetSpreadByIdData, GetSpreadByIdErrors, GetSpreadByIdResponses, GetTickerStatusData, GetTickerStatusResponses, ListSpreadsData, ListSpreadsResponses, PauseMonitorData, PauseMonitorResponses, PauseScannerData, PauseScannerResponses, RefreshSpreadPnlData, RefreshSpreadPnlErrors, RefreshSpreadPnlResponses, ResumeMonitorData, ResumeMonitorResponses, ResumeScannerData, ResumeScannerResponses, SoftCloseSpreadData, SoftCloseSpreadErrors, SoftCloseSpreadResponses, TriggerScanData, TriggerScanResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean> = Options2<TData, ThrowOnError> & {
     /**
@@ -57,6 +57,14 @@ export const triggerScan = <ThrowOnError extends boolean = false>(options?: Opti
  * Get scanner and monitor status including kill-switch state
  */
 export const getScannerStatus = <ThrowOnError extends boolean = false>(options?: Options<GetScannerStatusData, ThrowOnError>) => (options?.client ?? client).get<GetScannerStatusResponses, unknown, ThrowOnError>({ url: '/scanner/status', ...options });
+
+/**
+ * Per-symbol status of the most recent scan pass (in-memory, live)
+ *
+ * One row per symbol evaluated in the last scan — IV rank, greeks of the selected leg, funnel outcome / reject reason, greek-delivery coverage, directional regime, and freshness. Only the symbols from the latest run are returned.
+ *
+ */
+export const getTickerStatus = <ThrowOnError extends boolean = false>(options?: Options<GetTickerStatusData, ThrowOnError>) => (options?.client ?? client).get<GetTickerStatusResponses, unknown, ThrowOnError>({ url: '/scanner/ticker-status', ...options });
 
 /**
  * Pause new-entry scanner (existing positions are unaffected)

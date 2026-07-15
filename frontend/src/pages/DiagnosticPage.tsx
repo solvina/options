@@ -10,7 +10,7 @@ import type {
   AccountHealthDto,
   OptionMidSampleDto,
 } from '../generated/diagnostic/types.gen'
-import { useSortable, sorted, SortTh } from '../lib/sort'
+import { usePersistentSortable, sorted, SortTh } from '../lib/sort'
 
 type DataSource = 'LIVE' | 'HISTORICAL_FALLBACK' | 'BS_FALLBACK' | 'UNAVAILABLE'
 
@@ -269,7 +269,7 @@ function AccountPanel({ account, onProbe, probing }: {
 export function DiagnosticPage() {
   const qc = useQueryClient()
   const [probingSymbol, setProbingSymbol] = useState<string | null>(null)
-  const { sort, toggle } = useSortable('symbol', 'asc')
+  const { sort, toggle } = usePersistentSortable('diagnostic', 'symbol', 'asc')
 
   const { data, isLoading, isError, dataUpdatedAt } = useQuery({
     ...getDataHealthOptions(),

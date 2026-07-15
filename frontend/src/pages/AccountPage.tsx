@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { cancelOrder, closePosition } from '../generated/account/sdk.gen'
 import { getAccountOverviewOptions } from '../generated/account/@tanstack/react-query.gen'
 import type { AccountPositionDto, OpenOrderDto, OpenPositionDto } from '../generated/account/types.gen'
-import { useSortable, sorted, SortTh } from '../lib/sort'
+import { usePersistentSortable, sorted, SortTh } from '../lib/sort'
 
 function StatCard({ label, value }: { label: string; value: string }) {
   return (
@@ -32,7 +32,7 @@ function dte(expiryDate: string): number {
 }
 
 function EnginePositionsTable({ positions }: { positions: OpenPositionDto[] }) {
-  const { sort, toggle } = useSortable('dte', 'asc')
+  const { sort, toggle } = usePersistentSortable('account-positions', 'dte', 'asc')
 
   if (positions.length === 0)
     return <p className="text-muted-foreground text-sm">No engine-tracked positions.</p>
@@ -113,7 +113,7 @@ function EnginePositionsTable({ positions }: { positions: OpenPositionDto[] }) {
 }
 
 function OpenOrdersTable({ orders, onCancel }: { orders: OpenOrderDto[]; onCancel: (orderId: number) => void }) {
-  const { sort, toggle } = useSortable('orderId', 'asc')
+  const { sort, toggle } = usePersistentSortable('account-orders', 'orderId', 'asc')
 
   if (orders.length === 0) return <p className="text-muted-foreground text-sm">No open orders.</p>
 
@@ -173,7 +173,7 @@ function IbkrPositionsTable({
   showReason?: boolean
 }) {
   const [killing, setKilling] = useState<Set<number>>(new Set())
-  const { sort, toggle } = useSortable('symbol', 'asc')
+  const { sort, toggle } = usePersistentSortable('account-orphans', 'symbol', 'asc')
 
   if (positions.length === 0)
     return <p className="text-muted-foreground text-sm">None.</p>

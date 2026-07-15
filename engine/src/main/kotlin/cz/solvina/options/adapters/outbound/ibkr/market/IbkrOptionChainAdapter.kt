@@ -10,6 +10,7 @@ import cz.solvina.options.adapters.outbound.ibkr.cache.OptionContractKey
 import cz.solvina.options.adapters.outbound.ibkr.cache.OptionParams
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
 import cz.solvina.options.domain.features.market.OptionChainPort
+import cz.solvina.options.domain.features.market.model.ChainCoverage
 import cz.solvina.options.domain.features.market.model.OptionQuote
 import cz.solvina.options.domain.features.scanner.StrategyParamsRegistry
 import cz.solvina.options.domain.features.spread.model.StrategyId
@@ -25,7 +26,9 @@ import kotlinx.coroutines.coroutineScope
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
 import java.math.RoundingMode
+import java.time.Instant
 import java.time.LocalDate
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 
 private val logger = KotlinLogging.logger {}
@@ -41,6 +44,12 @@ class IbkrOptionChainAdapter(
     private val contractCache: IbkrContractCache,
     private val contractFactory: IbkrContractFactory,
 ) : OptionChainPort {
+    // Greek-delivery coverage of the most recent chain fetch per symbol. Observational only; read by
+    // the scan-status table to expose market-data starvation (many strikes requested, few greeks back).
+    private val coverageBySymbol = ConcurrentHashMap<String, ChainCoverage>()
+
+    override fun lastCoverage(symbol: Symbol): ChainCoverage? = coverageBySymbol[symbol.value]
+
     override suspend fun getAvailableExpirations(symbol: Symbol): Set<LocalDate> =
         optionParamsCache
             .getOrFetch(symbol)
@@ -159,6 +168,13 @@ class IbkrOptionChainAdapter(
                 .map { strike -> async { fetchQuote(symbol, expiry, strike, optionType, params) } }
                 .awaitAll()
                 .filterNotNull()
+        }.also { quotes ->
+            coverageBySymbol[symbol.value] =
+                ChainCoverage(
+                    strikesRequested = candidateStrikes.size,
+                    strikesWithGreeks = quotes.size,
+                    fetchedAt = Instant.now(),
+                )
         }
     }
 

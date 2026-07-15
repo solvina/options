@@ -1,15 +1,27 @@
 import { useState, createElement } from 'react'
 import type { ReactNode } from 'react'
+import { useLocalStorage } from './useLocalStorage'
 
 export type SortDir = 'asc' | 'desc'
 export interface SortState { key: string; dir: SortDir }
 
+function toggler(setSort: (fn: (s: SortState) => SortState) => void) {
+  return (key: string) =>
+    setSort(s => s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' })
+}
+
 export function useSortable(defaultKey: string, defaultDir: SortDir = 'asc') {
   const [sort, setSort] = useState<SortState>({ key: defaultKey, dir: defaultDir })
-  function toggle(key: string) {
-    setSort(s => s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' })
-  }
-  return { sort, toggle }
+  return { sort, toggle: toggler(setSort) }
+}
+
+/**
+ * Like [useSortable] but the sort column + direction persist across reloads under `sort.<storageKey>`.
+ * Give each table a unique storageKey so their sort states don't clobber each other.
+ */
+export function usePersistentSortable(storageKey: string, defaultKey: string, defaultDir: SortDir = 'asc') {
+  const [sort, setSort] = useLocalStorage<SortState>(`sort.${storageKey}`, { key: defaultKey, dir: defaultDir })
+  return { sort, toggle: toggler(setSort) }
 }
 
 export function sorted<T>(arr: T[], sort: SortState, getValue: (item: T, key: string) => unknown): T[] {
