@@ -65,18 +65,26 @@ class CachingEquityHistoricalBarsAdapter(
         symbol: Symbol,
         from: LocalDate,
         to: LocalDate,
+        onChunk: suspend (List<FiveMinuteBar>) -> Unit,
     ): List<FiveMinuteBar> {
         logger.info { "[${symbol.value}] Fetching range $from..$to from IBKR" }
+        var written = 0
+        // Persist each chunk as it arrives (durable progress), then fan the chunk out to any caller-
+        // supplied onChunk too. A stalled/timed-out later chunk no longer discards everything before it.
         val bars =
-            runCatching { ibkr.fetch5MinBarsForRange(symbol, from, to) }
-                .getOrElse { e ->
-                    logger.warn { "[${symbol.value}] IBKR range fetch failed: ${e.message}" }
-                    emptyList()
+            runCatching {
+                ibkr.fetch5MinBarsForRange(symbol, from, to) { chunk ->
+                    if (chunk.isNotEmpty()) {
+                        barStorePort.writeBars(symbol, chunk)
+                        written += chunk.size
+                    }
+                    onChunk(chunk)
                 }
-        if (bars.isNotEmpty()) {
-            barStorePort.writeBars(symbol, bars)
-            logger.info { "[${symbol.value}] Wrote ${bars.size} bars to InfluxDB for range $from..$to" }
-        }
+            }.getOrElse { e ->
+                logger.warn { "[${symbol.value}] IBKR range fetch failed: ${e.message}" }
+                emptyList()
+            }
+        logger.info { "[${symbol.value}] Wrote $written bars to InfluxDB for range $from..$to (${bars.size} fetched)" }
         return bars
     }
 }

@@ -15,6 +15,7 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.withTimeoutOrNull
 import org.springframework.stereotype.Component
 import java.time.Instant
 import java.time.LocalDate
@@ -34,6 +35,11 @@ private val END_DATE_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd HH:mm:ss 'UT
 // Max days per IBKR request for 5-min bars
 private const val MAX_CHUNK_DAYS = 59L
 
+// Per-chunk hard timeout. IBKR can silently drop a historical response (e.g. a pacing violation that
+// arrives as a generic id=-1 error, never matching the pending reqId's onError) — without this the
+// callbackFlow would suspend forever and stall the whole backfill. On timeout we skip the chunk.
+private const val CHUNK_TIMEOUT_MS = 45_000L
+
 @Component
 class IbkrEquityHistoricalBarsAdapter(
     private val registry: IbkrHistoricalDataRegistry,
@@ -50,6 +56,7 @@ class IbkrEquityHistoricalBarsAdapter(
         symbol: Symbol,
         from: LocalDate,
         to: LocalDate,
+        onChunk: suspend (List<FiveMinuteBar>) -> Unit,
     ): List<FiveMinuteBar> {
         val allBars = mutableListOf<FiveMinuteBar>()
         var chunkTo = to
@@ -65,6 +72,11 @@ class IbkrEquityHistoricalBarsAdapter(
                         logger.warn { "[${symbol.value}] Chunk $chunkFrom..$chunkTo failed: ${e.message}" }
                         emptyList()
                     }
+            // Persist this chunk before moving on, so a later stalled/empty chunk never discards it.
+            if (bars.isNotEmpty()) {
+                runCatching { onChunk(bars) }
+                    .onFailure { e -> logger.warn { "[${symbol.value}] Chunk $chunkFrom..$chunkTo persist failed: ${e.message}" } }
+            }
             allBars.addAll(bars)
             chunkTo = chunkFrom.minusDays(1)
         }
@@ -76,42 +88,47 @@ class IbkrEquityHistoricalBarsAdapter(
         endDateTime: String,
         durationStr: String,
     ): List<FiveMinuteBar> =
-        callbackFlow {
-            val reqId = registry.nextReqId()
-            val contract = contractFactory.stockContract(symbol)
-            // Rate-limited: suspends to respect IBKR's historical pacing before firing.
-            admission.acquireHistorical()
-            registry.pendingRawBars[reqId] =
-                PendingRawBarsRequest(
-                    onBar = { bar -> parseBar(bar)?.let { trySend(it) } },
-                    onEnd = { close() },
-                    onError = { e -> close(e) },
+        withTimeoutOrNull(CHUNK_TIMEOUT_MS) {
+            callbackFlow {
+                val reqId = registry.nextReqId()
+                val contract = contractFactory.stockContract(symbol)
+                // Rate-limited: suspends to respect IBKR's historical pacing before firing.
+                admission.acquireHistorical()
+                registry.pendingRawBars[reqId] =
+                    PendingRawBarsRequest(
+                        onBar = { bar -> parseBar(bar)?.let { trySend(it) } },
+                        onEnd = { close() },
+                        onError = { e -> close(e) },
+                    )
+                logger.debug { "[${symbol.value}] reqHistoricalData reqId=$reqId endDateTime='$endDateTime' duration='$durationStr'" }
+                client.reqHistoricalData(
+                    reqId,
+                    contract,
+                    endDateTime,
+                    durationStr,
+                    // barSizeSetting
+                    "5 mins",
+                    // whatToShow
+                    "TRADES",
+                    // useRTH
+                    1,
+                    // formatDate
+                    2,
+                    // keepUpToDate
+                    false,
+                    // chartOptions
+                    null,
                 )
-            logger.debug { "[${symbol.value}] reqHistoricalData reqId=$reqId endDateTime='$endDateTime' duration='$durationStr'" }
-            client.reqHistoricalData(
-                reqId,
-                contract,
-                endDateTime,
-                durationStr,
-                // barSizeSetting
-                "5 mins",
-                // whatToShow
-                "TRADES",
-                // useRTH
-                1,
-                // formatDate
-                2,
-                // keepUpToDate
-                false,
-                // chartOptions
-                null,
-            )
-            awaitClose {
-                registry.pendingRawBars.remove(reqId)
-                admission.releaseHistorical()
-            }
-        }.buffer(Channel.UNLIMITED)
-            .toList()
+                awaitClose {
+                    registry.pendingRawBars.remove(reqId)
+                    admission.releaseHistorical()
+                }
+            }.buffer(Channel.UNLIMITED)
+                .toList()
+        } ?: run {
+            logger.warn { "[${symbol.value}] Historical chunk timed out after ${CHUNK_TIMEOUT_MS}ms (endDt=$endDateTime) — skipping" }
+            emptyList()
+        }
 
     private fun parseBar(bar: Bar): FiveMinuteBar? =
         runCatching {

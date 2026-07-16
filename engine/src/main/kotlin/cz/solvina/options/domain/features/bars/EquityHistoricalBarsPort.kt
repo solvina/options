@@ -14,10 +14,15 @@ interface EquityHistoricalBarsPort {
      * Fetches completed 5-minute RTH candles for an explicit date range.
      * Batches internally if the range exceeds the broker's per-request limit.
      * Results are written to the bar store by the implementation and returned sorted by time.
+     *
+     * [onChunk] is invoked with each batch's bars as they arrive, so callers can persist
+     * incrementally — a long backfill's progress is durable and a single stalled/empty chunk never
+     * loses the whole range. Defaults to a no-op.
      */
     suspend fun fetch5MinBarsForRange(
         symbol: Symbol,
         from: LocalDate,
         to: LocalDate,
+        onChunk: suspend (List<FiveMinuteBar>) -> Unit = {},
     ): List<FiveMinuteBar>
 }
