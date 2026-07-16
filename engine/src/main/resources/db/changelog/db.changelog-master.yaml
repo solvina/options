@@ -45,3 +45,5 @@ databaseChangeLog:
       file: db/changelog/v27__universe_sector_diversification.yaml
   - include:
       file: db/changelog/v28__instrument_sector.yaml
+  - include:
+      file: db/changelog/v29__option_params_cache.yaml

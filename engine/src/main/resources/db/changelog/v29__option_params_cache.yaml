@@ -1,0 +1,49 @@
+databaseChangeLog:
+  - changeSet:
+      id: v29__option_params_cache
+      author: claude
+      changes:
+        - createTable:
+            tableName: option_params_cache
+            columns:
+              - column:
+                  name: symbol
+                  type: VARCHAR(10)
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: expirations_json
+                  type: TEXT
+                  constraints:
+                    nullable: false
+              - column:
+                  name: strikes_json
+                  type: TEXT
+                  constraints:
+                    nullable: false
+              - column:
+                  name: strikes_by_expiry_json
+                  type: TEXT
+                  constraints:
+                    nullable: false
+              - column:
+                  name: exchange
+                  type: VARCHAR(32)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: trading_class
+                  type: VARCHAR(32)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: multiplier
+                  type: VARCHAR(16)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: fetched_at
+                  type: TIMESTAMP WITH TIME ZONE
+                  constraints:
+                    nullable: false

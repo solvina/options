@@ -78,6 +78,14 @@ ibkr:
     reconnect-interval-ms: 10000
     use-live-market-data: true     # paper account with live data subscription enabled in TWS
 
+# Pre-open + on-restart warmup of slow reference data (IV rank, option params, verified strikes) so
+# the first scan after the open isn't cold. Cron is Europe/Berlin; 14:30 sits before the 15:30 US open.
+# refresh-interval-hours guards option-params re-fetch so a restart within the window reuses the DB copy.
+reference-warmup:
+  enabled: true
+  cron: "0 30 14 * * MON-FRI"
+  refresh-interval-hours: 20
+
 scanner:
   # ---- Shared across all strategies (bull put + bear call) ----
   trading-enabled: true            # paper trading active with live data subscription

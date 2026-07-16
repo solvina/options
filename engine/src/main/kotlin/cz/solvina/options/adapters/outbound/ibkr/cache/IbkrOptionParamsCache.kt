@@ -7,6 +7,8 @@ import cz.solvina.options.domain.features.scanner.ScannerConfig
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CompletableDeferred
+import org.springframework.boot.context.event.ApplicationReadyEvent
+import org.springframework.context.event.EventListener
 import org.springframework.stereotype.Component
 import java.time.Duration
 import java.time.Instant
@@ -21,8 +23,18 @@ class IbkrOptionParamsCache(
     private val contractCache: IbkrContractCache,
     private val contractFactory: cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory,
     private val scannerConfig: ScannerConfig,
+    private val store: OptionParamsStorePort,
 ) {
     private val cache = ConcurrentHashMap<Symbol, OptionParams>()
+
+    /** Warm the in-memory cache from the persistent store so a restart near the open does not
+     *  re-issue reqSecDefOptParams for every symbol. Mirrors the IV-rank warm-load. */
+    @EventListener(ApplicationReadyEvent::class)
+    fun warmCache() {
+        val loaded = runCatching { store.loadAll() }.getOrElse { emptyMap() }
+        loaded.forEach { (symbol, params) -> cache[symbol] = params }
+        if (loaded.isNotEmpty()) logger.info { "Option-params cache warm-loaded ${loaded.size} symbols from store" }
+    }
 
     fun getCached(symbol: Symbol): OptionParams? = cache[symbol]
 
@@ -50,6 +62,10 @@ class IbkrOptionParamsCache(
 
         val params = deferred.await()
         cache[symbol] = params
+        if (params.expirations.isNotEmpty()) {
+            runCatching { store.save(symbol, params) }
+                .onFailure { logger.warn { "[$symbol] Failed to persist option params: ${it.message}" } }
+        }
         logger.info {
             "[$symbol] Cached ${params.expirations.size} expirations, ${params.strikes.size} strikes " +
                 "[exchange=${params.exchange} tradingClass=${params.tradingClass} multiplier=${params.multiplier}]"
