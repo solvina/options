@@ -6,6 +6,7 @@ import com.influxdb.client.write.Point
 import com.influxdb.query.FluxRecord
 import cz.solvina.options.domain.features.bars.BarStorePort
 import cz.solvina.options.domain.features.bars.FiveMinuteBar
+import cz.solvina.options.domain.features.bars.Timeframe
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.channels.consumeEach
@@ -17,7 +18,6 @@ import java.time.ZoneOffset
 private val logger = KotlinLogging.logger {}
 
 private const val MEASUREMENT = "candle"
-private const val INTERVAL_5MIN = "5min"
 
 @Component
 class InfluxDbBarStoreAdapter(
@@ -27,9 +27,10 @@ class InfluxDbBarStoreAdapter(
     override suspend fun writeBar(
         symbol: Symbol,
         bar: FiveMinuteBar,
+        timeframe: Timeframe,
     ) {
         try {
-            client.getWriteKotlinApi().writePoint(toPoint(symbol, bar))
+            client.getWriteKotlinApi().writePoint(toPoint(symbol, bar, timeframe))
         } catch (e: Exception) {
             logger.warn { "[${symbol.value}] InfluxDB write failed: ${e.message}" }
         }
@@ -38,10 +39,11 @@ class InfluxDbBarStoreAdapter(
     override suspend fun writeBars(
         symbol: Symbol,
         bars: List<FiveMinuteBar>,
+        timeframe: Timeframe,
     ) {
         if (bars.isEmpty()) return
         try {
-            client.getWriteKotlinApi().writePoints(bars.map { toPoint(symbol, it) })
+            client.getWriteKotlinApi().writePoints(bars.map { toPoint(symbol, it, timeframe) })
         } catch (e: Exception) {
             logger.warn { "[${symbol.value}] InfluxDB bulk write failed (${bars.size} bars): ${e.message}" }
         }
@@ -51,6 +53,7 @@ class InfluxDbBarStoreAdapter(
         symbol: Symbol,
         from: Instant,
         to: Instant,
+        timeframe: Timeframe,
     ): List<FiveMinuteBar> {
         val flux =
             """
@@ -58,7 +61,7 @@ class InfluxDbBarStoreAdapter(
               |> range(start: $from, stop: $to)
               |> filter(fn: (r) => r._measurement == "$MEASUREMENT")
               |> filter(fn: (r) => r.symbol == "${symbol.value}")
-              |> filter(fn: (r) => r.interval == "$INTERVAL_5MIN")
+              |> filter(fn: (r) => r.interval == "${timeframe.label}")
               |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
               |> sort(columns: ["_time"])
             """.trimIndent()
@@ -74,14 +77,17 @@ class InfluxDbBarStoreAdapter(
         }
     }
 
-    override suspend fun lastBarTime(symbol: Symbol): Instant? {
+    override suspend fun lastBarTime(
+        symbol: Symbol,
+        timeframe: Timeframe,
+    ): Instant? {
         val flux =
             """
             from(bucket: "${props.bucket}")
-              |> range(start: -5y)
+              |> range(start: -25y)
               |> filter(fn: (r) => r._measurement == "$MEASUREMENT")
               |> filter(fn: (r) => r.symbol == "${symbol.value}")
-              |> filter(fn: (r) => r.interval == "$INTERVAL_5MIN")
+              |> filter(fn: (r) => r.interval == "${timeframe.label}")
               |> filter(fn: (r) => r._field == "close")
               |> last()
             """.trimIndent()
@@ -106,6 +112,7 @@ class InfluxDbBarStoreAdapter(
         symbol: Symbol,
         from: LocalDate,
         to: LocalDate,
+        timeframe: Timeframe,
     ): Map<LocalDate, Int> {
         val start = from.atStartOfDay(ZoneOffset.UTC).toInstant()
         val stop = to.plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant()
@@ -115,7 +122,7 @@ class InfluxDbBarStoreAdapter(
               |> range(start: $start, stop: $stop)
               |> filter(fn: (r) => r._measurement == "$MEASUREMENT"
                    and r.symbol == "${symbol.value}"
-                   and r.interval == "$INTERVAL_5MIN"
+                   and r.interval == "${timeframe.label}"
                    and r._field == "close")
               |> aggregateWindow(every: 1d, fn: count, createEmpty: true)
             """.trimIndent()
@@ -141,11 +148,12 @@ class InfluxDbBarStoreAdapter(
     private fun toPoint(
         symbol: Symbol,
         bar: FiveMinuteBar,
+        timeframe: Timeframe,
     ): Point =
         Point
             .measurement(MEASUREMENT)
             .addTag("symbol", symbol.value)
-            .addTag("interval", INTERVAL_5MIN)
+            .addTag("interval", timeframe.label)
             .addField("open", bar.open)
             .addField("high", bar.high)
             .addField("low", bar.low)

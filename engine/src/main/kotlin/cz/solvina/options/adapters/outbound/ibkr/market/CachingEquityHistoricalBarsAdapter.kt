@@ -3,6 +3,7 @@ package cz.solvina.options.adapters.outbound.ibkr.market
 import cz.solvina.options.domain.features.bars.BarStorePort
 import cz.solvina.options.domain.features.bars.EquityHistoricalBarsPort
 import cz.solvina.options.domain.features.bars.FiveMinuteBar
+import cz.solvina.options.domain.features.bars.Timeframe
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.context.annotation.Primary
@@ -65,17 +66,18 @@ class CachingEquityHistoricalBarsAdapter(
         symbol: Symbol,
         from: LocalDate,
         to: LocalDate,
+        timeframe: Timeframe,
         onChunk: suspend (List<FiveMinuteBar>) -> Unit,
     ): List<FiveMinuteBar> {
-        logger.info { "[${symbol.value}] Fetching range $from..$to from IBKR" }
+        logger.info { "[${symbol.value}] Fetching ${timeframe.label} range $from..$to from IBKR" }
         var written = 0
         // Persist each chunk as it arrives (durable progress), then fan the chunk out to any caller-
         // supplied onChunk too. A stalled/timed-out later chunk no longer discards everything before it.
         val bars =
             runCatching {
-                ibkr.fetch5MinBarsForRange(symbol, from, to) { chunk ->
+                ibkr.fetch5MinBarsForRange(symbol, from, to, timeframe) { chunk ->
                     if (chunk.isNotEmpty()) {
-                        barStorePort.writeBars(symbol, chunk)
+                        barStorePort.writeBars(symbol, chunk, timeframe)
                         written += chunk.size
                     }
                     onChunk(chunk)

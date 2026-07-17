@@ -23,6 +23,7 @@ interface EquityHistoricalBarsPort {
         symbol: Symbol,
         from: LocalDate,
         to: LocalDate,
+        timeframe: Timeframe = Timeframe.FIVE_MIN,
         onChunk: suspend (List<FiveMinuteBar>) -> Unit = {},
     ): List<FiveMinuteBar>
 }

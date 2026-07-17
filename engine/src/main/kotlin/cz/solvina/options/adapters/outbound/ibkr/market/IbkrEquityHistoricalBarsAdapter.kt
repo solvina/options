@@ -8,6 +8,7 @@ import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrHistoricalDataRegi
 import cz.solvina.options.adapters.outbound.ibkr.registry.PendingRawBarsRequest
 import cz.solvina.options.domain.features.bars.EquityHistoricalBarsPort
 import cz.solvina.options.domain.features.bars.FiveMinuteBar
+import cz.solvina.options.domain.features.bars.Timeframe
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.channels.Channel
@@ -32,9 +33,6 @@ private val BAR_TIME_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd HH:mm:ss")
 // IBKR endDateTime format: "yyyyMMdd HH:mm:ss UTC"
 private val END_DATE_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd HH:mm:ss 'UTC'").withZone(ZoneOffset.UTC)
 
-// Max days per IBKR request for 5-min bars
-private const val MAX_CHUNK_DAYS = 59L
-
 // Per-chunk hard timeout. IBKR can silently drop a historical response (e.g. a pacing violation that
 // arrives as a generic id=-1 error, never matching the pending reqId's onError) — without this the
 // callbackFlow would suspend forever and stall the whole backfill. On timeout we skip the chunk.
@@ -50,24 +48,25 @@ class IbkrEquityHistoricalBarsAdapter(
     override suspend fun fetch5MinBars(
         symbol: Symbol,
         days: Int,
-    ): List<FiveMinuteBar> = fetchBarsRaw(symbol, endDateTime = "", durationStr = "$days D")
+    ): List<FiveMinuteBar> = fetchBarsRaw(symbol, endDateTime = "", durationStr = "$days D", barSize = Timeframe.FIVE_MIN.ibkrBarSize)
 
     override suspend fun fetch5MinBarsForRange(
         symbol: Symbol,
         from: LocalDate,
         to: LocalDate,
+        timeframe: Timeframe,
         onChunk: suspend (List<FiveMinuteBar>) -> Unit,
     ): List<FiveMinuteBar> {
         val allBars = mutableListOf<FiveMinuteBar>()
         var chunkTo = to
         while (!chunkTo.isBefore(from)) {
-            val chunkFrom = maxOf(from, chunkTo.minusDays(MAX_CHUNK_DAYS - 1))
+            val chunkFrom = maxOf(from, chunkTo.minusDays(timeframe.maxChunkDays - 1))
             val days = ChronoUnit.DAYS.between(chunkFrom, chunkTo) + 1
             // Use midnight UTC of the day after chunkTo as the IBKR end timestamp
             val endDt = chunkTo.plusDays(1).atStartOfDay(ZoneOffset.UTC).format(END_DATE_FORMAT)
-            logger.debug { "[${symbol.value}] Fetching chunk $chunkFrom..$chunkTo (${days}d, endDt=$endDt)" }
+            logger.debug { "[${symbol.value}] Fetching ${timeframe.label} chunk $chunkFrom..$chunkTo (${days}d, endDt=$endDt)" }
             val bars =
-                runCatching { fetchBarsRaw(symbol, endDt, "$days D") }
+                runCatching { fetchBarsRaw(symbol, endDt, "$days D", timeframe.ibkrBarSize) }
                     .getOrElse { e ->
                         logger.warn { "[${symbol.value}] Chunk $chunkFrom..$chunkTo failed: ${e.message}" }
                         emptyList()
@@ -87,6 +86,7 @@ class IbkrEquityHistoricalBarsAdapter(
         symbol: Symbol,
         endDateTime: String,
         durationStr: String,
+        barSize: String,
     ): List<FiveMinuteBar> =
         withTimeoutOrNull(CHUNK_TIMEOUT_MS) {
             callbackFlow {
@@ -107,7 +107,7 @@ class IbkrEquityHistoricalBarsAdapter(
                     endDateTime,
                     durationStr,
                     // barSizeSetting
-                    "5 mins",
+                    barSize,
                     // whatToShow
                     "TRADES",
                     // useRTH
