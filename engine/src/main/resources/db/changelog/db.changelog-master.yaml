@@ -47,3 +47,5 @@ databaseChangeLog:
       file: db/changelog/v28__instrument_sector.yaml
   - include:
       file: db/changelog/v29__option_params_cache.yaml
+  - include:
+      file: db/changelog/v30__backtest_config.yaml
