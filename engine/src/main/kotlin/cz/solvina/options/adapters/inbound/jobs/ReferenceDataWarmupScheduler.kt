@@ -95,9 +95,12 @@ class ReferenceDataWarmupScheduler(
 
     private suspend fun warmAll(reason: String) =
         withContext(MarketDataPriority.SCANNER) {
+            // getWatchlist (all enabled symbols), NOT getActiveSymbols — the latter filters to
+            // currently-open markets, which is exactly wrong for a *pre-open* warmup (US is still
+            // closed at the 14:30 cron). Open-market-first ordering is just a priority, not a filter.
             val symbols =
                 universePort
-                    .getActiveSymbols()
+                    .getWatchlist()
                     .sortedByDescending { universePort.isMarketOpen(it) }
             if (symbols.isEmpty()) {
                 logger.info { "Reference-data warmup ($reason): empty universe, nothing to warm" }
