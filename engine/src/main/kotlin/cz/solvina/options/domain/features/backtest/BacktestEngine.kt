@@ -2,6 +2,7 @@ package cz.solvina.options.domain.features.backtest
 
 import cz.solvina.options.domain.features.bars.BarStorePort
 import cz.solvina.options.domain.features.bars.FiveMinuteBar
+import cz.solvina.options.domain.features.bars.Timeframe
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
 import java.math.BigDecimal
@@ -31,8 +32,12 @@ class BacktestEngine(
          *  rides the move and exits on pullback. Typically combined with holdOvernight. */
         val trailStopRMultiple: Double? = null,
         /** Detection/exit timeframe in minutes. Stored data is 5-min; 10/15/… are aggregated from it
-         *  (exact, since they're multiples). Must be a multiple of 5. */
+         *  (exact, since they're multiples). Must be a multiple of 5. Only applies when
+         *  [timeframe] is FIVE_MIN. */
         val barMinutes: Int = 5,
+        /** Bar timeframe read from the store. FIVE_MIN → intraday (optionally aggregated to
+         *  [barMinutes]); DAILY / FOUR_HOUR are read natively (no aggregation). */
+        val timeframe: Timeframe = Timeframe.FIVE_MIN,
     )
 
     data class Summary(
@@ -88,10 +93,11 @@ class BacktestEngine(
                     .plusDays(1)
                     .atStartOfDay(ZoneOffset.UTC)
                     .toInstant()
-            val raw = barStore.readBars(symbol, fromInstant, toInstant)
-            val bars = aggregateBars(raw, request.barMinutes)
+            val raw = barStore.readBars(symbol, fromInstant, toInstant, request.timeframe)
+            // Daily / 4h are stored natively; only 5-min is aggregated up to barMinutes.
+            val bars = if (request.timeframe == Timeframe.FIVE_MIN) aggregateBars(raw, request.barMinutes) else raw
             logger.info {
-                "[${symbol.value}] Loaded ${raw.size} 5-min bars → ${bars.size} ${request.barMinutes}-min bars"
+                "[${symbol.value}] Loaded ${raw.size} ${request.timeframe.label} bars → ${bars.size} bars"
             }
             allBars[symbol] = bars
         }
