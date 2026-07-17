@@ -20,6 +20,7 @@ data class FetchJob(
     val symbols: List<Symbol>,
     val from: LocalDate,
     val to: LocalDate,
+    val timeframe: Timeframe,
     val status: FetchJobStatus,
     val barsWritten: Int,
     val error: String?,
@@ -39,18 +40,71 @@ class HistoricalDataService(
         symbols: List<Symbol>,
         from: LocalDate,
         to: LocalDate,
+        timeframe: Timeframe = Timeframe.FIVE_MIN,
     ): Map<Symbol, Map<LocalDate, Int>> {
         val result = mutableMapOf<Symbol, Map<LocalDate, Int>>()
         for (symbol in symbols) {
-            result[symbol] = barStorePort.coverageByDay(symbol, from, to)
+            result[symbol] = barStorePort.coverageByDay(symbol, from, to, timeframe)
         }
         return result
     }
 
+    /** Full (re)fetch of the whole range for each symbol. */
     fun startFetch(
         symbols: List<Symbol>,
         from: LocalDate,
         to: LocalDate,
+        timeframe: Timeframe = Timeframe.FIVE_MIN,
+    ): FetchJob =
+        launchJob(symbols, from, to, timeframe) { symbol ->
+            equityHistoricalBarsPort.fetch5MinBarsForRange(symbol, from, to, timeframe).size
+        }
+
+    /**
+     * Ensures [from]..[to] is covered for each symbol at [timeframe], fetching only the missing
+     * head/tail (extend history backward / forward) — the "type AAPL 1999-now and it downloads once"
+     * path. Interior holes are left alone (mostly weekends/holidays with legitimately no bar). A
+     * second call over an already-covered span is a no-op. Backtests call this before running.
+     */
+    fun ensureCoverage(
+        symbols: List<Symbol>,
+        from: LocalDate,
+        to: LocalDate,
+        timeframe: Timeframe = Timeframe.FIVE_MIN,
+    ): FetchJob =
+        launchJob(symbols, from, to, timeframe) { symbol ->
+            var written = 0
+            for ((gapFrom, gapTo) in missingRanges(symbol, from, to, timeframe)) {
+                logger.info { "[${symbol.value}] ensureCoverage: fetching ${timeframe.label} gap $gapFrom..$gapTo" }
+                written += equityHistoricalBarsPort.fetch5MinBarsForRange(symbol, gapFrom, gapTo, timeframe).size
+            }
+            if (written == 0) logger.info { "[${symbol.value}] ensureCoverage: ${timeframe.label} already covered $from..$to" }
+            written
+        }
+
+    /** The head/tail date ranges not yet stored for [symbol] at [timeframe] within [from]..[to]. */
+    private suspend fun missingRanges(
+        symbol: Symbol,
+        from: LocalDate,
+        to: LocalDate,
+        timeframe: Timeframe,
+    ): List<Pair<LocalDate, LocalDate>> {
+        val stored = barStorePort.coverageByDay(symbol, from, to, timeframe).filterValues { it > 0 }.keys
+        if (stored.isEmpty()) return listOf(from to to)
+        val earliest = stored.min()
+        val latest = stored.max()
+        val gaps = mutableListOf<Pair<LocalDate, LocalDate>>()
+        if (from.isBefore(earliest)) gaps += from to earliest.minusDays(1)
+        if (to.isAfter(latest)) gaps += latest.plusDays(1) to to
+        return gaps
+    }
+
+    private fun launchJob(
+        symbols: List<Symbol>,
+        from: LocalDate,
+        to: LocalDate,
+        timeframe: Timeframe,
+        perSymbol: suspend (Symbol) -> Int,
     ): FetchJob {
         val id = UUID.randomUUID().toString()
         val job =
@@ -59,6 +113,7 @@ class HistoricalDataService(
                 symbols = symbols,
                 from = from,
                 to = to,
+                timeframe = timeframe,
                 status = FetchJobStatus.RUNNING,
                 barsWritten = 0,
                 error = null,
@@ -71,9 +126,7 @@ class HistoricalDataService(
             var failure: String? = null
             for (symbol in symbols) {
                 try {
-                    val bars = equityHistoricalBarsPort.fetch5MinBarsForRange(symbol, from, to)
-                    totalBars += bars.size
-                    logger.info { "[${symbol.value}] Fetch job $id: wrote ${bars.size} bars" }
+                    totalBars += perSymbol(symbol)
                 } catch (e: Exception) {
                     logger.warn { "[${symbol.value}] Fetch job $id failed: ${e.message}" }
                     failure = e.message
