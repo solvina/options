@@ -39,6 +39,7 @@ const navGroups = [
     label: 'Backtest',
     items: [
       { to: '/backtest', label: 'Flag' },
+      { to: '/backtest/stock', label: 'Stock' },
     ],
   },
   {

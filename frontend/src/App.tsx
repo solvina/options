@@ -12,6 +12,7 @@ import { FlagsPage } from './pages/FlagsPage'
 import { FlagAnalyticsPage } from './pages/FlagAnalyticsPage'
 import { HistoricalDataPage } from './pages/HistoricalDataPage'
 import { BacktestPage } from './pages/BacktestPage'
+import { StockBacktestPage } from './pages/StockBacktestPage'
 import { ReportsPage } from './pages/ReportsPage'
 
 function App() {
@@ -36,6 +37,7 @@ function App() {
           <Route path="/flags/analytics" element={<FlagAnalyticsPage />} />
           <Route path="/historical" element={<HistoricalDataPage />} />
           <Route path="/backtest" element={<BacktestPage />} />
+          <Route path="/backtest/stock" element={<StockBacktestPage />} />
         </Route>
       </Routes>
     </BrowserRouter>
