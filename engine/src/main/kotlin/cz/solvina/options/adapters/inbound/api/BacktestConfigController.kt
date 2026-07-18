@@ -18,8 +18,9 @@ import java.time.Instant
 import java.util.UUID
 
 /** CRUD for named backtest parameter presets (save / recall / delete). Payload is opaque form JSON. */
+// Mapped without the /api prefix: the proxies rewrite /api/X → /options/X (see StockBacktestApiController).
 @RestController
-@RequestMapping("/api/backtest/configs")
+@RequestMapping("/backtest/configs")
 class BacktestConfigController(
     private val repo: BacktestConfigRepository,
     private val mapper: ObjectMapper,

@@ -29,7 +29,7 @@ import java.time.ZoneOffset
 import java.util.UUID
 
 @RestController
-@RequestMapping("/api/backtest")
+@RequestMapping("/backtest")
 class BacktestApiController(
     private val barStore: BarStorePort,
     private val strategyConfig: FlagStrategyConfig,

@@ -25,8 +25,12 @@ private val logger = KotlinLogging.logger {}
  * chosen timeframe (data-on-demand), then runs [RuleBacktestStrategy] through the shared
  * [BacktestEngine]. First run over a cold span downloads; later runs serve from the store.
  */
+// NOTE on the path: the app runs under WebFlux base-path /options, and BOTH proxies (nginx and the
+// Vite dev server) rewrite the browser's /api/X to /options/X. Controllers must therefore map the
+// path WITHOUT the /api prefix — "/api/backtest" here produced /options/api/backtest, which no
+// proxy ever reached (every backtest endpoint 404'd from the UI).
 @RestController
-@RequestMapping("/api/backtest")
+@RequestMapping("/backtest")
 class StockBacktestApiController(
     private val historicalData: HistoricalDataService,
     private val barStore: BarStorePort,
@@ -102,6 +106,9 @@ class StockBacktestApiController(
                     from = req.from,
                     to = req.to,
                     initialCapital = req.initialCapital ?: BigDecimal("20000"),
+                    // Engine-level cap must mirror the strategy's own — the Request default (3)
+                    // would silently clip a user asking for more.
+                    maxOpenPositions = params.maxOpenPositions,
                     warmupDays = warmupCalendarDays,
                     holdOvernight = true, // swing: hold to stop/target, no intraday EOD liquidation
                     timeframe = timeframe,

@@ -18,7 +18,7 @@ private val logger = KotlinLogging.logger {}
  * P&L is optimistic (BS, flat IV, modeled fills).
  */
 @RestController
-@RequestMapping("/api/backtest")
+@RequestMapping("/backtest")
 class SpreadBacktestApiController(
     private val service: SpreadBacktestService,
 ) {

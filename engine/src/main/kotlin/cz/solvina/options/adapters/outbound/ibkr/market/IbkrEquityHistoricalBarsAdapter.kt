@@ -30,6 +30,10 @@ private val logger = KotlinLogging.logger {}
 private val ET = ZoneId.of("America/New_York")
 private val BAR_TIME_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd HH:mm:ss")
 
+// Daily+ bars arrive as a bare "yyyyMMdd" date (see parseBar).
+private val DAILY_DATE = Regex("""\d{8}""")
+private val DAILY_DATE_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd")
+
 // IBKR endDateTime format: "yyyyMMdd HH:mm:ss UTC"
 private val END_DATE_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd HH:mm:ss 'UTC'").withZone(ZoneOffset.UTC)
 
@@ -134,13 +138,17 @@ class IbkrEquityHistoricalBarsAdapter(
 
     private fun parseBar(bar: Bar): FiveMinuteBar? =
         runCatching {
-            val epochSec = bar.time().trim().toLongOrNull()
+            val raw = bar.time().trim()
+            // IBKR returns DAILY (and larger) bars as "yyyyMMdd" even with formatDate=2 — only
+            // intraday bars come as epoch seconds. An 8-digit date read as epoch put every daily
+            // bar in August 1970, where no range query ever found it (backtests saw 0 bars and
+            // re-downloaded the same span on every run). Stamp daily bars at the 16:00 ET close.
             val time: Instant =
-                if (epochSec != null) {
-                    Instant.ofEpochSecond(epochSec)
-                } else {
-                    val ldt = LocalDateTime.parse(bar.time().trim().take(17), BAR_TIME_FORMAT)
-                    ldt.atZone(ET).toInstant()
+                when {
+                    DAILY_DATE.matches(raw) ->
+                        LocalDate.parse(raw, DAILY_DATE_FORMAT).atTime(16, 0).atZone(ET).toInstant()
+                    raw.toLongOrNull() != null -> Instant.ofEpochSecond(raw.toLong())
+                    else -> LocalDateTime.parse(raw.take(17), BAR_TIME_FORMAT).atZone(ET).toInstant()
                 }
             FiveMinuteBar(
                 time = time,

@@ -67,6 +67,8 @@ class BacktestEngine(
 
     private data class PendingEntry(
         val signal: BacktestSignal.OpenBracket,
+        /** Trading day the signal was emitted — governs how long an unfilled entry stays alive. */
+        val emittedOn: LocalDate,
     )
 
     private data class OpenPosition(
@@ -153,7 +155,7 @@ class BacktestEngine(
         val winRList = mutableListOf<BigDecimal>()
         val lossRList = mutableListOf<BigDecimal>()
 
-        for ((_, dayBars) in byDay) {
+        for ((day, dayBars) in byDay) {
             val sorted = dayBars.sortedBy { it.second.time }
             val lastBarBySymbol = mutableMapOf<Symbol, FiveMinuteBar>()
 
@@ -218,7 +220,7 @@ class BacktestEngine(
                     if (signal is BacktestSignal.OpenBracket &&
                         open.size + pending.size < request.maxOpenPositions
                     ) {
-                        pending.add(PendingEntry(signal))
+                        pending.add(PendingEntry(signal, day))
                     }
                 }
             }
@@ -252,9 +254,15 @@ class BacktestEngine(
                 open.clear()
             }
 
-            // Expire unfilled pending entries (breakout entries are intraday; they don't carry over)
-            pending.forEach { strategy.onEntryExpired(it.signal.tradeId) }
-            pending.clear()
+            // Expire unfilled pending entries. Intraday (!holdOvernight): entries are good for the
+            // emitting day only (breakouts don't carry over). Swing (holdOvernight): a signal is
+            // good through the NEXT session — the engine fills on the next bar, and on the daily
+            // timeframe that bar is tomorrow's, so clearing nightly meant a daily backtest could
+            // never fill a single entry.
+            val expired =
+                if (request.holdOvernight) pending.filter { it.emittedOn.isBefore(day) } else pending.toList()
+            expired.forEach { strategy.onEntryExpired(it.signal.tradeId) }
+            pending.removeAll(expired)
         }
 
         // holdOvernight: mark-to-market any positions still open at the end of the backtest window.
