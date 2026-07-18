@@ -64,9 +64,11 @@ class IbkrEquityHistoricalBarsAdapter(
             val days = ChronoUnit.DAYS.between(chunkFrom, chunkTo) + 1
             // Use midnight UTC of the day after chunkTo as the IBKR end timestamp
             val endDt = chunkTo.plusDays(1).atStartOfDay(ZoneOffset.UTC).format(END_DATE_FORMAT)
-            logger.debug { "[${symbol.value}] Fetching ${timeframe.label} chunk $chunkFrom..$chunkTo (${days}d, endDt=$endDt)" }
+            // IBKR rejects "N D" durations > 365 days (error 321) — express those in years.
+            val durationStr = if (days > 365) "${(days + 364) / 365} Y" else "$days D"
+            logger.debug { "[${symbol.value}] Fetching ${timeframe.label} chunk $chunkFrom..$chunkTo ($durationStr, endDt=$endDt)" }
             val bars =
-                runCatching { fetchBarsRaw(symbol, endDt, "$days D", timeframe.ibkrBarSize) }
+                runCatching { fetchBarsRaw(symbol, endDt, durationStr, timeframe.ibkrBarSize) }
                     .getOrElse { e ->
                         logger.warn { "[${symbol.value}] Chunk $chunkFrom..$chunkTo failed: ${e.message}" }
                         emptyList()

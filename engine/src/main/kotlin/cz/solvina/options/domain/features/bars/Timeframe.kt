@@ -15,8 +15,8 @@ enum class Timeframe(
     val maxChunkDays: Long,
 ) {
     FIVE_MIN("5min", "5 mins", 59),
-    FOUR_HOUR("4h", "4 hours", 360),
-    DAILY("1d", "1 day", 7300),
+    FOUR_HOUR("4h", "4 hours", 180),
+    DAILY("1d", "1 day", 3650),
     ;
 
     companion object {
