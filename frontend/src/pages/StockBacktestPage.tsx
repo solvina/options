@@ -56,6 +56,11 @@ interface Summary {
   winRate: number
   profitFactor: number | null
   maxDrawdownPct: number
+  annualizedReturnPct: number | null
+  buyHoldFinalCapital: number | null
+  buyHoldPnl: number | null
+  buyHoldPnlPct: number | null
+  buyHoldAnnualizedPct: number | null
 }
 interface RuleTrade {
   symbol: string
@@ -301,6 +306,18 @@ export function StockBacktestPage() {
             <Stat label="Profit factor" value={fmt(s.profitFactor)} />
             <Stat label="Max drawdown" value={fmt(s.maxDrawdownPct) + '%'} color="text-red-500" />
             <Stat label="Final capital" value={'$' + s.finalCapital.toFixed(0)} />
+            <Stat label="Avg / year" value={fmt(s.annualizedReturnPct) + '%/yr'} sub="strategy CAGR"
+              color={(s.annualizedReturnPct ?? 0) >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500'} />
+            <Stat label="Buy & hold" value={fmt(s.buyHoldPnlPct) + '%'}
+              sub={s.buyHoldPnl != null ? `${money(s.buyHoldPnl)} · ${fmt(s.buyHoldAnnualizedPct)}%/yr` : undefined}
+              color={(s.buyHoldPnl ?? 0) >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500'} />
+            <Stat label="Edge vs hold"
+              value={s.annualizedReturnPct != null && s.buyHoldAnnualizedPct != null
+                ? `${s.annualizedReturnPct - s.buyHoldAnnualizedPct >= 0 ? '+' : '−'}${Math.abs(s.annualizedReturnPct - s.buyHoldAnnualizedPct).toFixed(2)} pp/yr`
+                : '—'}
+              sub="strategy − hold, per year"
+              color={s.annualizedReturnPct != null && s.buyHoldAnnualizedPct != null && s.annualizedReturnPct >= s.buyHoldAnnualizedPct
+                ? 'text-green-600 dark:text-green-400' : 'text-red-500'} />
           </div>
 
           <EquityCurve trades={result.trades} />

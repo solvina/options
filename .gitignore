@@ -12,6 +12,7 @@ engine/gradle/wrapper/gradle-wrapper.jar
 
 # Kotlin
 *.class
+.kotlin
 
 # OS
 .DS_Store

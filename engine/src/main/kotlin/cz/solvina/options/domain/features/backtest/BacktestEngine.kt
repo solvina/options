@@ -11,6 +11,8 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZoneOffset
+import java.time.temporal.ChronoUnit
+import kotlin.math.pow
 
 private val logger = KotlinLogging.logger {}
 
@@ -58,6 +60,14 @@ class BacktestEngine(
         val avgLossR: BigDecimal?,
         val profitFactor: BigDecimal?,
         val maxDrawdownPct: BigDecimal,
+        /** CAGR over the from→to window, % per year. Null when the window is degenerate. */
+        val annualizedReturnPct: BigDecimal?,
+        /** Buy & hold benchmark: initialCapital split equally across symbols, bought at the first
+         *  backtest bar's open, held to the last bar's close. Null when no bars. */
+        val buyHoldFinalCapital: BigDecimal?,
+        val buyHoldPnl: BigDecimal?,
+        val buyHoldPnlPct: BigDecimal?,
+        val buyHoldAnnualizedPct: BigDecimal?,
     )
 
     data class Result<T>(
@@ -303,6 +313,36 @@ class BacktestEngine(
         // winRate excludes EOD trades (matches production analytics convention)
         val winRate = if (winCount + lossCount > 0) winCount.toDouble() / (winCount + lossCount) else 0.0
 
+        val years = ChronoUnit.DAYS.between(request.from, request.to).coerceAtLeast(1) / 365.25
+        val annualizedReturnPct = annualizedPct(request.initialCapital, capital, years)
+
+        // Buy & hold benchmark over the same window: equal-weight slice per symbol that has data,
+        // entered at the first backtest bar's open, valued at the last bar's close.
+        val holdRatios =
+            request.symbols.mapNotNull { sym ->
+                val bars = backtestBars[sym]?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+                val entry = bars.first().open
+                if (entry <= 0.0) null else bars.last().close / entry
+            }
+        val buyHoldFinal =
+            if (holdRatios.isEmpty()) {
+                null
+            } else {
+                val slice = request.initialCapital.toDouble() / holdRatios.size
+                BigDecimal.valueOf(holdRatios.sumOf { it * slice }).setScale(2, RoundingMode.HALF_UP)
+            }
+        val buyHoldPnl = buyHoldFinal?.subtract(request.initialCapital)
+        val buyHoldPnlPct =
+            if (buyHoldPnl != null && request.initialCapital > BigDecimal.ZERO) {
+                buyHoldPnl
+                    .divide(request.initialCapital, 4, RoundingMode.HALF_UP)
+                    .multiply(BigDecimal("100"))
+                    .setScale(2, RoundingMode.HALF_UP)
+            } else {
+                null
+            }
+        val buyHoldAnnualizedPct = buyHoldFinal?.let { annualizedPct(request.initialCapital, it, years) }
+
         return Result(
             summary =
                 Summary(
@@ -330,6 +370,11 @@ class BacktestEngine(
                             null
                         },
                     maxDrawdownPct = maxDrawdown.multiply(BigDecimal("100")).setScale(2, RoundingMode.HALF_UP),
+                    annualizedReturnPct = annualizedReturnPct,
+                    buyHoldFinalCapital = buyHoldFinal,
+                    buyHoldPnl = buyHoldPnl,
+                    buyHoldPnlPct = buyHoldPnlPct,
+                    buyHoldAnnualizedPct = buyHoldAnnualizedPct,
                 ),
             trades = strategy.trades() as List<T>,
         )
@@ -444,6 +489,18 @@ class BacktestEngine(
         val r = pnl.divide(riskAmount, 2, RoundingMode.HALF_UP)
         rList.add(r)
         if (pnl >= BigDecimal.ZERO) winRList.add(r) else lossRList.add(r)
+    }
+
+    /** CAGR in % per year; null for degenerate inputs (non-positive capital or ratio, zero span). */
+    private fun annualizedPct(
+        initial: BigDecimal,
+        final: BigDecimal,
+        years: Double,
+    ): BigDecimal? {
+        if (initial <= BigDecimal.ZERO || years <= 0.0) return null
+        val ratio = final.toDouble() / initial.toDouble()
+        if (ratio <= 0.0) return null
+        return BigDecimal.valueOf((ratio.pow(1.0 / years) - 1.0) * 100.0).setScale(2, RoundingMode.HALF_UP)
     }
 
     private fun List<BigDecimal>.avg(): BigDecimal? {
