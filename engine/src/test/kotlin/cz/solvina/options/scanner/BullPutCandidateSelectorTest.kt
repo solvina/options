@@ -132,6 +132,47 @@ class BullPutCandidateSelectorTest {
         }
 
     // -------------------------------------------------------------------------
+    // Filter 2b: Earnings gate
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `no candidate when the next earnings report falls before the selected expiry`() =
+        runTest {
+            // Earnings at +20d sits inside the position window (expiry at +38d) — a scheduled
+            // binary event the spread would have to hold through. Must reject.
+            val result =
+                buildSelector(
+                    instrumentConfig = InstrumentConfig(symbol = symbol, nextEarningsDate = today.plusDays(20)),
+                ).select(symbol, capitalOf50k).requestOrNull
+
+            assertNull(result, "Earnings inside the position window must prevent entry")
+        }
+
+    @Test
+    fun `candidate allowed when earnings fall after the selected expiry`() =
+        runTest {
+            // Earnings at +45d is beyond the +38d expiry — the position never holds through it.
+            val result =
+                buildSelector(
+                    instrumentConfig = InstrumentConfig(symbol = symbol, nextEarningsDate = today.plusDays(45)),
+                ).select(symbol, capitalOf50k).requestOrNull
+
+            assertNotNull(result, "Earnings after expiry must not block entry")
+        }
+
+    @Test
+    fun `candidate allowed when the stored earnings date is stale (in the past)`() =
+        runTest {
+            // A past date is history left by the refresh job, not a scheduled event — no gate.
+            val result =
+                buildSelector(
+                    instrumentConfig = InstrumentConfig(symbol = symbol, nextEarningsDate = today.minusDays(5)),
+                ).select(symbol, capitalOf50k).requestOrNull
+
+            assertNotNull(result, "A past earnings date must not block entry")
+        }
+
+    // -------------------------------------------------------------------------
     // Filter 3: Delta selection
     // -------------------------------------------------------------------------
 

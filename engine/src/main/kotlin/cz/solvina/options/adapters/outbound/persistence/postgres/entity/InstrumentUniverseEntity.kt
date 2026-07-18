@@ -49,6 +49,8 @@ class InstrumentUniverseEntity(
     var exDividendDate: LocalDate? = null,
     @Column(name = "next_dividend_amount", precision = 12, scale = 4)
     var nextDividendAmount: BigDecimal? = null,
+    @Column(name = "next_earnings_date")
+    var nextEarningsDate: LocalDate? = null,
     @Column(name = "notes", length = 500)
     var notes: String? = null,
 )

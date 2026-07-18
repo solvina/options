@@ -31,5 +31,8 @@ data class InstrumentConfig(
     // refresh job (future); null until then — ex-dividend date and the upcoming per-share amount.
     val exDividendDate: LocalDate? = null,
     val nextDividendAmount: BigDecimal? = null,
+    // Next scheduled earnings report, refreshed daily by EarningsRefreshService. Both spread
+    // selectors reject entries whose expiry spans this date. Null / past dates = no gate.
+    val nextEarningsDate: LocalDate? = null,
     val notes: String? = null,
 )

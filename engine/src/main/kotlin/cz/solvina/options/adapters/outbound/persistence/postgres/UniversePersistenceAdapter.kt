@@ -118,6 +118,7 @@ class UniversePersistenceAdapter(
             timeProfitDte = timeProfitDte,
             exDividendDate = exDividendDate,
             nextDividendAmount = nextDividendAmount,
+            nextEarningsDate = nextEarningsDate,
             notes = notes,
         )
 
@@ -142,6 +143,7 @@ class UniversePersistenceAdapter(
             timeProfitDte = timeProfitDte,
             exDividendDate = exDividendDate,
             nextDividendAmount = nextDividendAmount,
+            nextEarningsDate = nextEarningsDate,
             notes = notes,
         )
 

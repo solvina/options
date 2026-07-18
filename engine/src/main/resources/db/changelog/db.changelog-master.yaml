@@ -49,3 +49,5 @@ databaseChangeLog:
       file: db/changelog/v29__option_params_cache.yaml
   - include:
       file: db/changelog/v30__backtest_config.yaml
+  - include:
+      file: db/changelog/v31__next_earnings_date.yaml

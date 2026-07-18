@@ -29,6 +29,7 @@ import cz.solvina.options.domain.features.spread.strategy.StrategyExit
 import cz.solvina.options.domain.features.spread.strategy.bearcall.BearCallSpreadCloser
 import cz.solvina.options.domain.features.spread.strategy.bullput.BullPutSpreadCloser
 import cz.solvina.options.domain.features.spread.strategy.bullput.BullPutStrategy
+import cz.solvina.options.domain.features.universe.InstrumentConfig
 import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.features.volatility.VolatilityPort
 import cz.solvina.options.domain.models.IvRank
@@ -422,6 +423,34 @@ class SpreadManagementServiceTest {
             coEvery { spreadPort.findByStatus(SpreadStatus.CLOSING) } returns emptyList()
             coEvery { spreadPort.update(any()) } answers { firstArg() }
             coEvery { marketDataPort.getOptionMidLive(soldContract) } returns Money(BigDecimal("1.70"))
+            coEvery { marketDataPort.getOptionMidLive(boughtContract) } returns Money(BigDecimal("0.10"))
+            coEvery { marketDataPort.getUnderlyingPrice(any()) } returns Money(BigDecimal("500"))
+
+            val updated = slot<BullPutSpread>()
+            coEvery { spreadPort.update(capture(updated)) } answers { firstArg() }
+
+            buildService(spreadPort, marketDataPort, orderPort).checkExits()
+
+            // No close: the only update is recordLastValue, which keeps the spread OPEN.
+            assertEquals(SpreadStatus.OPEN, updated.captured.status)
+            coVerify(exactly = 0) { orderPort.placeMarketOrder(any(), any(), any()) }
+        }
+
+    @Test
+    fun `stop loss disabled by stopLossPercent zero holds the spread at any value`() =
+        runTest {
+            // 2026-07-18: stopLossPercent <= 0 disables the value stop entirely (defined-risk
+            // position, managed by TP + the DTE rule). Spread value $4.60 is far beyond every
+            // historical threshold (credit $1.00) — the spread must HOLD, not stop out.
+            coEvery { universePort.get(any()) } returns InstrumentConfig(symbol = symbol, stopLossPercent = 0.0)
+
+            val spreadPort = mockk<BullPutSpreadPort>()
+            val marketDataPort = mockk<MarketDataPort>()
+            val orderPort = mockk<OrderPort>(relaxed = true)
+
+            coEvery { spreadPort.findOpen() } returns listOf(buildOpenSpread())
+            coEvery { spreadPort.findByStatus(SpreadStatus.CLOSING) } returns emptyList()
+            coEvery { marketDataPort.getOptionMidLive(soldContract) } returns Money(BigDecimal("4.70"))
             coEvery { marketDataPort.getOptionMidLive(boughtContract) } returns Money(BigDecimal("0.10"))
             coEvery { marketDataPort.getUnderlyingPrice(any()) } returns Money(BigDecimal("500"))
 

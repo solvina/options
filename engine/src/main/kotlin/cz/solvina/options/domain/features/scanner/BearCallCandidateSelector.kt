@@ -98,6 +98,15 @@ class BearCallCandidateSelector(
         detail = detail.copy(expiry = expiry, dte = dte)
         logger.info { "[$symbol] (bear-call) Selected expiry $expiry ($dte DTE)" }
 
+        // 2b. Earnings gate — mirror of the bull-put rule: never open a position whose life spans
+        // a scheduled earnings report (see BullPutCandidateSelector for rationale).
+        val earnings = universePort.get(symbol)?.nextEarningsDate
+        if (earnings != null && !earnings.isBefore(today) && !earnings.isAfter(expiry)) {
+            logger.info { "[$symbol] (bear-call) Skipping entry — earnings $earnings inside position window (expiry $expiry)" }
+            tradeLogger.info { "SKIP   $symbol  (bear-call) earnings=$earnings before expiry=$expiry" }
+            return reject(RejectReason.EARNINGS_BEFORE_EXPIRY)
+        }
+
         // 3. Get option chain and find the best call to SELL (short leg, lower strike)
         val chain = optionChainPort.getOptionChain(symbol, expiry, underlyingPrice, StrategyId.BEAR_CALL)
         val calls = chain.filter { it.contract.type == OptionType.CALL }

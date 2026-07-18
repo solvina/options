@@ -95,6 +95,9 @@ class PositionReversalIntegrationTest {
     @BeforeEach
     fun setUp() {
         every { universePort.isMarketOpen(any()) } returns true
+        // No per-symbol overrides: a relaxed InstrumentConfig mock would return stopLossPercent
+        // 0.0, which since 2026-07-18 means "value stop disabled" — the strategy default must apply.
+        coEvery { universePort.get(any()) } returns null
     }
 
     @Test

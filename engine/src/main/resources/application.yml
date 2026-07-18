@@ -101,8 +101,14 @@ scanner:
   execution-timeout-minutes: 15
   ticks-before-price-adjust: 5
   price-adjust-interval-seconds: 30
-  max-leg-bid-ask-spread-pct: 0.15 # Conservative: 0.30 → 0.15 (only liquid options); re-checked on the fresh tick at execution
-  entry-min-fill-pct-of-mid: 0.85  # ladder floor: never rest below 85% of fresh mid (Jul 6–7 fills averaged 68% of mid)
+  # 2026-07-18: 0.15 → 0.10. Post-epoch fills averaged −$17/spread vs entry mid and the worst
+  # slippage came from wide-legged books (COHR −$36, MRVL −$35) — half the leg spread is the
+  # market maker's fee, so only tight books are worth crossing. Fewer entries, better ones.
+  max-leg-bid-ask-spread-pct: 0.10 # re-checked on the fresh tick at execution
+  # 2026-07-18: 0.85 → 0.95. Patient entry: rest near mid and let the 15-min scan retry rather
+  # than walk down toward the natural cross. All 10 post-epoch fills printed below entry mid
+  # (avg −$17 ≈ 15–30% of the expected TP win) — a systematic drag the 67% breakeven math ignores.
+  entry-min-fill-pct-of-mid: 0.95  # ladder floor: never rest below 95% of fresh mid
   order-chase-timeout-minutes: 3   # Conservative: 5 → 3 (give up sooner, retry next scan)
   order-chase-max-retries: 1       # Conservative: 3 → 1 (one attempt per order, not aggressive chasing)
   order-chase-price-step: 0.01     # Conservative: 0.03 → 0.01 (gradual adjustments, avoid floor hits)
@@ -134,17 +140,36 @@ scanner:
     strike-band-percent: 0.20
     candidate-strike-count: 7
     spread-width-usd: 5.0
-    min-credit-per-share: 0.35     # Conservative: 0.50 → 0.35 for better fill rates
+    # 2026-07-18: 0.35 → 0.90 (≈18% of the $5 width). A $0.35-credit spread's best case is a
+    # ~$17 TP win before commissions — not worth its risk (PG closed +$13). Floor prunes the
+    # worthless tail; a fair 25-delta $5-wide spread prices ~$0.90–1.50, so real candidates pass.
+    min-credit-per-share: 0.90
     max-credit-pct-of-width: 0.40  # crash-pricing guard: mid > 40% of width = near-even ITM odds, skip
     max-risk-percent: 0.025
     take-profit-percent: 0.50
-    # 2026-07-07: 2.00 → 1.00 AND the basis changed from fill credit to ENTRY MID (fair value at
-    # fill): exit when the spread is worth 2× its entry mid. The old 3×-fill-credit stop plus fills
-    # far below mid meant positions could be born already stopped out (LITE, NBIS). At TP 50% /
-    # SL 100% the break-even win rate is ~67%; the old 50%/200% needed ~80% (realized: 35%).
-    stop-loss-percent: 1.00
+    # 2026-07-18: 1.00 → 0 = value stop DISABLED (0 or negative disables it; see
+    # SpreadManagementService). The spread is defined-risk — max loss is capped by the width and
+    # max-risk-percent already sizes for it — while the 2×-mid stop converted recoverable
+    # drawdowns into realized losses (TXN stopped 2026-07-17 with the underlying still ABOVE the
+    # short strike). Managed exits are now TP 50% + the 21-DTE time exit; occasional full-width
+    # losses are accepted by design. History: 2026-07-07 2.00 → 1.00 + basis moved to entry mid.
+    stop-loss-percent: 0
     time-profit-dte: 21            # manage/close at 21 DTE (tastytrade-style); was 14
     drift-protection-pct: 0.05     # Conservative: 0.01 → 0.05 (allow 5% movement, not 1%)
+  # ---- Bear call strategy params (scanner.bear-call.*) ----
+  # 2026-07-18: same exit/entry policy as bull put — value stop disabled (defined-risk + 21-DTE
+  # management) and the credit floor raised to ≈18% of width. `enabled` stays in the rpi profile.
+  bear-call:
+    min-credit-per-share: 0.90
+    stop-loss-percent: 0
+
+# Next-earnings dates: refreshed daily into instrument_universe.next_earnings_date from the public
+# Nasdaq earnings-date API (Zacks data). The scanners skip any entry whose expiry spans a known
+# earnings date — holding a short spread through a scheduled binary event is uncompensated risk at
+# 20–30 delta pricing (MRVL −22% / IONQ −25% the week of 2026-07-13 were earnings-sized gaps).
+# A fetch failure keeps the previous date; dates already in the past are ignored by the gate.
+earnings:
+  refresh-cron: "0 45 6 * * *"   # daily pre-market, after the 06:30 dividend refresh
 
 # Dividend data: refreshed daily into instrument_universe (ex_dividend_date/next_dividend_amount).
 # Source is the IBKR IB_DIVIDENDS tick by default. On a paper deployment running on DELAYED market

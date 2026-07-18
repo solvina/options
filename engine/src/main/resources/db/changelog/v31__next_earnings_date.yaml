@@ -1,0 +1,23 @@
+databaseChangeLog:
+  # ---------------------------------------------------------------------------
+  # Earnings-date entry filter (2026-07-18).
+  # Adds instrument_universe.next_earnings_date, refreshed daily by
+  # EarningsRefreshService (public Nasdaq earnings-date API). Both candidate
+  # selectors reject any entry whose chosen expiry spans this date — holding a
+  # short spread through a scheduled binary event is uncompensated risk at
+  # 20–30 delta pricing (MRVL −22% / IONQ −25% during the week of 2026-07-13).
+  # ---------------------------------------------------------------------------
+  - changeSet:
+      id: v31__next_earnings_date
+      author: solvina
+      changes:
+        - addColumn:
+            tableName: instrument_universe
+            columns:
+              - column:
+                  name: next_earnings_date
+                  type: DATE
+      rollback:
+        - dropColumn:
+            tableName: instrument_universe
+            columnName: next_earnings_date

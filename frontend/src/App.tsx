@@ -14,6 +14,7 @@ import { HistoricalDataPage } from './pages/HistoricalDataPage'
 import { BacktestPage } from './pages/BacktestPage'
 import { StockBacktestPage } from './pages/StockBacktestPage'
 import { ReportsPage } from './pages/ReportsPage'
+import { ChangelogPage } from './pages/ChangelogPage'
 
 function App() {
   return (
@@ -36,6 +37,7 @@ function App() {
           <Route path="/flags" element={<Navigate to="/flags/positions" replace />} />
           <Route path="/flags/analytics" element={<FlagAnalyticsPage />} />
           <Route path="/historical" element={<HistoricalDataPage />} />
+          <Route path="/changelog" element={<ChangelogPage />} />
           <Route path="/backtest" element={<BacktestPage />} />
           <Route path="/backtest/stock" element={<StockBacktestPage />} />
         </Route>

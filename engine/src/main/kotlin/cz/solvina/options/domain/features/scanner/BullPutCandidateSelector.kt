@@ -90,6 +90,17 @@ class BullPutCandidateSelector(
         detail = detail.copy(expiry = expiry, dte = dte)
         logger.info { "[$symbol] Selected expiry $expiry ($dte DTE)" }
 
+        // 2b. Earnings gate — never open a position whose life spans a scheduled earnings report:
+        // a binary gap (MRVL −22%, IONQ −25%, week of 2026-07-13) is uncompensated risk at
+        // 20–30 delta pricing. Date is refreshed daily by EarningsRefreshService; null or a past
+        // date (stale history) imposes no gate.
+        val earnings = inst?.nextEarningsDate
+        if (earnings != null && !earnings.isBefore(today) && !earnings.isAfter(expiry)) {
+            logger.info { "[$symbol] Skipping entry — earnings $earnings inside position window (expiry $expiry)" }
+            tradeLogger.info { "SKIP   $symbol  earnings=$earnings before expiry=$expiry" }
+            return reject(RejectReason.EARNINGS_BEFORE_EXPIRY)
+        }
+
         // 3. Get option chain and find the best put
         val chain = optionChainPort.getOptionChain(symbol, expiry, underlyingPrice, StrategyId.BULL_PUT)
         val puts = chain.filter { it.contract.type == OptionType.PUT }

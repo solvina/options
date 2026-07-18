@@ -49,6 +49,7 @@ const navGroups = [
       { to: '/account', label: 'Account' },
       { to: '/diagnostic', label: 'Diagnostics' },
       { to: '/historical', label: 'Historical' },
+      { to: '/changelog', label: 'Changelog' },
     ],
   },
 ]

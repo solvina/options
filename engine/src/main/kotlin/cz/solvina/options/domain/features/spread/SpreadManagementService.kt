@@ -366,9 +366,10 @@ class SpreadManagementService(
         val takeProfitPercent = inst?.takeProfitPercent ?: strat.takeProfitPercent
         val stopLossPercent = inst?.stopLossPercent ?: strat.stopLossPercent
         val tpThreshold = spread.creditPerShare.multiply(BigDecimal.ONE.subtract(BigDecimal(takeProfitPercent)))
-        // SL basis is the entry MID, mirroring checkSpreadExit (see comment there).
+        // SL basis is the entry MID, mirroring checkSpreadExit (see comment there; null = disabled).
         val slBasis = spread.entryMidPerShare ?: spread.creditPerShare
-        val slThreshold = slBasis.add(slBasis.multiply(BigDecimal(stopLossPercent)))
+        val slThreshold =
+            if (stopLossPercent > 0.0) slBasis.add(slBasis.multiply(BigDecimal(stopLossPercent))) else null
 
         val originalStatus =
             spread.closeReason
@@ -380,7 +381,7 @@ class SpreadManagementService(
             when {
                 currentSpreadValue == null -> originalStatus
                 currentSpreadValue <= tpThreshold -> SpreadStatus.CLOSED_PROFIT
-                currentSpreadValue >= slThreshold -> SpreadStatus.CLOSED_STOP
+                slThreshold != null && currentSpreadValue >= slThreshold -> SpreadStatus.CLOSED_STOP
                 // Between the thresholds, a preserved PROFIT/STOP intent can contradict the realized
                 // sign (an AVGO spread closed −$263 as CLOSED_PROFIT this way) — relabel by whether
                 // the buy-back costs more than the credit received. TIME/MANUAL intents stay: they
@@ -437,17 +438,25 @@ class SpreadManagementService(
         // credit let a below-mid fill mechanically tighten the stop — a spread filled at 50% of
         // mid with a credit-multiple stop starts life already stopped out (LITE, NBIS 2026-07-06/07).
         // Rows persisted before entry mids were recorded fall back to the credit.
+        //
+        // stopLossPercent <= 0 DISABLES the value stop (2026-07-18): the spread is defined-risk —
+        // max loss is capped by the width and already sized by max-risk-percent — while a value
+        // stop fires on vol expansion and converts recoverable drawdowns into realized losses
+        // (TXN was stopped 2026-07-17 with the underlying still ABOVE the short strike). With the
+        // stop disabled the managed exits are TP 50% and the timeProfitDte rule; a full-width loss
+        // is an accepted, bounded outcome, not an emergency.
         val tpThreshold = spread.creditPerShare.multiply(BigDecimal.ONE.subtract(BigDecimal(takeProfitPercent)))
         val slBasis = spread.entryMidPerShare ?: spread.creditPerShare
-        val slThreshold = slBasis.add(slBasis.multiply(BigDecimal(stopLossPercent)))
+        val slThreshold =
+            if (stopLossPercent > 0.0) slBasis.add(slBasis.multiply(BigDecimal(stopLossPercent))) else null
 
         logger.debug {
             "[${spread.symbol}] spread value=\$${currentSpreadValue ?: "n/a"} credit=\$${"%.4f".format(spread.creditPerShare)} " +
-                "TP≤\$${"%.4f".format(tpThreshold)} SL≥\$${"%.4f".format(slThreshold)} " +
+                "TP≤\$${"%.4f".format(tpThreshold)} SL≥${slThreshold?.let { "\$${"%.4f".format(it)}" } ?: "disabled"} " +
                 "(basis=\$${"%.4f".format(slBasis)}) DTE=$dte quote=$quoteStatus"
         }
 
-        val slBreached = currentSpreadValue != null && currentSpreadValue >= slThreshold
+        val slBreached = slThreshold != null && currentSpreadValue != null && currentSpreadValue >= slThreshold
         if (currentSpreadValue != null && !slBreached) {
             // Breaches must be CONSECUTIVE across VALUED observations — a real quote below the
             // threshold resets the count. A BLIND cycle (null value) is no information, not an

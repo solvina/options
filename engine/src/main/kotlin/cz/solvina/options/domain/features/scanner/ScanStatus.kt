@@ -48,6 +48,9 @@ enum class RejectReason {
 
     /** Bear-call only: within the ex-dividend entry buffer. */
     EX_DIVIDEND_BUFFER,
+
+    /** The selected expiry spans the symbol's next scheduled earnings report. */
+    EARNINGS_BEFORE_EXPIRY,
 }
 
 /**

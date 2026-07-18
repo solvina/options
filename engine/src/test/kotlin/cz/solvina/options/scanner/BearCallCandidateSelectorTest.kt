@@ -120,6 +120,21 @@ class BearCallCandidateSelectorTest {
         }
 
     @Test
+    fun `no candidate when the next earnings report falls before the selected expiry`() =
+        runTest {
+            // Earnings at +20d sits inside the position window (expiry at +38d) — mirror of the
+            // bull-put earnings gate.
+            val universePort =
+                mockk<UniversePort>(relaxed = true) {
+                    coEvery { get(symbol) } returns InstrumentConfig(symbol = symbol, nextEarningsDate = today.plusDays(20))
+                }
+
+            val result = buildSelector(universePort = universePort).select(symbol, capitalOf50k).requestOrNull
+
+            assertNull(result, "Earnings inside the position window must prevent bear-call entry")
+        }
+
+    @Test
     fun `no candidate when ex-dividend is within the entry buffer for a US name`() =
         runTest {
             // ex-div tomorrow (buffer = 48h → 2 days), US session → entry blocked.
@@ -140,7 +155,9 @@ class BearCallCandidateSelectorTest {
         expirations: Set<LocalDate> = setOf(expiry38d),
         chain: List<OptionQuote> = validChain,
         config: BearCallScannerConfig = BearCallScannerConfig(),
-        universePort: UniversePort = mockk(relaxed = true),
+        // get() must return null, not a relaxed InstrumentConfig mock — mocked date fields would
+        // otherwise trip the ex-dividend/earnings entry gates on the happy path.
+        universePort: UniversePort = mockk<UniversePort>(relaxed = true).also { coEvery { it.get(any()) } returns null },
     ) = BearCallCandidateSelector(
         volatilityPort =
             object : VolatilityPort {
