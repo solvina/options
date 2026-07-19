@@ -130,7 +130,9 @@ from(bucket: "{BUCKET}")
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--intervals", default="1d,4h,5min")
-    ap.add_argument("--since", default="1999-01-01", help="sync from this date (default: everything)")
+    # 1990, not 1999: IBKR delivers pre-1999 daily history for some symbols (JNJ reaches 1993),
+    # and a 1999 default silently skipped those heads.
+    ap.add_argument("--since", default="1990-01-01", help="sync from this date (default: everything)")
     args = ap.parse_args()
 
     print(f"Tunneling to {RPI_HOST} ...")
