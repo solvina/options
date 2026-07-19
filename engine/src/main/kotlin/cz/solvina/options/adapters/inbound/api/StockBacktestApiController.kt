@@ -6,6 +6,8 @@ import cz.solvina.options.domain.features.bars.BarStorePort
 import cz.solvina.options.domain.features.bars.FetchJobStatus
 import cz.solvina.options.domain.features.bars.HistoricalDataService
 import cz.solvina.options.domain.features.bars.Timeframe
+import cz.solvina.options.domain.features.universe.SectorEtf
+import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.delay
@@ -34,6 +36,7 @@ private val logger = KotlinLogging.logger {}
 class StockBacktestApiController(
     private val historicalData: HistoricalDataService,
     private val barStore: BarStorePort,
+    private val universePort: UniversePort,
 ) {
     data class StockBacktestRequest(
         val symbols: List<String>,
@@ -51,7 +54,11 @@ class StockBacktestApiController(
         val supportProximityPct: Double? = null,
         val stopLossPct: Double? = null,
         val targetPct: Double? = null,
+        val atrPeriod: Int? = null,
+        val stopAtrMultiple: Double? = null,
+        val targetAtrMultiple: Double? = null,
         val riskPerTrade: Double? = null,
+        val riskPerTradePct: Double? = null,
         val maxOpenPositions: Int? = null,
     )
 
@@ -75,18 +82,38 @@ class StockBacktestApiController(
                 supportProximityPct = req.supportProximityPct ?: d.supportProximityPct,
                 stopLossPct = req.stopLossPct ?: d.stopLossPct,
                 targetPct = req.targetPct ?: d.targetPct,
+                atrPeriod = req.atrPeriod ?: d.atrPeriod,
+                stopAtrMultiple = req.stopAtrMultiple ?: d.stopAtrMultiple,
+                targetAtrMultiple = req.targetAtrMultiple ?: d.targetAtrMultiple,
                 riskPerTrade = req.riskPerTrade ?: d.riskPerTrade,
+                riskPerTradePct = req.riskPerTradePct ?: d.riskPerTradePct,
                 maxOpenPositions = req.maxOpenPositions ?: d.maxOpenPositions,
             )
+
+        // Server-side param validation: a zero/negative period silently yields 0 trades (NaN-free
+        // but meaningless), so reject here for EVERY client — browser input constraints only
+        // protect the React form.
+        validationError(params, req.initialCapital)?.let { reason ->
+            logger.warn { "Stock backtest rejected: $reason | $params" }
+            return ResponseEntity.badRequest().build()
+        }
 
         // Warmup must cover the slowest SMA before `from`; fetch that too. Trading-day → calendar-day
         // padding factor of ~1.6 (5 weekdays / ~7 calendar).
         val warmupCalendarDays = (maxOf(params.smaSlowPeriod, params.smaFastPeriod) * 2L).coerceAtLeast(400L)
         val ensureFrom = req.from.minusDays(warmupCalendarDays)
 
+        // Benchmarks: each symbol's sector ETF (from its universe row) + SPY as the broad market.
+        // Included in the coverage fetch so their history downloads on demand alongside the symbols;
+        // the engine only reads whatever ends up stored (backtest profile never fetches).
+        val benchmarkSymbols =
+            (symbols.mapNotNull { SectorEtf.forSector(universePort.get(it)?.sector) } + SectorEtf.BROAD_MARKET)
+                .distinct()
+                .filterNot { it in symbols }
+
         // Data-on-demand: fetch only the missing head/tail, then wait for it (bounded). The UI will
         // later make this async with progress; for the API a bounded wait is fine (2nd run is instant).
-        val job = historicalData.ensureCoverage(symbols, ensureFrom, req.to, timeframe)
+        val job = historicalData.ensureCoverage(symbols + benchmarkSymbols, ensureFrom, req.to, timeframe)
         var waited = 0
         while (historicalData.getJob(job.id)?.status == FetchJobStatus.RUNNING && waited < MAX_WAIT_SECONDS) {
             delay(2000)
@@ -112,11 +139,38 @@ class StockBacktestApiController(
                     warmupDays = warmupCalendarDays,
                     holdOvernight = true, // swing: hold to stop/target, no intraday EOD liquidation
                     timeframe = timeframe,
+                    benchmarkSymbols = benchmarkSymbols,
                 ),
                 strategy,
             )
+        // The engine logs the result summary; this line pairs the strategy params with it. Data-class
+        // toString keeps both in sync with new fields for free.
+        logger.info { "Stock backtest params: $params" }
         return ResponseEntity.status(HttpStatus.OK).body(result)
     }
+
+    /** Returns a rejection reason, or null when the resolved params are runnable. */
+    private fun validationError(
+        p: RuleBacktestStrategy.Params,
+        initialCapital: BigDecimal?,
+    ): String? =
+        when {
+            p.rsiPeriod < 1 -> "rsiPeriod must be >= 1"
+            p.smaFastPeriod < 1 -> "smaFastPeriod must be >= 1"
+            p.smaSlowPeriod < 1 -> "smaSlowPeriod must be >= 1"
+            p.maxOpenPositions < 1 -> "maxOpenPositions must be >= 1"
+            p.rsiOversold <= 0.0 || p.rsiOversold > 100.0 -> "rsiOversold must be in (0, 100]"
+            p.supportProximityPct < 0.0 -> "supportProximityPct must be >= 0"
+            p.stopLossPct <= 0.0 -> "stopLossPct must be > 0"
+            p.targetPct <= 0.0 -> "targetPct must be > 0"
+            p.atrPeriod < 1 -> "atrPeriod must be >= 1"
+            p.stopAtrMultiple < 0.0 -> "stopAtrMultiple must be >= 0 (0 = use stopLossPct)"
+            p.targetAtrMultiple < 0.0 -> "targetAtrMultiple must be >= 0 (0 = use targetPct)"
+            p.riskPerTradePct < 0.0 || p.riskPerTradePct > 100.0 -> "riskPerTradePct must be in [0, 100]"
+            p.riskPerTradePct == 0.0 && p.riskPerTrade <= 0.0 -> "riskPerTrade must be > 0 when riskPerTradePct is unset"
+            initialCapital != null && initialCapital <= BigDecimal.ZERO -> "initialCapital must be > 0"
+            else -> null
+        }
 
     companion object {
         private const val MAX_WAIT_SECONDS = 600

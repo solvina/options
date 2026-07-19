@@ -51,3 +51,5 @@ databaseChangeLog:
       file: db/changelog/v30__backtest_config.yaml
   - include:
       file: db/changelog/v31__next_earnings_date.yaml
+  - include:
+      file: db/changelog/v32__fresh_db_missing_tables.yaml

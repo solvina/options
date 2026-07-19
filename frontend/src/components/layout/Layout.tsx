@@ -38,7 +38,7 @@ const navGroups = [
   {
     label: 'Backtest',
     items: [
-      { to: '/backtest', label: 'Flag' },
+      { to: '/backtest', label: 'Flag', end: true },
       { to: '/backtest/stock', label: 'Stock' },
     ],
   },
@@ -149,10 +149,11 @@ export function Layout() {
               <span className="text-[11px] uppercase tracking-wide text-muted-foreground/70 px-2 select-none">
                 {group.label}
               </span>
-              {group.items.map(({ to, label }) => (
+              {group.items.map(({ to, label, end }) => (
                 <NavLink
                   key={to}
                   to={to}
+                  end={end}
                   className={({ isActive }) =>
                     cn(
                       'px-2 py-1.5 rounded-md text-sm transition-colors',

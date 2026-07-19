@@ -30,3 +30,7 @@ data/
 .env
 .env.local
 .env.rpi
+
+# param-sweep output (results.csv can be huge; regenerate from config)
+sweeps/
+scripts/sweeps/

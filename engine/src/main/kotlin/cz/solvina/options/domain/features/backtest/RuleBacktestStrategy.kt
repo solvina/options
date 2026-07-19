@@ -1,5 +1,6 @@
 package cz.solvina.options.domain.features.backtest
 
+import cz.solvina.options.domain.features.bars.AtrCalculator
 import cz.solvina.options.domain.features.bars.FiveMinuteBar
 import cz.solvina.options.domain.models.Symbol
 import java.math.BigDecimal
@@ -31,7 +32,15 @@ class RuleBacktestStrategy(
         val supportProximityPct: Double = 3.0, // close within this % above the fast SMA (support)
         val stopLossPct: Double = 3.0,
         val targetPct: Double = 6.0,
+        /** Wilder ATR lookback (bars of the backtest timeframe) for the ATR-based exits below. */
+        val atrPeriod: Int = 14,
+        /** When > 0, stop = entry − ATR × this (volatility-scaled), overriding [stopLossPct]. */
+        val stopAtrMultiple: Double = 0.0,
+        /** When > 0, target = entry + ATR × this, overriding [targetPct]. */
+        val targetAtrMultiple: Double = 0.0,
         val riskPerTrade: Double = 200.0,
+        /** When > 0, overrides [riskPerTrade]: dollar risk = current capital × this / 100. */
+        val riskPerTradePct: Double = 0.0,
         val maxOpenPositions: Int = 1,
     )
 
@@ -47,6 +56,7 @@ class RuleBacktestStrategy(
     )
 
     private val ind = mutableMapOf<Symbol, Indicators>()
+    private val recentBars = mutableMapOf<Symbol, ArrayDeque<FiveMinuteBar>>() // ATR window (atrPeriod+1)
     private val pending = mutableMapOf<String, PendingInfo>() // tradeId → symbol+shares, set at emit
     private val open = mutableMapOf<String, OpenTrade>()
     private val completed = mutableListOf<RuleTrade>()
@@ -72,6 +82,7 @@ class RuleBacktestStrategy(
             val i = Indicators(p.rsiPeriod)
             warmupBars[symbol]?.forEach { i.update(it.close) }
             ind[symbol] = i
+            recentBars[symbol] = ArrayDeque(warmupBars[symbol]?.takeLast(p.atrPeriod + 1) ?: emptyList())
         }
     }
 
@@ -82,6 +93,9 @@ class RuleBacktestStrategy(
     ): List<BacktestSignal> {
         val i = ind.getOrPut(symbol) { Indicators(p.rsiPeriod) }
         i.update(bar.close)
+        val window = recentBars.getOrPut(symbol) { ArrayDeque() }
+        window.addLast(bar)
+        while (window.size > p.atrPeriod + 1) window.removeFirst()
 
         if (account.openPositions + account.pendingPositions >= p.maxOpenPositions) return emptyList()
 
@@ -99,11 +113,23 @@ class RuleBacktestStrategy(
         if (!(uptrendOk && nearSupport && rsiOk && risingOk)) return emptyList()
 
         val entry = close
-        val stop = entry * (1.0 - p.stopLossPct / 100.0)
-        val target = entry * (1.0 + p.targetPct / 100.0)
+        // ATR-scaled exits when requested: same multiple = wider stops in volatile regimes,
+        // tighter in calm ones. A signal before the ATR window fills is skipped rather than
+        // silently falling back to percent — mixing exit styles inside one run would poison sweeps.
+        val needAtr = p.stopAtrMultiple > 0.0 || p.targetAtrMultiple > 0.0
+        val atr = if (needAtr) AtrCalculator.atr(window.toList(), p.atrPeriod) else Double.NaN
+        if (needAtr && atr.isNaN()) return emptyList()
+        val stop = if (p.stopAtrMultiple > 0.0) entry - atr * p.stopAtrMultiple else entry * (1.0 - p.stopLossPct / 100.0)
+        val target = if (p.targetAtrMultiple > 0.0) entry + atr * p.targetAtrMultiple else entry * (1.0 + p.targetPct / 100.0)
         val perShareRisk = entry - stop
         if (perShareRisk <= 0.0) return emptyList()
-        val shares = floor(p.riskPerTrade / perShareRisk).toInt()
+        val riskDollars = if (p.riskPerTradePct > 0.0) account.capital.toDouble() * p.riskPerTradePct / 100.0 else p.riskPerTrade
+        // Cap notional at capital/maxOpenPositions: risk-based sizing with a tight stop would
+        // otherwise buy more stock than the account can pay for (the engine tracks realized
+        // capital only and would happily book the leveraged P&L). The per-slot split keeps the
+        // aggregate notional of concurrent positions within capital.
+        val maxNotional = account.capital.toDouble() / p.maxOpenPositions
+        val shares = minOf(floor(riskDollars / perShareRisk), floor(maxNotional / entry)).toInt()
         if (shares <= 0) return emptyList()
 
         val tradeId = "rule-${counter.incrementAndGet()}"
@@ -201,6 +227,13 @@ class RuleBacktestStrategy(
             prevClose = close
         }
 
-        fun sma(period: Int): Double? = if (closes.size < period) null else closes.toList().takeLast(period).average()
+        fun sma(period: Int): Double? {
+            if (period <= 0 || closes.size < period) return null
+            // Indexed sum instead of toList().takeLast(): called twice per bar, the list copies
+            // are pure garbage on long backtests.
+            var sum = 0.0
+            for (i in closes.size - period until closes.size) sum += closes[i]
+            return sum / period
+        }
     }
 }

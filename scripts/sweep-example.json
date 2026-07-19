@@ -1,0 +1,26 @@
+{
+  "name": "example-sl-tp",
+  "outputDir": "sweeps/aapl_sl_2-10_targetPct_3-10",
+  "baseUrl": "http://localhost:8082/options",
+  "jobs": 100,
+  "request": {
+    "symbols": ["AAPL"],
+    "from": "2015-01-01",
+    "to": "2026-07-17",
+    "timeframe": "4h",
+    "initialCapital": 20000,
+    "rsiPeriod": 5,
+    "rsiOversold": 95,
+    "requireRsiRising": true,
+    "smaFastPeriod": 10,
+    "smaSlowPeriod": 20,
+    "requireUptrend": true,
+    "supportProximityPct": 15.0,
+    "riskPerTradePct": 3,
+    "maxOpenPositions": 10
+  },
+  "sweep": {
+    "stopLossPct": {"min": 2, "max": 10, "step": 0.1},
+    "targetPct": {"min": 3, "max": 10, "step": 0.1}
+  }
+}

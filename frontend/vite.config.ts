@@ -14,7 +14,9 @@ export default defineConfig({
     port: 3001,
     proxy: {
       '/api': {
-        target: 'http://localhost:8081',
+        // Default: dev engine on 8081. Point the UI at the local backtest instance with
+        //   VITE_API_TARGET=http://localhost:8082 npm run dev
+        target: process.env.VITE_API_TARGET ?? 'http://localhost:8081',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, '/options'),
       },

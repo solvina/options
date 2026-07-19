@@ -30,6 +30,12 @@ paths:
           schema:
             type: string
             format: date
+        - name: timeframe
+          in: query
+          required: false
+          description: Bar timeframe label (5min, 4h, 1d); defaults to 5min
+          schema:
+            type: string
       responses:
         '200':
           description: Coverage per symbol — list of symbol+day→count entries
@@ -131,6 +137,14 @@ components:
         to:
           type: string
           format: date
+        timeframe:
+          type: string
+          description: Bar timeframe label (5min, 4h, 1d); defaults to 5min
+        ensure:
+          type: boolean
+          description: >-
+            When true, only the missing head/tail of the range is fetched (idempotent, resumable);
+            when false or omitted, the whole range is refetched.
 
     FetchJobDto:
       type: object
@@ -155,6 +169,9 @@ components:
         to:
           type: string
           format: date
+        timeframe:
+          type: string
+          description: Bar timeframe label (5min, 4h, 1d)
         status:
           type: string
           enum: [RUNNING, DONE, FAILED]

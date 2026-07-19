@@ -3,6 +3,7 @@ package cz.solvina.options.adapters.inbound.api
 import cz.solvina.options.domain.features.bars.FetchJob
 import cz.solvina.options.domain.features.bars.FetchJobStatus
 import cz.solvina.options.domain.features.bars.HistoricalDataService
+import cz.solvina.options.domain.features.bars.Timeframe
 import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.models.Symbol
 import `cz.solvina.options.historical`.api.HistoricalApi
@@ -29,11 +30,13 @@ class HistoricalApiImpl(
         from: LocalDate,
         to: LocalDate,
         symbols: String?,
+        timeframe: String?,
     ): ResponseEntity<Flow<SymbolCoverageDto>> {
         val symbolList = resolveSymbols(symbols)
+        val tf = Timeframe.fromLabel(timeframe ?: Timeframe.FIVE_MIN.label)
         val items: Flow<SymbolCoverageDto> =
             flow {
-                val coverage = historicalDataService.getCoverage(symbolList, from, to)
+                val coverage = historicalDataService.getCoverage(symbolList, from, to, tf)
                 coverage.forEach { (symbol, dayMap) ->
                     emit(
                         SymbolCoverageDto(
@@ -53,12 +56,23 @@ class HistoricalApiImpl(
             } else {
                 fetchRequestDto.symbols!!.map { Symbol(it.trim().uppercase()) }
             }
+        val timeframe = Timeframe.fromLabel(fetchRequestDto.timeframe ?: Timeframe.FIVE_MIN.label)
         val job =
-            historicalDataService.startFetch(
-                symbols = symbolList,
-                from = fetchRequestDto.from,
-                to = fetchRequestDto.to,
-            )
+            if (fetchRequestDto.ensure == true) {
+                historicalDataService.ensureCoverage(
+                    symbols = symbolList,
+                    from = fetchRequestDto.from,
+                    to = fetchRequestDto.to,
+                    timeframe = timeframe,
+                )
+            } else {
+                historicalDataService.startFetch(
+                    symbols = symbolList,
+                    from = fetchRequestDto.from,
+                    to = fetchRequestDto.to,
+                    timeframe = timeframe,
+                )
+            }
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(job.toDto())
     }
 
@@ -88,6 +102,7 @@ class HistoricalApiImpl(
             symbols = symbols.map { it.value },
             from = from,
             to = to,
+            timeframe = timeframe.label,
             status =
                 when (status) {
                     FetchJobStatus.RUNNING -> FetchJobDto.Status.RUNNING

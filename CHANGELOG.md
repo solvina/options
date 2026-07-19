@@ -3,6 +3,79 @@
 Notable strategy, engine and operations changes. Newest first. Rendered in the frontend under
 **Maintenance › Changelog**.
 
+## 2026-07-19 — Universe-wide history download + dedicated backtest workstation
+
+Two infrastructure steps toward serious backtesting: download **all** available history for the
+whole universe into the RPi's InfluxDB, and split backtesting off onto a more powerful machine
+that mirrors that data.
+
+### Bulk historical download for the whole universe (data)
+- `/historical/fetch` extended with `timeframe` (`5min` | `4h` | `1d`) and `ensure: true` —
+  ensure mode routes to `ensureCoverage`, fetching only the missing head/tail of the range, so
+  jobs are idempotent and resumable. `/historical/coverage` takes `timeframe` too; fetch jobs
+  report theirs.
+- New `scripts/download-universe-history.sh`: pulls the universe (188 symbols), submits one fetch
+  job per symbol per timeframe sequentially and polls to completion. Defaults: 1d from 1999,
+  4h from 2004 (IBKR intraday history rarely reaches further back). Rerun-safe — covered ranges
+  are skipped.
+- **Operational finding:** during IBKR's Saturday reset window the historical farm (HMDS) accepts
+  connections but answers nothing — every request dies at the adapter's 45s chunk timeout with no
+  error code, even after a gateway restart, while contract details keep working. Signature in the
+  log: `Historical chunk timed out after 45000ms — skipping` with 0 bars written. A probe loop on
+  the RPi (`scripts/probe-and-relaunch.sh`) retries every 15 min and relaunches the download
+  automatically once bars flow again.
+
+### Sector-ETF / market benchmarks in backtest results (backtest)
+- Backtest summaries now include buy&hold of each symbol's **sector ETF** (GICS sector from the
+  universe row → SPDR ETF via `SectorEtf`, e.g. Information Technology → XLK) plus **SPY** as the
+  broad market, over the same window and timeframe (first open → last close, same convention as
+  the symbols' own buy&hold). Rendered as a "vs Sector / Market ETF" stat row in the UI.
+- Benchmark ETF history is fetched on demand together with the backtest symbols (RPi); the
+  backtest profile computes from stored bars only and skips a benchmark whose series isn't
+  synced yet (logged). Unit-tested (computation + skip path).
+
+### ATR-scaled stops/targets in the rule strategy (backtest)
+- `RuleBacktestStrategy` gains `atrPeriod` (default 14), `stopAtrMultiple` and `targetAtrMultiple`:
+  when a multiple is > 0 the exit is entry ∓ ATR × multiple (Wilder ATR over bars of the backtest
+  timeframe), replacing the fixed-percent stop/target — the same multiple gives wider stops in
+  volatile regimes and tighter ones in calm markets, so one setting generalizes across regimes
+  instead of being tuned to one volatility level. Signals before the ATR window fills are skipped
+  (never silently mixed with percent exits). Exposed in the API, the UI form, and therefore
+  sweepable via param-sweep configs. Sanity check (AAPL 1d, loose entries): 3%/6% percent exits
+  → 22 trades, +0.2%, 7.8% max DD; ATR 2×/4× → 13 trades, +1.7%, 3.8% max DD.
+
+### Dedicated backtest instance on the workstation (backtest)
+- New Spring profile **`backtest`** (`application-backtest.yml`): port 8082, IBKR fully off
+  (no connect attempts, no trading/scanners/alerts), boots in ~8s. A `@Profile("backtest")`
+  no-op `EquityHistoricalBarsPort` replaces the IBKR fetch chain, so a backtest over a local data
+  gap returns instantly with a warning instead of stalling 45s per chunk.
+- Local InfluxDB is a **replica of the RPi master**, fed two ways:
+  - **InfluxDB Edge Data Replication** (`scripts/setup-influx-replication.sh`): the RPi pushes
+    every `market_data` write here, with a 2 GiB durable queue riding out laptop sleep. Rerun the
+    script when the workstation's LAN IP changes.
+  - `scripts/sync-influx-from-rpi.py`: full/incremental pull over an ssh tunnel for the initial
+    backfill and for catch-up after long offline stretches (EDR only carries writes made while
+    the replication exists).
+- New `scripts/param-sweep.py` (JSON-config driven, see `scripts/sweep-example.json`): any
+  request field can be fixed or swept (range spec or explicit value list, cartesian product over
+  all swept params — e.g. stopLossPct 2–10 × targetPct 3–10 by 0.1 = 5,751 combos). Runs N
+  backtests in parallel and writes a per-run output directory: `results.csv` (one row per combo:
+  swept params + summary metrics), `failures.csv`, and a `config.json` copy for provenance.
+  Re-running the same config RESUMES — combos already in results.csv are skipped. 18-combo smoke
+  test: 6s at 6 parallel.
+- Fixed for any fresh database: `execution_log` and `engine_trade_entries` existed only
+  out-of-band on the original deployment (their changesets never made the master changelog), so
+  Hibernate schema validation failed on every new environment. `v32__fresh_db_missing_tables.yaml`
+  creates them where missing and MARK_RANs where they already exist.
+- Gotcha worth remembering: under a comma-decimal locale (`cs_CZ`) awk parses a `0.1` step as 0 —
+  the sweep's range expansion looped forever until forced to `LC_ALL=C`.
+- `scripts/sweep-viewer.html`: standalone results explorer (open in a browser, drop in a
+  `results.csv` + `config.json`, or serve the dir and use `?csv=…&config=…`). Fixed params as
+  chips, X/Y axis pickers with sliders for the remaining swept dims, metric-colored heatmap with
+  hover details, "relative to buy & hold" toggle, and two winner sets: top-10 absolute (solid
+  ring / blue rows) and top-10 **robust** — best 3×3 neighborhood average, i.e. plateaus rather
+  than lucky spikes (dashed gold ring) — plus a sortable full table.
+
 ## 2026-07-18 — Stock backtest actually works (three stacked bugs)
 
 The new Stock Backtest UI failed on first use. Review found three independent bugs, any one of

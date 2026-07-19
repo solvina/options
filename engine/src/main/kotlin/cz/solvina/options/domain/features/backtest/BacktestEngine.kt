@@ -37,6 +37,9 @@ class BacktestEngine(
          *  (exact, since they're multiples). Must be a multiple of 5. Only applies when
          *  [timeframe] is FIVE_MIN. */
         val barMinutes: Int = 5,
+        // Extra buy&hold benchmarks (sector ETFs, SPY, ...) computed over the same window from
+        // stored bars only — a benchmark with no local data is silently skipped, never fetched.
+        val benchmarkSymbols: List<Symbol> = emptyList(),
         /** Bar timeframe read from the store. FIVE_MIN → intraday (optionally aggregated to
          *  [barMinutes]); DAILY / FOUR_HOUR are read natively (no aggregation). */
         val timeframe: Timeframe = Timeframe.FIVE_MIN,
@@ -68,12 +71,68 @@ class BacktestEngine(
         val buyHoldPnl: BigDecimal?,
         val buyHoldPnlPct: BigDecimal?,
         val buyHoldAnnualizedPct: BigDecimal?,
+        /** Buy&hold of each benchmark symbol (sector ETF / index) over the same window. */
+        val benchmarks: List<Benchmark> = emptyList(),
+    )
+
+    data class Benchmark(
+        val symbol: String,
+        val pnlPct: BigDecimal,
+        val annualizedPct: BigDecimal?,
     )
 
     data class Result<T>(
         val summary: Summary,
         val trades: List<T>,
+        /**
+         * Equal-weight buy&hold account value per trading day over the backtest window (same
+         * convention as the summary's buyHold*: entered at each symbol's first bar open).
+         * Downsampled to ≤ 500 points; used by the UI to overlay hold vs strategy equity.
+         */
+        val buyHoldCurve: List<CurvePoint> = emptyList(),
     )
+
+    data class CurvePoint(
+        val date: LocalDate,
+        val value: BigDecimal,
+    )
+
+    /**
+     * Daily equal-weight buy&hold value: each symbol's slice enters at its own first bar's open
+     * (a symbol contributes its flat slice before it has data — late listings don't distort the
+     * early curve). Carries the last close forward across per-symbol gaps.
+     */
+    private fun buyHoldCurve(
+        backtestBars: Map<Symbol, List<FiveMinuteBar>>,
+        initialCapital: BigDecimal,
+        nyZone: ZoneId,
+    ): List<CurvePoint> {
+        val withData = backtestBars.filterValues { it.isNotEmpty() }
+        if (withData.isEmpty()) return emptyList()
+        val slice = initialCapital.toDouble() / withData.size
+        // Per symbol: trading date → last close of that date.
+        val closesBySymbol =
+            withData.mapValues { (_, bars) ->
+                bars.groupBy { it.time.atZone(nyZone).toLocalDate() }.mapValues { (_, dayBars) -> dayBars.last().close }.toSortedMap()
+            }
+        val entryOpen = withData.mapValues { (_, bars) -> bars.first().open }
+        val allDates = closesBySymbol.values.flatMap { it.keys }.distinct().sorted()
+        val lastClose = mutableMapOf<Symbol, Double>()
+        val curve =
+            allDates.map { date ->
+                var value = 0.0
+                for ((sym, closes) in closesBySymbol) {
+                    closes[date]?.let { lastClose[sym] = it }
+                    val entry = entryOpen[sym] ?: 0.0
+                    val close = lastClose[sym]
+                    value += if (close != null && entry > 0.0) slice * (close / entry) else slice
+                }
+                CurvePoint(date, BigDecimal.valueOf(value).setScale(2, RoundingMode.HALF_UP))
+            }
+        // Downsample to ≤ 500 points, always keeping the last.
+        val step = (curve.size + 499) / 500
+        return if (step <= 1) curve else curve.filterIndexed { i, _ -> i % step == 0 || i == curve.lastIndex }
+    }
 
     private data class PendingEntry(
         val signal: BacktestSignal.OpenBracket,
@@ -343,8 +402,33 @@ class BacktestEngine(
             }
         val buyHoldAnnualizedPct = buyHoldFinal?.let { annualizedPct(request.initialCapital, it, years) }
 
-        return Result(
-            summary =
+        // Benchmark buy&hold (sector ETFs / index): same first-open → last-close convention as the
+        // symbols' own buy&hold above. Only stored bars — a missing benchmark series is skipped.
+        val benchmarks =
+            request.benchmarkSymbols.distinct().mapNotNull { bench ->
+                val fromInstant = request.from.atStartOfDay(ZoneOffset.UTC).toInstant()
+                val toInstant =
+                    request.to
+                        .plusDays(1)
+                        .atStartOfDay(ZoneOffset.UTC)
+                        .toInstant()
+                val bars = barStore.readBars(bench, fromInstant, toInstant, request.timeframe)
+                val entry = bars.firstOrNull()?.open ?: 0.0
+                if (entry <= 0.0) {
+                    logger.info { "[${bench.value}] benchmark skipped — no ${request.timeframe.label} bars stored in ${request.from}..${request.to}" }
+                    return@mapNotNull null
+                }
+                val ratio = bars.last().close / entry
+                val final = BigDecimal.valueOf(request.initialCapital.toDouble() * ratio).setScale(2, RoundingMode.HALF_UP)
+                Benchmark(
+                    symbol = bench.value,
+                    pnlPct =
+                        BigDecimal.valueOf((ratio - 1.0) * 100.0).setScale(2, RoundingMode.HALF_UP),
+                    annualizedPct = annualizedPct(request.initialCapital, final, years),
+                )
+            }
+
+        val summary =
                 Summary(
                     symbols = request.symbols.map { it.value },
                     from = request.from,
@@ -375,8 +459,15 @@ class BacktestEngine(
                     buyHoldPnl = buyHoldPnl,
                     buyHoldPnlPct = buyHoldPnlPct,
                     buyHoldAnnualizedPct = buyHoldAnnualizedPct,
-                ),
+                    benchmarks = benchmarks,
+                )
+        // One searchable line per run, for every strategy driving this engine — backtest results
+        // otherwise live only in the HTTP response and are lost when the browser tab closes.
+        logger.info { "Backtest summary: $summary" }
+        return Result(
+            summary = summary,
             trades = strategy.trades() as List<T>,
+            buyHoldCurve = buyHoldCurve(backtestBars, request.initialCapital, nyZone),
         )
     }
 

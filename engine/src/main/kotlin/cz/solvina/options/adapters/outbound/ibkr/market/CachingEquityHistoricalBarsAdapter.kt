@@ -7,6 +7,7 @@ import cz.solvina.options.domain.features.bars.Timeframe
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.context.annotation.Primary
+import org.springframework.context.annotation.Profile
 import org.springframework.stereotype.Component
 import java.time.Instant
 import java.time.LocalDate
@@ -16,6 +17,7 @@ private val logger = KotlinLogging.logger {}
 
 @Primary
 @Component
+@Profile("!backtest")
 class CachingEquityHistoricalBarsAdapter(
     private val ibkr: IbkrEquityHistoricalBarsAdapter,
     private val barStorePort: BarStorePort,

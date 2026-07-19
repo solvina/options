@@ -22,4 +22,6 @@ services:
     volumes:
       - ./data/influxdb-data:/var/lib/influxdb2
     ports:
-      - "127.0.0.1:8086:8086"
+      # LAN-exposed (not just localhost): the RPi master replicates the market_data bucket here
+      # via InfluxDB Edge Data Replication (see scripts/setup-influx-replication.sh).
+      - "8086:8086"

@@ -1,0 +1,28 @@
+# Dedicated backtest instance: runs the backtest API against a LOCAL InfluxDB replica
+# (synced from the RPi master via scripts/sync-influx-from-rpi.py) with IBKR fully offline.
+# No connection attempts, no trading, no alerts; missing bars are reported, never fetched
+# (NoopEquityHistoricalBarsAdapter). Start with:
+#   SPRING_PROFILES_ACTIVE=backtest ./gradlew bootRun    (or java -jar ... --spring.profiles.active=backtest)
+server:
+  port: 8082   # coexists with a dev instance on 8081
+
+ibkr:
+  connection:
+    enabled: false
+    auto-reconnect: false
+  heartbeat:
+    interval-ms: 3600000   # nothing to heartbeat; once an hour keeps the log clean
+
+scanner:
+  trading-enabled: false
+
+reference-warmup:
+  enabled: false
+
+alerts:
+  telegram:
+    enabled: false
+
+notifications:
+  email:
+    enabled: false

@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sweep Results Viewer</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface: #fcfcfb; --page: #f9f9f7;
+    --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+    --grid: #e1e0d9; --border: rgba(11,11,11,0.10);
+    --blue: #2a78d6; --blue-deep: #0d366b; --blue-light: #cde2fb;
+    --red: #e34948; --mid: #f0efec;
+    --gold: #eda100;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --surface: #1a1a19; --page: #0d0d0d;
+      --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+      --grid: #2c2c2a; --border: rgba(255,255,255,0.10);
+      --blue: #3987e5; --blue-deep: #86b6ef; --blue-light: #104281;
+      --red: #e66767; --mid: #383835;
+      --gold: #c98500;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); color: var(--ink);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .wrap { max-width: 1240px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 17px; margin: 0 0 2px; }
+  .sub { color: var(--ink-2); font-size: 12px; margin-bottom: 14px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+          padding: 12px 14px; margin-bottom: 12px; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; }
+  label.ctl { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-2); }
+  select, input[type=file] { font: inherit; font-size: 12px; background: var(--surface);
+    color: var(--ink); border: 1px solid var(--grid); border-radius: 6px; padding: 3px 6px; }
+  input[type=range] { width: 140px; accent-color: var(--blue); }
+  .chip { display: inline-block; background: var(--page); border: 1px solid var(--grid);
+          border-radius: 999px; padding: 1px 9px; font-size: 11px; color: var(--ink-2); margin: 2px; }
+  .chip b { color: var(--ink); font-weight: 600; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .tile { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+  .tile .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .tile .v { font-size: 19px; font-weight: 650; margin-top: 2px; }
+  .tile .s { font-size: 11px; color: var(--ink-2); }
+  #chartbox { position: relative; }
+  canvas { display: block; width: 100%; }
+  #tip { position: fixed; pointer-events: none; z-index: 10; background: var(--surface);
+         border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 4px 14px rgba(0,0,0,.18);
+         padding: 8px 10px; font-size: 12px; display: none; max-width: 280px; }
+  #tip .t { font-weight: 650; margin-bottom: 3px; }
+  #tip td { padding: 0 0 0 10px; text-align: right; font-variant-numeric: tabular-nums; }
+  #tip td:first-child { padding: 0; text-align: left; color: var(--ink-2); }
+  .legend { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--ink-2); margin-top: 8px; }
+  .legend .bar { height: 10px; width: 220px; border-radius: 5px; border: 1px solid var(--border); }
+  .mark { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px;
+          vertical-align: -1px; border: 2px solid var(--ink); }
+  .mark.robust { border-style: dashed; border-color: var(--gold); }
+  table.data { border-collapse: collapse; width: 100%; font-size: 12px; }
+  table.data th, table.data td { padding: 4px 8px; text-align: right;
+    font-variant-numeric: tabular-nums; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+  table.data th { color: var(--ink-2); font-weight: 600; cursor: pointer; position: sticky; top: 0;
+    background: var(--surface); user-select: none; }
+  table.data th:hover { color: var(--ink); }
+  table.data tr.win td { background: color-mix(in srgb, var(--blue) 13%, transparent); }
+  table.data tr.robust td { background: color-mix(in srgb, var(--gold) 13%, transparent); }
+  .tablebox { max-height: 420px; overflow: auto; border: 1px solid var(--grid); border-radius: 8px; }
+  .note { font-size: 11px; color: var(--muted); margin-top: 6px; }
+  .drop { border: 2px dashed var(--grid); border-radius: 10px; padding: 26px; text-align: center;
+          color: var(--ink-2); }
+  .drop.on { border-color: var(--blue); color: var(--ink); }
+  h2 { font-size: 13px; margin: 0 0 8px; color: var(--ink-2); text-transform: uppercase; letter-spacing: .04em; }
+  .cols2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 900px) { .cols2 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Sweep Results Viewer</h1>
+  <div class="sub">Load a <code>results.csv</code> from <code>scripts/param-sweep.py</code> (optionally its <code>config.json</code> for the fixed-parameter chips). Everything runs locally in this page.</div>
+
+  <div class="card" id="loader">
+    <div class="drop" id="drop">
+      Drop <b>results.csv</b> (+ <b>config.json</b>) here, or
+      <label class="ctl" style="display:inline"><input type="file" id="files" multiple accept=".csv,.json"></label>
+    </div>
+  </div>
+
+  <div id="app" style="display:none">
+    <div class="card" id="fixedcard">
+      <h2>Fixed parameters</h2>
+      <div id="fixedchips"></div>
+    </div>
+
+    <div class="tiles" id="tiles" style="margin-bottom:12px"></div>
+
+    <div class="card">
+      <div class="row" id="controls"></div>
+    </div>
+
+    <div class="card">
+      <h2 id="charttitle">Heatmap</h2>
+      <div id="chartbox"><canvas id="cv"></canvas></div>
+      <div class="legend" id="legend"></div>
+      <div class="note"><span class="mark"></span>top-10 absolute &nbsp; <span class="mark robust"></span>top-10 robust (best 3×3 neighborhood average — parameters whose neighbors are also good; prefer these)</div>
+    </div>
+
+    <div class="cols2">
+      <div class="card"><h2>Top 10 — absolute</h2><div class="tablebox"><table class="data" id="twin"></table></div></div>
+      <div class="card"><h2>Top 10 — robust (plateau)</h2><div class="tablebox"><table class="data" id="trob"></table></div></div>
+    </div>
+
+    <div class="card">
+      <h2>All rows in current slice <span id="rowcount" style="text-transform:none"></span></h2>
+      <div class="tablebox"><table class="data" id="tall"></table></div>
+      <div class="note">Click a column header to sort. Rows tinted blue are absolute winners, gold are robust winners.</div>
+    </div>
+  </div>
+</div>
+<div id="tip"></div>
+
+<script>
+'use strict';
+// ---------- metric definitions: how each column is colored and read ----------
+const METRICS = {
+  totalPnlPct:        { label: 'Total PnL %',    kind: 'div', mid: 0,  higher: true, holdCol: 'buyHoldPnlPct' },
+  annualizedReturnPct:{ label: 'CAGR %/yr',      kind: 'div', mid: 0,  higher: true, holdCol: 'buyHoldAnnualizedPct' },
+  profitFactor:       { label: 'Profit factor',  kind: 'div', mid: 1,  higher: true },
+  winRate:            { label: 'Win rate',       kind: 'seq', higher: true },
+  maxDrawdownPct:     { label: 'Max drawdown %', kind: 'seq', higher: false },
+  avgRMultiple:       { label: 'Avg R',          kind: 'div', mid: 0,  higher: true },
+  tradeCount:         { label: 'Trades',         kind: 'seq', higher: true },
+  finalCapital:       { label: 'Final capital',  kind: 'seq', higher: true },
+};
+const SEQ_STEPS = ['#cde2fb','#b7d3f6','#9ec5f4','#86b6ef','#6da7ec','#5598e7','#3987e5','#2a78d6','#256abf','#1c5cab','#184f95','#104281','#0d366b'];
+
+let rows = [], header = [], sweepCols = [], config = null;
+let xCol, yCol, sliceVals = {}, metric = 'totalPnlPct', relHold = false;
+let winners = [], robust = [], sortState = { col: null, dir: -1 };
+
+// ---------- color helpers (mix in linear RGB to avoid muddy midtones) ----------
+const hex2rgb = h => [1,3,5].map(i => parseInt(h.slice(i,i+2),16)/255);
+const lin = c => c <= .04045 ? c/12.92 : ((c+.055)/1.055)**2.4;
+const unlin = c => c <= .0031308 ? c*12.92 : 1.055*c**(1/2.4)-.055;
+function mix(h1, h2, t) {
+  const a = hex2rgb(h1).map(lin), b = hex2rgb(h2).map(lin);
+  const m = a.map((v,i) => unlin(v + (b[i]-v)*t));
+  return `rgb(${m.map(v => Math.round(v*255)).join(',')})`;
+}
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+function seqColor(t) { // t in [0,1] across the 13-step blue ramp
+  const p = Math.min(.9999, Math.max(0, t)) * (SEQ_STEPS.length-1);
+  return mix(SEQ_STEPS[Math.floor(p)], SEQ_STEPS[Math.floor(p)+1], p - Math.floor(p));
+}
+function divColor(t) { // t in [-1,1]; gray midpoint, blue positive, red negative
+  return t >= 0 ? mix(css('--mid'), css('--blue-deep'), Math.min(1,t)) : mix(css('--mid'), css('--red'), Math.min(1,-t));
+}
+
+// ---------- loading ----------
+const drop = document.getElementById('drop');
+drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('on'); });
+drop.addEventListener('dragleave', () => drop.classList.remove('on'));
+drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('on'); readFiles(e.dataTransfer.files); });
+document.getElementById('files').addEventListener('change', e => readFiles(e.target.files));
+
+function readFiles(list) {
+  for (const f of list) {
+    const r = new FileReader();
+    if (f.name.endsWith('.json')) r.onload = () => { config = JSON.parse(r.result); if (rows.length) init(); };
+    else r.onload = () => { parseCsv(r.result); init(); };
+    r.readAsText(f);
+  }
+}
+function parseCsv(text) {
+  const lines = text.trim().split(/\r?\n/);
+  header = lines[0].split(',');
+  const metricStart = header.indexOf('tradeCount');
+  sweepCols = header.slice(0, metricStart);
+  rows = lines.slice(1).map(l => {
+    const p = l.split(','), o = {};
+    header.forEach((h, i) => {
+      const raw = p[i];
+      if (raw === '' || raw == null) { o[h] = null; return; }
+      // Sweep values may be categorical (timeframe "4h", booleans); keep non-numeric as strings.
+      const n = parseFloat(raw);
+      o[h] = Number.isFinite(n) && /^[-+.\d][\d.eE+-]*$/.test(raw) ? n : raw;
+    });
+    return o;
+  });
+}
+
+// ---------- UI construction ----------
+function distinct(col) {
+  return [...new Set(rows.map(r => r[col]))].sort((a,b) =>
+    typeof a === 'number' && typeof b === 'number' ? a - b : String(a).localeCompare(String(b)));
+}
+// 1-D sweeps have no Y dimension: the heatmap collapses to a single labeled row.
+const yVals = () => yCol ? distinct(yCol) : ['—'];
+const yOf = r => yCol ? r[yCol] : '—';
+
+function init() {
+  document.getElementById('loader').style.display = 'none';
+  document.getElementById('app').style.display = '';
+  const movable = sweepCols.filter(c => distinct(c).length > 1);
+  const frozen  = sweepCols.filter(c => distinct(c).length <= 1);
+  xCol = movable[0]; yCol = movable[1] ?? null;
+  sliceVals = {};
+  buildFixedChips(frozen);
+  buildControls(movable);
+  render();
+}
+
+function buildFixedChips(frozenSweeps) {
+  const el = document.getElementById('fixedchips');
+  let html = '';
+  if (config?.request) for (const [k,v] of Object.entries(config.request))
+    html += `<span class="chip">${k} <b>${Array.isArray(v) ? v.join(', ') : v}</b></span>`;
+  for (const c of frozenSweeps) html += `<span class="chip">${c} <b>${distinct(c)[0]}</b> (swept, single value)</span>`;
+  const hold = rows[0]?.buyHoldPnlPct;
+  if (hold != null) html += `<span class="chip">buy &amp; hold <b>${fmt(hold)}%</b> (${fmt(rows[0].buyHoldAnnualizedPct)}%/yr)</span>`;
+  document.getElementById('fixedcard').style.display = html ? '' : 'none';
+  el.innerHTML = html;
+}
+
+function buildControls(movable) {
+  const box = document.getElementById('controls');
+  box.innerHTML = '';
+  const sel = (id, opts, val, lab) => {
+    const l = document.createElement('label'); l.className = 'ctl'; l.textContent = lab + ' ';
+    const s = document.createElement('select'); s.id = id;
+    for (const [v, txt] of opts) { const o = document.createElement('option'); o.value = v; o.textContent = txt; if (v === val) o.selected = true; s.appendChild(o); }
+    l.appendChild(s); box.appendChild(l); return s;
+  };
+  sel('xsel', movable.map(c => [c,c]), xCol, 'X').onchange = e => { xCol = e.target.value; if (yCol === xCol) yCol = movable.find(c => c !== xCol) ?? null; syncAxisSel(movable); render(); };
+  if (movable.length > 1) {
+    sel('ysel', movable.map(c => [c,c]), yCol, 'Y').onchange = e => { yCol = e.target.value; if (xCol === yCol) xCol = movable.find(c => c !== yCol) ?? yCol; syncAxisSel(movable); render(); };
+  }
+  sel('msel', Object.entries(METRICS).filter(([k]) => header.includes(k)).map(([k,m]) => [k,m.label]), metric, 'Metric').onchange = e => { metric = e.target.value; render(); };
+  const holdable = () => METRICS[metric].holdCol && rows[0]?.[METRICS[metric].holdCol] != null;
+  const rl = document.createElement('label'); rl.className = 'ctl'; rl.id = 'relwrap';
+  rl.innerHTML = `<input type="checkbox" id="relhold"> relative to buy &amp; hold`;
+  box.appendChild(rl);
+  rl.querySelector('input').onchange = e => { relHold = e.target.checked; render(); };
+  // one slider per movable dim that is not on an axis
+  for (const c of movable) {
+    const wrap = document.createElement('label'); wrap.className = 'ctl'; wrap.dataset.slider = c;
+    const vals = distinct(c);
+    wrap.innerHTML = `${c} = <b id="sv_${c}">${vals[0]}</b> <input type="range" min="0" max="${vals.length-1}" value="0" step="1">`;
+    wrap.querySelector('input').oninput = e => { sliceVals[c] = vals[+e.target.value]; wrap.querySelector('b').textContent = vals[+e.target.value]; render(); };
+    sliceVals[c] = vals[0];
+    box.appendChild(wrap);
+  }
+  syncAxisSel(movable);
+}
+function syncAxisSel(movable) {
+  for (const el of document.querySelectorAll('[data-slider]'))
+    el.style.display = (el.dataset.slider === xCol || el.dataset.slider === yCol) ? 'none' : '';
+  document.getElementById('xsel').value = xCol;
+  const ys = document.getElementById('ysel'); if (ys && yCol) ys.value = yCol;
+}
+
+// ---------- data slicing & scoring ----------
+function currentSlice() {
+  return rows.filter(r => sweepCols.every(c => (c === xCol || c === yCol || distinct(c).length <= 1) ? true : r[c] === sliceVals[c]));
+}
+function val(r) {
+  let v = r[metric];
+  if (v == null) return null;
+  if (relHold && METRICS[metric].holdCol && r[METRICS[metric].holdCol] != null) v -= r[METRICS[metric].holdCol];
+  return v;
+}
+function computeWinners(slice) {
+  const m = METRICS[metric], dir = m.higher ? -1 : 1;
+  const scored = slice.filter(r => val(r) != null).slice().sort((a,b) => dir * (val(a) - val(b)));
+  winners = scored.slice(0, 10);
+  // robust: mean over the 3x3 neighborhood in (x,y) grid
+  const xs = distinct(xCol), ys = yVals();
+  const ix = new Map(xs.map((v,i) => [v,i])), iy = new Map(ys.map((v,i) => [v,i]));
+  const grid = new Map(slice.map(r => [ix.get(r[xCol]) + ',' + iy.get(yOf(r)), val(r)]));
+  const nb = r => {
+    const cx = ix.get(r[xCol]), cy = iy.get(yOf(r));
+    let s = 0, n = 0;
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+      const v = grid.get((cx+dx) + ',' + (cy+dy));
+      if (v != null) { s += v; n++; }
+    }
+    return n ? s/n : null;
+  };
+  robust = slice.filter(r => val(r) != null).map(r => ({ r, score: nb(r) }))
+    .sort((a,b) => dir * (a.score - b.score)).slice(0, 10);
+}
+
+// ---------- rendering ----------
+const fmt = (v, d=2) => v == null ? '—' : (typeof v === 'number' ? v.toLocaleString('en-US', { maximumFractionDigits: d }) : String(v));
+
+function render() {
+  const slice = currentSlice();
+  computeWinners(slice);
+  renderTiles(slice);
+  renderHeatmap(slice);
+  renderWinnerTables();
+  renderTable(slice);
+  const m = METRICS[metric];
+  document.getElementById('relwrap').style.display = m.holdCol ? '' : 'none';
+  document.getElementById('charttitle').textContent =
+    `${m.label}${relHold && m.holdCol ? ' − buy & hold' : ''} over ${xCol}${yCol ? ' × ' + yCol : ''}`;
+}
+
+function renderTiles(slice) {
+  const m = METRICS[metric], best = winners[0], rb = robust[0];
+  const t = document.getElementById('tiles');
+  t.innerHTML = `
+    <div class="tile"><div class="k">Combos in slice</div><div class="v">${slice.length.toLocaleString('en-US')}</div><div class="s">${rows.length.toLocaleString('en-US')} loaded</div></div>
+    <div class="tile"><div class="k">Best (absolute)</div><div class="v">${best ? fmt(val(best)) : '—'}</div><div class="s">${best ? xCol+'='+best[xCol]+(yCol ? ' '+yCol+'='+best[yCol] : '') : ''}</div></div>
+    <div class="tile"><div class="k">Best (robust)</div><div class="v">${rb ? fmt(val(rb.r)) : '—'}</div><div class="s">${rb ? xCol+'='+rb.r[xCol]+(yCol ? ' '+yCol+'='+rb.r[yCol] : '')+' · nbhd '+fmt(rb.score) : ''}</div></div>
+    <div class="tile"><div class="k">Buy &amp; hold</div><div class="v">${fmt(rows[0]?.buyHoldPnlPct)}%</div><div class="s">${fmt(rows[0]?.buyHoldAnnualizedPct)}%/yr — the bar to clear</div></div>`;
+}
+
+function renderHeatmap(slice) {
+  const cv = document.getElementById('cv'), box = document.getElementById('chartbox');
+  const xs = distinct(xCol), ys = yVals();
+  const padL = 56, padB = 34, padT = 6, padR = 6;
+  const wCss = box.clientWidth || 1100;
+  const cell = Math.max(4, Math.floor((wCss - padL - padR) / xs.length));
+  const w = padL + cell * xs.length + padR, h = padT + Math.max(10, Math.min(14, cell)) * ys.length + padB;
+  const cellH = Math.max(10, Math.min(14, cell));
+  const dpr = window.devicePixelRatio || 1;
+  cv.width = w * dpr; cv.height = h * dpr; cv.style.width = w + 'px'; cv.style.height = h + 'px';
+  const g = cv.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0);
+  g.clearRect(0,0,w,h);
+
+  const vals = slice.map(val).filter(v => v != null);
+  const m = METRICS[metric];
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  const mid = relHold && m.holdCol ? 0 : (m.mid ?? 0);
+  const useDiv = m.kind === 'div' || (relHold && m.holdCol);
+  // Independent arm scaling: all-positive (or all-negative) data still uses the full arm
+  // instead of compressing into the light end of a symmetric ±max range.
+  const extPos = Math.max(hi - mid, 0) || 1, extNeg = Math.max(mid - lo, 0) || 1;
+  const divT = v => v >= mid ? (v - mid) / extPos : (v - mid) / extNeg;
+
+  const ix = new Map(xs.map((v,i) => [v,i])), iy = new Map(ys.map((v,i) => [v,i]));
+  const cellOf = r => ({ x: padL + ix.get(r[xCol]) * cell, y: padT + (ys.length - 1 - iy.get(yOf(r))) * cellH });
+  for (const r of slice) {
+    const v = val(r); if (v == null) continue;
+    const { x, y } = cellOf(r);
+    let color;
+    if (useDiv) color = divColor(divT(v));
+    else color = seqColor((v - lo) / ((hi - lo) || 1));
+    g.fillStyle = color;
+    g.fillRect(x, y, cell - 1, cellH - 1); // 1px surface gap between fills
+  }
+  // winner rings: identity via outline, not hue
+  g.lineWidth = 2;
+  for (const { r } of robust) { const { x, y } = cellOf(r); g.strokeStyle = css('--gold'); g.setLineDash([3,2]); g.strokeRect(x+.5, y+.5, cell-2, cellH-2); }
+  g.setLineDash([]);
+  for (const r of winners) { const { x, y } = cellOf(r); g.strokeStyle = css('--ink'); g.strokeRect(x+.5, y+.5, cell-2, cellH-2); }
+
+  // axes: recessive, few ticks
+  g.fillStyle = css('--muted'); g.font = '11px system-ui'; g.textAlign = 'center';
+  const xEvery = Math.ceil(xs.length / 12), yEvery = Math.ceil(ys.length / 8);
+  xs.forEach((v,i) => { if (i % xEvery === 0) g.fillText(v, padL + i*cell + cell/2, h - padB + 14); });
+  g.textAlign = 'right';
+  ys.forEach((v,i) => { if (i % yEvery === 0) g.fillText(v, padL - 6, padT + (ys.length-1-i)*cellH + cellH/2 + 4); });
+  g.textAlign = 'center';
+  g.fillStyle = css('--ink-2');
+  g.fillText(xCol, padL + (xs.length*cell)/2, h - 6);
+  if (yCol) { g.save(); g.translate(12, padT + (ys.length*cellH)/2); g.rotate(-Math.PI/2); g.fillText(yCol, 0, 0); g.restore(); }
+
+  // legend
+  const stops = [];
+  for (let i = 0; i <= 10; i++) stops.push(useDiv ? divColor(divT(lo + (hi - lo) * i/10)) : seqColor(i/10));
+  document.getElementById('legend').innerHTML =
+    `<span>${fmt(lo)}</span><div class="bar" style="background:linear-gradient(90deg,${stops.join(',')})"></div><span>${fmt(hi)}</span>` +
+    (useDiv ? `<span style="margin-left:8px">gray = ${relHold && m.holdCol ? 'equals buy & hold' : 'midpoint ' + mid}</span>` : (m.higher ? '' : `<span style="margin-left:8px">darker = worse</span>`));
+
+  // hover tooltip
+  const tip = document.getElementById('tip');
+  const bySlot = new Map(slice.map(r => [ix.get(r[xCol]) + ',' + iy.get(yOf(r)), r]));
+  cv.onmousemove = e => {
+    const rect = cv.getBoundingClientRect();
+    const px = (e.clientX - rect.left) * (w / rect.width), py = (e.clientY - rect.top) * (h / rect.height);
+    const cxi = Math.floor((px - padL) / cell), cyi = ys.length - 1 - Math.floor((py - padT) / cellH);
+    const r = (cxi >= 0 && cyi >= 0) ? bySlot.get(cxi + ',' + cyi) : null;
+    if (!r) { tip.style.display = 'none'; return; }
+    tip.innerHTML = `<div class="t">${xCol}=${r[xCol]} ${yCol ? ' · ' + yCol + '=' + r[yCol] : ''}</div><table>` +
+      Object.entries(METRICS).filter(([k]) => header.includes(k))
+        .map(([k,mm]) => `<tr><td>${mm.label}</td><td>${fmt(r[k])}</td></tr>`).join('') + '</table>';
+    tip.style.display = 'block';
+    tip.style.left = Math.min(e.clientX + 14, innerWidth - 300) + 'px';
+    tip.style.top = (e.clientY + 14) + 'px';
+  };
+  cv.onmouseleave = () => tip.style.display = 'none';
+}
+
+function tableHtml(list, extra) {
+  const cols = [...sweepCols.filter(c => distinct(c).length > 1), ...Object.keys(METRICS).filter(k => header.includes(k))];
+  let html = '<thead><tr>' + (extra ? `<th>${extra.name}</th>` : '') + cols.map(c => `<th data-c="${c}">${METRICS[c]?.label ?? c}</th>`).join('') + '</tr></thead><tbody>';
+  for (const item of list) {
+    const r = extra ? item.r : item;
+    const cls = winners.includes(r) ? 'win' : (robust.some(q => q.r === r) ? 'robust' : '');
+    html += `<tr class="${cls}">` + (extra ? `<td>${fmt(extra.get(item))}</td>` : '') +
+      cols.map(c => `<td>${fmt(r[c])}</td>`).join('') + '</tr>';
+  }
+  return html + '</tbody>';
+}
+function renderWinnerTables() {
+  document.getElementById('twin').innerHTML = tableHtml(winners);
+  document.getElementById('trob').innerHTML = tableHtml(robust, { name: 'nbhd avg', get: q => q.score });
+}
+function renderTable(slice) {
+  const cols = [...sweepCols.filter(c => distinct(c).length > 1), ...Object.keys(METRICS).filter(k => header.includes(k))];
+  const sc = sortState.col ?? metric, dir = sortState.dir;
+  const sorted = slice.slice().sort((a,b) => dir * ((a[sc] ?? -Infinity) - (b[sc] ?? -Infinity)));
+  const cap = 3000;
+  document.getElementById('rowcount').textContent = `— ${slice.length.toLocaleString('en-US')} rows${slice.length > cap ? `, showing ${cap}` : ''}`;
+  const t = document.getElementById('tall');
+  t.innerHTML = tableHtml(sorted.slice(0, cap));
+  t.querySelectorAll('th').forEach(th => th.onclick = () => {
+    const c = th.dataset.c;
+    sortState = { col: c, dir: sortState.col === c ? -sortState.dir : -1 };
+    renderTable(currentSlice());
+  });
+}
+
+addEventListener('resize', () => { if (rows.length) render(); });
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (rows.length) render(); });
+
+// Optional http mode: sweep-viewer.html?csv=sweeps/run/results.csv&config=sweeps/run/config.json
+// (serve the scripts dir with e.g. `python3 -m http.server`; file inputs still work regardless)
+const q = new URLSearchParams(location.search);
+if (q.get('csv')) {
+  const jobs = [fetch(q.get('csv')).then(r => r.text()).then(parseCsv)];
+  if (q.get('config')) jobs.push(fetch(q.get('config')).then(r => r.json()).then(j => config = j));
+  Promise.all(jobs).then(init).catch(e => { document.getElementById('drop').textContent = 'Load failed: ' + e; });
+}
+</script>
+</body>
+</html>

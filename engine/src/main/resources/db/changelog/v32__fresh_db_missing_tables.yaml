@@ -1,0 +1,213 @@
+# execution_log (v10-v13) and engine_trade_entries (v14) were created out-of-band on the original
+# deployment and their changesets never (re-)entered the master changelog, so every FRESH database
+# failed Hibernate schema validation on boot. These guarded copies create the tables in their final
+# shape on new databases and MARK_RAN where the tables already exist. Column sets mirror
+# ExecutionLogEntity and EngineTradeEntryEntity. The execution_log FK targets bull_put_spreads —
+# the v20 rename of spread_positions has already run by this point in the chain.
+databaseChangeLog:
+  - changeSet:
+      id: v32__execution_log_fresh_db
+      author: vseliga
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            - tableExists:
+                tableName: execution_log
+      changes:
+        - createTable:
+            tableName: execution_log
+            columns:
+              - column:
+                  name: id
+                  type: uuid
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: symbol
+                  type: varchar(255)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: sold_strike
+                  type: numeric(10,2)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: bought_strike
+                  type: numeric(10,2)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: expiry_date
+                  type: date
+                  constraints:
+                    nullable: false
+              - column:
+                  name: quantity
+                  type: integer
+                  constraints:
+                    nullable: false
+              - column:
+                  name: order_id
+                  type: integer
+              - column:
+                  name: event_type
+                  type: varchar(50)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: event_status
+                  type: varchar(50)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: target_credit
+                  type: numeric(10,4)
+              - column:
+                  name: iv_rank
+                  type: numeric(5,2)
+              - column:
+                  name: underlying_price
+                  type: numeric(10,2)
+              - column:
+                  name: reason
+                  type: varchar(255)
+              - column:
+                  name: spread_id
+                  type: uuid
+              - column:
+                  name: created_at
+                  type: timestamp with time zone
+                  constraints:
+                    nullable: false
+                  defaultValueComputed: CURRENT_TIMESTAMP
+              - column:
+                  name: updated_at
+                  type: timestamp with time zone
+        - createIndex:
+            indexName: idx_execution_log_symbol_created
+            tableName: execution_log
+            columns:
+              - column:
+                  name: symbol
+              - column:
+                  name: created_at
+        - createIndex:
+            indexName: idx_execution_log_spread_id
+            tableName: execution_log
+            columns:
+              - column:
+                  name: spread_id
+        - createIndex:
+            indexName: idx_execution_log_order_id
+            tableName: execution_log
+            columns:
+              - column:
+                  name: order_id
+        - addForeignKeyConstraint:
+            baseTableName: execution_log
+            baseColumnNames: spread_id
+            referencedTableName: bull_put_spreads
+            referencedColumnNames: id
+            constraintName: fk_execution_log_spread
+            onDelete: SET NULL
+
+  - changeSet:
+      id: v32__engine_trade_entries_fresh_db
+      author: vseliga
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            - tableExists:
+                tableName: engine_trade_entries
+      changes:
+        - createTable:
+            tableName: engine_trade_entries
+            columns:
+              - column:
+                  name: id
+                  type: UUID
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+                  defaultValueComputed: gen_random_uuid()
+              - column:
+                  name: symbol
+                  type: VARCHAR(10)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: spread_type
+                  type: VARCHAR(30)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: long_strike
+                  type: NUMERIC(10, 2)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: short_strike
+                  type: NUMERIC(10, 2)
+              - column:
+                  name: quantity
+                  type: INT
+                  defaultValueNumeric: 1
+                  constraints:
+                    nullable: false
+              - column:
+                  name: entry_date
+                  type: TIMESTAMP WITH TIME ZONE
+                  constraints:
+                    nullable: false
+              - column:
+                  name: entry_credit
+                  type: NUMERIC(10, 4)
+              - column:
+                  name: status
+                  type: VARCHAR(30)
+                  defaultValue: OPEN
+                  constraints:
+                    nullable: false
+              - column:
+                  name: order_id
+                  type: INT
+              - column:
+                  name: close_attempts
+                  type: INT
+                  defaultValueNumeric: 0
+              - column:
+                  name: last_close_attempt
+                  type: TIMESTAMP WITH TIME ZONE
+              - column:
+                  name: closed_date
+                  type: TIMESTAMP WITH TIME ZONE
+              - column:
+                  name: closed_price
+                  type: NUMERIC(10, 4)
+              - column:
+                  name: notes
+                  type: VARCHAR(500)
+        - addUniqueConstraint:
+            tableName: engine_trade_entries
+            columnNames: order_id
+            constraintName: uk_order_id
+        - createIndex:
+            tableName: engine_trade_entries
+            indexName: idx_symbol_strikes
+            columns:
+              - column:
+                  name: symbol
+              - column:
+                  name: long_strike
+              - column:
+                  name: short_strike
+        - createIndex:
+            tableName: engine_trade_entries
+            indexName: idx_status_entry_date
+            columns:
+              - column:
+                  name: status
+              - column:
+                  name: entry_date

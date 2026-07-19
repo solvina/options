@@ -167,4 +167,44 @@ class BacktestEngineDailyTest {
             assertEquals(listOf("t1"), strategy.expired, "entry unfilled on day N+1 must expire that night")
             assertTrue(strategy.fills.isEmpty(), "stale entry must not fill on day N+2")
         }
+
+    @Test
+    fun `benchmark buy&hold - computed from stored bars, missing series skipped`() =
+        runTest {
+            val d1 = LocalDate.of(2024, 3, 4)
+            val bars =
+                listOf(
+                    dailyBar(d1, 99.0, 100.5, 98.5, 100.0),
+                    dailyBar(d1.plusDays(1), 100.5, 101.0, 99.5, 100.8),
+                )
+            val spy = Symbol("SPY")
+            val missing = Symbol("XLK")
+            val store = mockk<BarStorePort>()
+            coEvery { store.readBars(symbol, any(), any(), Timeframe.DAILY) } returns bars
+            // SPY: 400 open → 440 close = +10%
+            coEvery { store.readBars(spy, any(), any(), Timeframe.DAILY) } returns
+                listOf(
+                    dailyBar(d1, 400.0, 401.0, 399.0, 405.0),
+                    dailyBar(d1.plusDays(1), 405.0, 441.0, 404.0, 440.0),
+                )
+            coEvery { store.readBars(missing, any(), any(), Timeframe.DAILY) } returns emptyList()
+
+            val result =
+                BacktestEngine(store).run<String>(
+                    BacktestEngine.Request(
+                        symbols = listOf(symbol),
+                        from = d1,
+                        to = d1.plusDays(1),
+                        holdOvernight = true,
+                        timeframe = Timeframe.DAILY,
+                        benchmarkSymbols = listOf(missing, spy),
+                    ),
+                    OneShotStrategy(),
+                )
+
+            assertEquals(1, result.summary.benchmarks.size, "benchmark without stored bars must be skipped")
+            val bench = result.summary.benchmarks.single()
+            assertEquals("SPY", bench.symbol)
+            assertEquals(BigDecimal("10.00"), bench.pnlPct)
+        }
 }
