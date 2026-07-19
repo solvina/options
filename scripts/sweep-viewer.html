@@ -109,9 +109,15 @@
       <div class="note"><span class="mark"></span>top-10 absolute &nbsp; <span class="mark robust"></span>top-10 robust (best 3×3 neighborhood average — parameters whose neighbors are also good; prefer these)</div>
     </div>
 
+    <div class="card" id="globcard">
+      <h2>Top 10 — global (best across all slider positions)</h2>
+      <div class="tablebox"><table class="data" id="tglob"></table></div>
+      <div class="note">Click a row to snap the sliders to that combo — the heatmap jumps to its slice.</div>
+    </div>
+
     <div class="cols2">
-      <div class="card"><h2>Top 10 — absolute</h2><div class="tablebox"><table class="data" id="twin"></table></div></div>
-      <div class="card"><h2>Top 10 — robust (plateau)</h2><div class="tablebox"><table class="data" id="trob"></table></div></div>
+      <div class="card"><h2>Top 10 — absolute (current slice)</h2><div class="tablebox"><table class="data" id="twin"></table></div></div>
+      <div class="card"><h2>Top 10 — robust (plateau, current slice)</h2><div class="tablebox"><table class="data" id="trob"></table></div></div>
     </div>
 
     <div class="card">
@@ -192,6 +198,7 @@ function parseCsv(text) {
     return o;
   });
   distinctCache = {};
+  globalCache = { key: null, list: [] };
 }
 
 // ---------- UI construction ----------
@@ -291,6 +298,46 @@ function val(r) {
   if (relHold && METRICS[metric].holdCol && r[METRICS[metric].holdCol] != null) v -= r[METRICS[metric].holdCol];
   return v;
 }
+// Global top-10 across ALL rows (every slider position), cached per metric/relHold —
+// the slice tables only rank what's currently visible.
+let globalCache = { key: null, list: [] };
+function globalWinners() {
+  const key = metric + '|' + relHold;
+  if (globalCache.key === key) return globalCache.list;
+  const dir = METRICS[metric].higher ? -1 : 1;
+  const scored = [];
+  for (const r of rows) { const v = val(r); if (v != null) scored.push([v, r]); }
+  scored.sort((a, b) => dir * (a[0] - b[0]));
+  globalCache = { key, list: scored.slice(0, 10).map(s => s[1]) };
+  return globalCache.list;
+}
+// Snap the sliders to a row's combo so the heatmap shows its slice.
+function gotoRow(r) {
+  for (const el of document.querySelectorAll('[data-slider]')) {
+    const c = el.dataset.slider;
+    if (c === xCol || c === yCol) continue;
+    const vals = distinct(c);
+    const idx = vals.indexOf(r[c]);
+    if (idx < 0) continue;
+    sliceVals[c] = vals[idx];
+    el.querySelector('input').value = idx;
+    el.querySelector('b').textContent = vals[idx];
+  }
+  render();
+  document.getElementById('cv').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+function renderGlobalTable() {
+  const list = globalWinners();
+  const t = document.getElementById('tglob');
+  document.getElementById('globcard').style.display = list.length ? '' : 'none';
+  t.innerHTML = tableHtml(list);
+  [...t.querySelectorAll('tbody tr')].forEach((tr, i) => {
+    tr.style.cursor = 'pointer';
+    tr.title = 'Show this combo: sets the sliders to its values';
+    tr.onclick = () => gotoRow(list[i]);
+  });
+}
+
 function computeWinners(slice) {
   const m = METRICS[metric], dir = m.higher ? -1 : 1;
   const scored = slice.filter(r => val(r) != null).slice().sort((a,b) => dir * (val(a) - val(b)));
@@ -320,6 +367,7 @@ function render() {
   computeWinners(slice);
   renderTiles(slice);
   renderHeatmap(slice);
+  renderGlobalTable();
   renderWinnerTables();
   renderTable(slice);
   const m = METRICS[metric];

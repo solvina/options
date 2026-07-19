@@ -218,6 +218,29 @@ export function SweepResultsPage() {
     return { winners, robust }
   }, [slice, metric, xCol, distinct, yVals, yOf, val])
 
+  // Global top-10: best rows across ALL slider positions (the slice tables only rank what's
+  // visible). Clicking one snaps the sliders to its combo so the heatmap shows its neighborhood.
+  const globalWinners = useMemo(() => {
+    if (!data) return []
+    const dir = METRICS[metric].higher ? -1 : 1
+    const scored: { r: Row; v: number }[] = []
+    for (const r of data.rows) {
+      const v = val(r)
+      if (v != null) scored.push({ r, v })
+    }
+    scored.sort((a, b) => dir * (a.v - b.v))
+    return scored.slice(0, 10).map((s) => s.r)
+  }, [data, metric, val])
+
+  function showCombo(r: Row) {
+    setSliceVals((prev) => {
+      const next = { ...prev }
+      for (const c of movable) if (c !== xCol && c !== yCol) next[c] = r[c]
+      return next
+    })
+    boxRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }
+
   // ---------- heatmap ----------
   useEffect(() => {
     const cv = canvasRef.current
@@ -303,7 +326,11 @@ export function SweepResultsPage() {
   const metricCols = Object.keys(METRICS).filter((k) => data?.header.includes(k))
   const tableCols = [...movable, ...metricCols]
 
-  function WinnerTable({ list, extra }: { list: Row[] | { r: Row; score: number | null }[]; extra?: string }) {
+  function WinnerTable({ list, extra, onRowClick }: {
+    list: Row[] | { r: Row; score: number | null }[]
+    extra?: string
+    onRowClick?: (r: Row) => void
+  }) {
     return (
       <div className="tablebox">
         <table className="data">
@@ -319,10 +346,13 @@ export function SweepResultsPage() {
               const r = 'r' in (item as object) ? (item as { r: Row }).r : (item as Row)
               const score = 'score' in (item as object) ? (item as { score: number | null }).score : null
               return (
-                <tr key={i}>
+                <tr key={i}
+                  className={onRowClick ? 'clickable' : ''}
+                  title={onRowClick ? 'Show this combo: sets the sliders to its values' : undefined}
+                  onClick={onRowClick ? () => onRowClick(r) : undefined}>
                   {extra && <td>{fmt(score)}</td>}
                   {tableCols.map((c) => <td key={c}>{fmt(r[c])}</td>)}
-                  <td><button className="usebtn" onClick={() => useInBacktest(r)}>use</button></td>
+                  <td><button className="usebtn" onClick={(e) => { e.stopPropagation(); useInBacktest(r) }}>use</button></td>
                 </tr>
               )
             })}
@@ -354,6 +384,8 @@ export function SweepResultsPage() {
         .sweepviewer table.data tr.robust td { background: rgba(237,161,0,.13) }
         .sweepviewer .tablebox { max-height:420px; overflow:auto; border:1px solid rgba(128,128,128,.25); border-radius:8px; background:inherit }
         .sweepviewer .usebtn { font-size:11px; border:1px solid rgba(128,128,128,.4); border-radius:5px; padding:0 6px; cursor:pointer; background:transparent }
+        .sweepviewer tr.clickable { cursor:pointer }
+        .sweepviewer tr.clickable:hover td { background: rgba(42,120,214,.08) }
         .sweepviewer .usebtn:hover { border-color:#2a78d6; color:#2a78d6 }
         .sweepviewer .legendbar { height:10px; width:220px; border-radius:5px; border:1px solid rgba(128,128,128,.25) }
       `}</style>
@@ -456,13 +488,21 @@ export function SweepResultsPage() {
         </div>
       </div>
 
+      {movable.length > 2 && (
+        <div className="border border-border rounded p-3">
+          <h2 className="text-xs uppercase text-muted-foreground mb-2">Top 10 — global (best across all slider positions)</h2>
+          <WinnerTable list={globalWinners} onRowClick={showCombo} />
+          <div className="text-xs text-muted-foreground mt-2">Click a row to snap the sliders to that combo — the heatmap jumps to its slice.</div>
+        </div>
+      )}
+
       <div className="grid md:grid-cols-2 gap-3">
         <div className="border border-border rounded p-3">
-          <h2 className="text-xs uppercase text-muted-foreground mb-2">Top 10 — absolute</h2>
+          <h2 className="text-xs uppercase text-muted-foreground mb-2">Top 10 — absolute (current slice)</h2>
           <WinnerTable list={winners} />
         </div>
         <div className="border border-border rounded p-3">
-          <h2 className="text-xs uppercase text-muted-foreground mb-2">Top 10 — robust (plateau)</h2>
+          <h2 className="text-xs uppercase text-muted-foreground mb-2">Top 10 — robust (plateau, current slice)</h2>
           <WinnerTable list={robust} extra="nbhd avg" />
         </div>
       </div>
