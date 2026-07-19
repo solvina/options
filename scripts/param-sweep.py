@@ -65,6 +65,11 @@ METRICS = [
 REQUEST_TIMEOUT_S = 900
 RETRIES = 2
 
+# Engine semantics: an ATR-multiple exit overrides the corresponding percent exit, so when the
+# ATR param is > 0 every swept value of the percent param yields a byte-identical backtest.
+# Such combos are pruned from the grid (only the percent param's first value is kept).
+ATR_OVERRIDES = {"stopAtrMultiple": "stopLossPct", "targetAtrMultiple": "targetPct"}
+
 
 def expand(spec) -> list:
     """A sweep spec is either an explicit list or {"min","max","step"} (inclusive, Decimal-exact)."""
@@ -123,7 +128,24 @@ def main() -> None:
     sweep_params = list(sweep.keys())
     value_lists = [expand(sweep[p]) for p in sweep_params]
     combos = list(itertools.product(*value_lists))
-    print(f"Sweep over {sweep_params}: {' x '.join(str(len(v)) for v in value_lists)} = {len(combos)} combos")
+    total = len(combos)
+    print(f"Sweep over {sweep_params}: {' x '.join(str(len(v)) for v in value_lists)} = {total} combos")
+
+    first_val = dict(zip(sweep_params, (v[0] for v in value_lists)))
+
+    def is_redundant(combo) -> bool:
+        c = dict(zip(sweep_params, combo))
+        for atr_p, pct_p in ATR_OVERRIDES.items():
+            atr_v = c.get(atr_p, request.get(atr_p, 0))
+            if pct_p in c and isinstance(atr_v, (int, float)) and atr_v > 0 and c[pct_p] != first_val[pct_p]:
+                return True
+        return False
+
+    combos = [c for c in combos if not is_redundant(c)]
+    if len(combos) < total:
+        print(f"Pruned {total - len(combos)} combos where an ATR multiple > 0 makes the swept "
+              f"percent exit irrelevant ({', '.join(f'{a} > 0 overrides {p}' for a, p in ATR_OVERRIDES.items())}) "
+              f"-> {len(combos)} to run")
     if args.dry_run:
         return
 
