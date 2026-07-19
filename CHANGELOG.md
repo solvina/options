@@ -52,6 +52,21 @@ dominated — and InfluxDB was being hammered with identical queries.
 ### Sweep script
 - ETA/elapsed now print as `H:MM:SS` (they printed raw float seconds).
 
+### Fixes after the first big run (290k combos, AAPL 1d)
+- **Sweep viewer froze on the 39 MB results.csv**: `distinct()` rescanned all rows on every call
+  and was itself called from per-row filter loops — O(n²·cols), invisible at 3k rows, ~10¹² ops at
+  290k. Distinct values are now memoized per column; the full file loads in ~2s.
+- Sweeping percent exits AND ATR-multiple exits in one grid multiplies in dead combos: whenever
+  both ATR multiples are > 0, every stopLossPct × targetPct cell is byte-identical (ATR overrides
+  percent). Sweep them in separate configs, or include 0 in the ATR lists and pin the percent
+  params when ATR is active.
+- **InfluxDB client read timeout 10s → 120s**: `/historical/summary`'s full-bucket scans time out
+  on the RPi's SD-card storage (fine on the workstation's NVMe).
+- **`SpreadMonitorSchedulerConcurrentTest` failed every weekend**: the mutex-release test pinned
+  exchange hours to 00:00–23:59 but not the day — the scheduler's weekday gate short-circuits on
+  Sat/Sun, so `checkExits` was never invoked. The scheduler now takes an overridable `Clock`
+  (production default unchanged) and the test pins a Wednesday.
+
 ## 2026-07-19 — Universe-wide history download + dedicated backtest workstation
 
 Two infrastructure steps toward serious backtesting: download **all** available history for the

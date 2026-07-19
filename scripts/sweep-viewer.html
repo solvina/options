@@ -190,11 +190,15 @@ function parseCsv(text) {
     });
     return o;
   });
+  distinctCache = {};
 }
 
 // ---------- UI construction ----------
+// Memoized: distinct() is called from per-row filter loops, and rescanning all rows for each call
+// froze the page on large sweeps (290k rows = O(n²·cols)). Reset in parseCsv.
+let distinctCache = {};
 function distinct(col) {
-  return [...new Set(rows.map(r => r[col]))].sort((a,b) =>
+  return distinctCache[col] ??= [...new Set(rows.map(r => r[col]))].sort((a,b) =>
     typeof a === 'number' && typeof b === 'number' ? a - b : String(a).localeCompare(String(b)));
 }
 // 1-D sweeps have no Y dimension: the heatmap collapses to a single labeled row.
@@ -264,7 +268,8 @@ function syncAxisSel(movable) {
 
 // ---------- data slicing & scoring ----------
 function currentSlice() {
-  return rows.filter(r => sweepCols.every(c => (c === xCol || c === yCol || distinct(c).length <= 1) ? true : r[c] === sliceVals[c]));
+  const pinned = sweepCols.filter(c => c !== xCol && c !== yCol && distinct(c).length > 1);
+  return rows.filter(r => pinned.every(c => r[c] === sliceVals[c]));
 }
 function val(r) {
   let v = r[metric];

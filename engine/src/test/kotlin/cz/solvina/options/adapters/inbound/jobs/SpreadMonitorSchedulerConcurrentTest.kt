@@ -12,6 +12,9 @@ import io.mockk.mockk
 import kotlinx.coroutines.delay
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import java.time.Clock
+import java.time.Instant
+import java.time.ZoneOffset
 import kotlin.test.assertTrue
 
 /**
@@ -118,8 +121,9 @@ class SpreadMonitorSchedulerConcurrentTest {
         // exactly the scenario a thread-bound ReentrantLock cannot survive (IllegalMonitorStateException
         // on unlock from a different thread, leaving the lock stuck forever).
         coEvery { spreadManagementService.checkExits() } coAnswers { delay(50) }
-        // Widen exchange hours to the full day so isAnyExchangeOpen() is independent of wall-clock
-        // time-of-day when this test actually runs — only the weekday gate still applies.
+        // Widen exchange hours to the full day and pin the clock to a Wednesday so
+        // isAnyExchangeOpen() is independent of when this test actually runs — the wall-clock
+        // version failed every weekend on the scheduler's weekday gate.
         every { instrumentsConfig.exchanges } returns
             mapOf(
                 "US" to
@@ -136,6 +140,7 @@ class SpreadMonitorSchedulerConcurrentTest {
                 connectionStatusPort,
                 killSwitch,
                 instrumentsConfig,
+                Clock.fixed(Instant.parse("2026-07-15T15:00:00Z"), ZoneOffset.UTC),
             )
 
         scheduler.monitorSpreads() // acquires the mutex, starts a 50ms suspend

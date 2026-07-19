@@ -12,6 +12,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
+import java.time.Clock
 import java.time.DayOfWeek
 import java.time.LocalTime
 import java.time.ZoneId
@@ -25,6 +26,9 @@ class SpreadMonitorScheduler(
     private val connectionStatusPort: ConnectionStatusPort,
     private val killSwitch: TradingKillSwitch,
     private val instrumentsConfig: IbkrInstrumentsConfig,
+    // Overridable so tests can pin the day of week (the weekday gate below made a wall-clock test
+    // fail every weekend). Spring uses the default; no Clock bean is defined.
+    private val clock: Clock = Clock.systemDefaultZone(),
 ) {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
@@ -68,7 +72,7 @@ class SpreadMonitorScheduler(
     private fun isAnyExchangeOpen(): Boolean =
         instrumentsConfig.exchanges.values.any { hours ->
             val zone = ZoneId.of(hours.timezone)
-            val now = ZonedDateTime.now(zone)
+            val now = ZonedDateTime.now(clock.withZone(zone))
             if (now.dayOfWeek == DayOfWeek.SATURDAY || now.dayOfWeek == DayOfWeek.SUNDAY) return@any false
             val time = now.toLocalTime()
             !time.isBefore(LocalTime.parse(hours.open)) && time.isBefore(LocalTime.parse(hours.close))
