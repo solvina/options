@@ -13,6 +13,9 @@ import { FlagAnalyticsPage } from './pages/FlagAnalyticsPage'
 import { HistoricalDataPage } from './pages/HistoricalDataPage'
 import { BacktestPage } from './pages/BacktestPage'
 import { StockBacktestPage } from './pages/StockBacktestPage'
+import { SweepsPage } from './pages/SweepsPage'
+import { SweepNewPage } from './pages/SweepNewPage'
+import { SweepResultsPage } from './pages/SweepResultsPage'
 import { ReportsPage } from './pages/ReportsPage'
 import { ChangelogPage } from './pages/ChangelogPage'
 
@@ -40,6 +43,9 @@ function App() {
           <Route path="/changelog" element={<ChangelogPage />} />
           <Route path="/backtest" element={<BacktestPage />} />
           <Route path="/backtest/stock" element={<StockBacktestPage />} />
+          <Route path="/backtest/sweeps" element={<SweepsPage />} />
+          <Route path="/backtest/sweeps/new" element={<SweepNewPage />} />
+          <Route path="/backtest/sweeps/:id/results" element={<SweepResultsPage />} />
         </Route>
       </Routes>
     </BrowserRouter>

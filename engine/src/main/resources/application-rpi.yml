@@ -43,3 +43,6 @@ ibkr:
       currency: EUR
       optionExchange: EUREX   # base config has DTB but IBKR returns EUREX
       marketExchange: EU
+
+sweep:
+  enabled: false   # a 100k-combo sweep would starve the trading engine — run sweeps on the workstation

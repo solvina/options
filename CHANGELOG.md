@@ -3,6 +3,34 @@
 Notable strategy, engine and operations changes. Newest first. Rendered in the frontend under
 **Maintenance › Changelog**.
 
+## 2026-07-19 — Sweeps in the web UI as terminable engine jobs
+
+The parameter sweeper is now a first-class engine feature (Backtest › Sweeps) instead of a
+side-car Python script. Full loop: Stock Backtest → "New sweep from these params" → adjust
+ranges → run as a job → open results → "use" any row to load its params back into the
+backtest form.
+
+- **`SweepService`** (domain): the param-sweep.py semantics ported in-process — Decimal-exact
+  range expansion, ATR-override pruning, arithmetic variant counting, lazy combo streaming
+  through a bounded worker pool, `results.csv`/`failures.csv`/`config.json` in the same format
+  and directory as the script (CLI and UI runs list and RESUME interchangeably). Combos run
+  against `BacktestEngine` directly — no HTTP per combo, coverage checked once per sweep —
+  measuring **~1,700 combos/s** on the workstation (the 29k-combo smoke grid took 17s).
+  Terminate = coroutine cancel: rows stay, same name resumes. Unit tests pin the count math
+  (24→12, 290,400→330).
+- **API** `/backtest/sweeps`: preview (live variant count for the form), create/start, list,
+  detail, DELETE (terminate; `?purge=true` deletes the run dir), results/config passthrough
+  for the viewer. Sweep names are validated (they become directories).
+- **UI**: Sweeps job list (status, progress bar, ETA countdown, terminate/purge/results),
+  New Sweep form (per-param fixed/range/list with live "N variants (M pruned)" preview),
+  and the results viewer ported from `sweep-viewer.html` into the app (same heatmap, robust
+  3×3-neighborhood winners, slicing sliders) with a **"use in backtest"** button on every row.
+- The standalone `scripts/sweep-viewer.html` and `scripts/param-sweep.py` remain for
+  offline/headless use; sweeps are disabled on the RPi profile (`sweep.enabled=false`) so a
+  mis-click can't starve the trading engine.
+- Startup scans the sweep output dir, so pre-existing runs (including python ones) appear in
+  the job list as STOPPED with openable results.
+
 ## 2026-07-19 — Sweep hot path + Historical Data page rework
 
 Follow-up to the workstation setup: with 5,000+ requests per sweep, the per-request fixed costs

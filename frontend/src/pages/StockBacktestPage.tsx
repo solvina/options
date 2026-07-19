@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useLocalStorage } from '../lib/useLocalStorage'
 
 // ---- types ----
@@ -306,6 +307,7 @@ export function StockBacktestPage() {
   // and keystrokes all survive a reload. Rendering is lenient (a cleared field may hold NaN while
   // the user types); sanitizeForm runs at the boundaries — Run and preset load — so what executes
   // is always valid and the inputs snap to the values actually used.
+  const navigate = useNavigate()
   const [savedForm, setForm] = useLocalStorage<StockForm>(STORAGE_KEY, DEFAULTS)
   const form: StockForm = { ...DEFAULTS, ...(savedForm !== null && typeof savedForm === 'object' ? savedForm : {}) }
   const [presets, setPresets] = useState<Preset[]>([])
@@ -349,40 +351,6 @@ export function StockBacktestPage() {
   /** Downloads a scripts/param-sweep.py config seeded from the current form: every numeric rule
    *  parameter appears under "sweep" with min = max = its current value (a single-value sweep) —
    *  widen the ranges you actually want to explore, leave the rest pinned. */
-  function downloadSweepConfig() {
-    const f = sanitizeForm(savedForm)
-    setForm(f)
-    const ints = new Set(['rsiPeriod', 'smaFastPeriod', 'smaSlowPeriod', 'atrPeriod', 'maxOpenPositions'])
-    const sweepKeys: (keyof StockForm)[] = ['rsiPeriod', 'rsiOversold', 'smaFastPeriod', 'smaSlowPeriod',
-      'supportProximityPct', 'stopLossPct', 'targetPct', 'atrPeriod', 'stopAtrMultiple', 'targetAtrMultiple',
-      'riskPerTradePct', 'maxOpenPositions']
-    const sweep: Record<string, { min: number; max: number; step: number }> = {}
-    for (const k of sweepKeys) sweep[k] = { min: f[k] as number, max: f[k] as number, step: ints.has(k) ? 1 : 0.1 }
-    const name = `sweep-${f.symbols.split(',')[0].trim().toUpperCase()}-${f.timeframe}-${new Date().toISOString().slice(0, 10)}`
-    const config = {
-      name,
-      outputDir: `sweeps/${name}`,
-      baseUrl: 'http://localhost:8082/options',
-      jobs: 10,
-      request: {
-        symbols: f.symbols.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean),
-        from: f.from,
-        to: f.to,
-        timeframe: f.timeframe,
-        initialCapital: f.initialCapital,
-        requireRsiRising: f.requireRsiRising,
-        requireUptrend: f.requireUptrend,
-        riskPerTrade: f.riskPerTrade,
-      },
-      sweep,
-    }
-    const a = document.createElement('a')
-    a.href = URL.createObjectURL(new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' }))
-    a.download = `${name}.json`
-    a.click()
-    URL.revokeObjectURL(a.href)
-  }
-
   async function run() {
     // Sanitize before running and write the result back, so the inputs show exactly the params
     // the backtest executed (a cleared field reverts to its default visibly, not silently).
@@ -551,9 +519,10 @@ export function StockBacktestPage() {
         </button>
         {loading && <span className="text-xs text-muted-foreground">First run for a symbol/period downloads history — can take a few minutes.</span>}
         <button onClick={() => setForm(DEFAULTS)} className="text-sm text-muted-foreground hover:text-foreground">Reset</button>
-        <button onClick={downloadSweepConfig} title="Download a scripts/param-sweep.py config seeded with these parameters — every numeric param as a min=max sweep entry; widen the ranges you want to explore."
+        <button onClick={() => navigate('/backtest/sweeps/new', { state: { seed: sanitizeForm(savedForm) } })}
+          title="Open the sweep form seeded with these parameters — pick which ones to sweep, then start it as an engine job."
           className="text-sm text-muted-foreground hover:text-foreground border border-border rounded px-3 py-1.5">
-          Generate sweep config
+          New sweep from these params
         </button>
       </div>
 

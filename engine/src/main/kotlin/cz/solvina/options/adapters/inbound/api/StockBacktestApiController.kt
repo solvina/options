@@ -61,7 +61,29 @@ class StockBacktestApiController(
         val riskPerTrade: Double? = null,
         val riskPerTradePct: Double? = null,
         val maxOpenPositions: Int? = null,
-    )
+    ) {
+        /** Nulls fall back to [RuleBacktestStrategy.Params] defaults. Shared with the sweep API. */
+        fun toParams(): RuleBacktestStrategy.Params {
+            val d = RuleBacktestStrategy.Params()
+            return RuleBacktestStrategy.Params(
+                rsiPeriod = rsiPeriod ?: d.rsiPeriod,
+                rsiOversold = rsiOversold ?: d.rsiOversold,
+                requireRsiRising = requireRsiRising ?: d.requireRsiRising,
+                smaFastPeriod = smaFastPeriod ?: d.smaFastPeriod,
+                smaSlowPeriod = smaSlowPeriod ?: d.smaSlowPeriod,
+                requireUptrend = requireUptrend ?: d.requireUptrend,
+                supportProximityPct = supportProximityPct ?: d.supportProximityPct,
+                stopLossPct = stopLossPct ?: d.stopLossPct,
+                targetPct = targetPct ?: d.targetPct,
+                atrPeriod = atrPeriod ?: d.atrPeriod,
+                stopAtrMultiple = stopAtrMultiple ?: d.stopAtrMultiple,
+                targetAtrMultiple = targetAtrMultiple ?: d.targetAtrMultiple,
+                riskPerTrade = riskPerTrade ?: d.riskPerTrade,
+                riskPerTradePct = riskPerTradePct ?: d.riskPerTradePct,
+                maxOpenPositions = maxOpenPositions ?: d.maxOpenPositions,
+            )
+        }
+    }
 
     @PostMapping("/stock")
     suspend fun runStockBacktest(
@@ -71,25 +93,7 @@ class StockBacktestApiController(
         val timeframe = Timeframe.fromLabel(req.timeframe ?: Timeframe.DAILY.label)
         val symbols = req.symbols.map { Symbol(it.trim().uppercase()) }
 
-        val d = RuleBacktestStrategy.Params()
-        val params =
-            RuleBacktestStrategy.Params(
-                rsiPeriod = req.rsiPeriod ?: d.rsiPeriod,
-                rsiOversold = req.rsiOversold ?: d.rsiOversold,
-                requireRsiRising = req.requireRsiRising ?: d.requireRsiRising,
-                smaFastPeriod = req.smaFastPeriod ?: d.smaFastPeriod,
-                smaSlowPeriod = req.smaSlowPeriod ?: d.smaSlowPeriod,
-                requireUptrend = req.requireUptrend ?: d.requireUptrend,
-                supportProximityPct = req.supportProximityPct ?: d.supportProximityPct,
-                stopLossPct = req.stopLossPct ?: d.stopLossPct,
-                targetPct = req.targetPct ?: d.targetPct,
-                atrPeriod = req.atrPeriod ?: d.atrPeriod,
-                stopAtrMultiple = req.stopAtrMultiple ?: d.stopAtrMultiple,
-                targetAtrMultiple = req.targetAtrMultiple ?: d.targetAtrMultiple,
-                riskPerTrade = req.riskPerTrade ?: d.riskPerTrade,
-                riskPerTradePct = req.riskPerTradePct ?: d.riskPerTradePct,
-                maxOpenPositions = req.maxOpenPositions ?: d.maxOpenPositions,
-            )
+        val params = req.toParams()
 
         // Server-side param validation: a zero/negative period silently yields 0 trades (NaN-free
         // but meaningless), so reject here for EVERY client — browser input constraints only
@@ -159,21 +163,8 @@ class StockBacktestApiController(
         initialCapital: BigDecimal?,
     ): String? =
         when {
-            p.rsiPeriod < 1 -> "rsiPeriod must be >= 1"
-            p.smaFastPeriod < 1 -> "smaFastPeriod must be >= 1"
-            p.smaSlowPeriod < 1 -> "smaSlowPeriod must be >= 1"
-            p.maxOpenPositions < 1 -> "maxOpenPositions must be >= 1"
-            p.rsiOversold <= 0.0 || p.rsiOversold > 100.0 -> "rsiOversold must be in (0, 100]"
-            p.supportProximityPct < 0.0 -> "supportProximityPct must be >= 0"
-            p.stopLossPct <= 0.0 -> "stopLossPct must be > 0"
-            p.targetPct <= 0.0 -> "targetPct must be > 0"
-            p.atrPeriod < 1 -> "atrPeriod must be >= 1"
-            p.stopAtrMultiple < 0.0 -> "stopAtrMultiple must be >= 0 (0 = use stopLossPct)"
-            p.targetAtrMultiple < 0.0 -> "targetAtrMultiple must be >= 0 (0 = use targetPct)"
-            p.riskPerTradePct < 0.0 || p.riskPerTradePct > 100.0 -> "riskPerTradePct must be in [0, 100]"
-            p.riskPerTradePct == 0.0 && p.riskPerTrade <= 0.0 -> "riskPerTrade must be > 0 when riskPerTradePct is unset"
             initialCapital != null && initialCapital <= BigDecimal.ZERO -> "initialCapital must be > 0"
-            else -> null
+            else -> RuleBacktestStrategy.validationError(p)
         }
 
     companion object {

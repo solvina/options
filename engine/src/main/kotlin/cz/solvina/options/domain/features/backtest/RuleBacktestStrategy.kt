@@ -44,6 +44,31 @@ class RuleBacktestStrategy(
         val maxOpenPositions: Int = 1,
     )
 
+    companion object {
+        /**
+         * Returns why [p] is not runnable, or null when it is. A zero/negative period silently
+         * yields 0 trades (NaN-free but meaningless), so every caller — API controller, sweep
+         * runner — must reject up front; browser form constraints protect nobody else.
+         */
+        fun validationError(p: Params): String? =
+            when {
+                p.rsiPeriod < 1 -> "rsiPeriod must be >= 1"
+                p.smaFastPeriod < 1 -> "smaFastPeriod must be >= 1"
+                p.smaSlowPeriod < 1 -> "smaSlowPeriod must be >= 1"
+                p.maxOpenPositions < 1 -> "maxOpenPositions must be >= 1"
+                p.rsiOversold <= 0.0 || p.rsiOversold > 100.0 -> "rsiOversold must be in (0, 100]"
+                p.supportProximityPct < 0.0 -> "supportProximityPct must be >= 0"
+                p.stopLossPct <= 0.0 -> "stopLossPct must be > 0"
+                p.targetPct <= 0.0 -> "targetPct must be > 0"
+                p.atrPeriod < 1 -> "atrPeriod must be >= 1"
+                p.stopAtrMultiple < 0.0 -> "stopAtrMultiple must be >= 0 (0 = use stopLossPct)"
+                p.targetAtrMultiple < 0.0 -> "targetAtrMultiple must be >= 0 (0 = use targetPct)"
+                p.riskPerTradePct < 0.0 || p.riskPerTradePct > 100.0 -> "riskPerTradePct must be in [0, 100]"
+                p.riskPerTradePct == 0.0 && p.riskPerTrade <= 0.0 -> "riskPerTrade must be > 0 when riskPerTradePct is unset"
+                else -> null
+            }
+    }
+
     data class RuleTrade(
         val symbol: String,
         val entryAt: Instant,

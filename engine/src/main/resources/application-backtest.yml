@@ -6,6 +6,10 @@
 server:
   port: 8082   # coexists with a dev instance on 8081
 
+sweep:
+  # Same directory param-sweep.py writes to, so CLI and UI runs list/resume interchangeably.
+  output-dir: /home/solvina/projects/options/scripts/sweeps
+
 ibkr:
   connection:
     enabled: false
