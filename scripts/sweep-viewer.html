@@ -379,11 +379,18 @@ function render() {
 function renderTiles(slice) {
   const m = METRICS[metric], best = winners[0], rb = robust[0];
   const t = document.getElementById('tiles');
+  // Absolute money for buy & hold: initial capital falls out of any row (finalCapital − totalPnl).
+  const r0 = rows[0];
+  const initCap = (typeof r0?.finalCapital === 'number' && typeof r0?.totalPnl === 'number') ? r0.finalCapital - r0.totalPnl : null;
+  const holdMoney = (initCap != null && typeof r0?.buyHoldPnlPct === 'number') ? initCap * (1 + r0.buyHoldPnlPct / 100) : null;
+  const holdV = holdMoney != null ? '$' + fmt(holdMoney, 0) : fmt(r0?.buyHoldPnlPct) + '%';
+  const holdS = (holdMoney != null ? `from $${fmt(initCap, 0)} · ${fmt(r0?.buyHoldPnlPct)}% · ` : '') +
+    `${fmt(r0?.buyHoldAnnualizedPct)}%/yr — the bar to clear`;
   t.innerHTML = `
     <div class="tile"><div class="k">Combos in slice</div><div class="v">${slice.length.toLocaleString('en-US')}</div><div class="s">${rows.length.toLocaleString('en-US')} loaded</div></div>
     <div class="tile"><div class="k">Best (absolute)</div><div class="v">${best ? fmt(val(best)) : '—'}</div><div class="s">${best ? xCol+'='+best[xCol]+(yCol ? ' '+yCol+'='+best[yCol] : '') : ''}</div></div>
     <div class="tile"><div class="k">Best (robust)</div><div class="v">${rb ? fmt(val(rb.r)) : '—'}</div><div class="s">${rb ? xCol+'='+rb.r[xCol]+(yCol ? ' '+yCol+'='+rb.r[yCol] : '')+' · nbhd '+fmt(rb.score) : ''}</div></div>
-    <div class="tile"><div class="k">Buy &amp; hold</div><div class="v">${fmt(rows[0]?.buyHoldPnlPct)}%</div><div class="s">${fmt(rows[0]?.buyHoldAnnualizedPct)}%/yr — the bar to clear</div></div>`;
+    <div class="tile"><div class="k">Buy &amp; hold</div><div class="v">${holdV}</div><div class="s">${holdS}</div></div>`;
 }
 
 function renderHeatmap(slice) {

@@ -114,6 +114,10 @@ for tf in ${TIMEFRAMES//,/ }; do
         failures+=("$symbol/$tf: client-side timeout, check job $job_id")
         ;;
     esac
+
+    # Breather between symbols (PAUSE_SECONDS=N): lets InfluxDB compactions drain instead of
+    # piling up — on the RPi sustained ingest pressure swap-thrashed the box into freezes.
+    [[ "${PAUSE_SECONDS:-0}" -gt 0 ]] && sleep "$PAUSE_SECONDS"
   done
   echo
 done

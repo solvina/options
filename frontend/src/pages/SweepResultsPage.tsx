@@ -371,6 +371,11 @@ export function SweepResultsPage() {
   const winnerSet = new Set(winners)
   const robustSet = new Set(robust.map((q) => q.r))
   const hold = data.rows[0]?.buyHoldPnlPct
+  // Absolute money for buy & hold: initial capital falls out of any row (finalCapital − totalPnl).
+  const r0 = data.rows[0]
+  const initialCap = typeof r0?.finalCapital === 'number' && typeof r0?.totalPnl === 'number'
+    ? (r0.finalCapital as number) - (r0.totalPnl as number) : null
+  const holdMoney = initialCap != null && typeof hold === 'number' ? initialCap * (1 + hold / 100) : null
 
   return (
     <div className="space-y-3 sweepviewer">
@@ -430,8 +435,11 @@ export function SweepResultsPage() {
           <div className="text-lg font-semibold">{robust[0] ? fmt(val(robust[0].r)) : '—'}</div>
           <div className="text-xs text-muted-foreground">{robust[0] ? `nbhd ${fmt(robust[0].score)}` : ''}</div></div>
         <div className="border border-border rounded p-3"><div className="text-xs text-muted-foreground uppercase">Buy &amp; hold</div>
-          <div className="text-lg font-semibold">{fmt(hold)}%</div>
-          <div className="text-xs text-muted-foreground">{fmt(data.rows[0]?.buyHoldAnnualizedPct)}%/yr — the bar to clear</div></div>
+          <div className="text-lg font-semibold">{holdMoney != null ? `$${fmt(holdMoney, 0)}` : `${fmt(hold)}%`}</div>
+          <div className="text-xs text-muted-foreground">
+            {holdMoney != null && initialCap != null ? `from $${fmt(initialCap, 0)} · ${fmt(hold)}% · ` : ''}
+            {fmt(data.rows[0]?.buyHoldAnnualizedPct)}%/yr — the bar to clear
+          </div></div>
       </div>
 
       <div className="border border-border rounded p-3 flex flex-wrap gap-4 items-center text-sm">
