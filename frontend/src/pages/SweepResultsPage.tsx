@@ -76,11 +76,49 @@ interface SweepConfig {
   request?: Record<string, unknown>
 }
 
+interface SeriesSummary {
+  symbol: string
+  interval: string
+  firstBar: string
+  lastBar: string
+  barCount: number
+}
+
+/** Per-symbol store coverage vs the sweep window — the usual cause of "strange" sweep results. */
+function coverageWarnings(config: SweepConfig | null, summary: SeriesSummary[]): string[] {
+  const req = config?.request
+  if (!req) return []
+  const symbols = Array.isArray(req.symbols) ? (req.symbols as string[]) : []
+  const timeframe = String(req.timeframe ?? '1d')
+  const from = typeof req.from === 'string' ? req.from : null
+  const to = typeof req.to === 'string' ? req.to : null
+  const out: string[] = []
+  for (const sym of symbols) {
+    const s = summary.find((x) => x.symbol === sym && x.interval === timeframe)
+    if (!s) {
+      out.push(`${sym}: no ${timeframe} data in this instance's store at all — every combo backtested on nothing.`)
+      continue
+    }
+    const first = s.firstBar.slice(0, 10)
+    const last = s.lastBar.slice(0, 10)
+    const missesStart = from != null && first > from
+    const missesEnd = to != null && last < to
+    if (missesStart || missesEnd) {
+      out.push(
+        `${sym}: local ${timeframe} bars span ${first} → ${last}, but the sweep window is ${from} → ${to} — ` +
+          'results only reflect the overlap (and CAGR is annualized over the requested window).',
+      )
+    }
+  }
+  return out
+}
+
 export function SweepResultsPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const [data, setData] = useState<{ header: string[]; sweepCols: string[]; rows: Row[] } | null>(null)
   const [config, setConfig] = useState<SweepConfig | null>(null)
+  const [summary, setSummary] = useState<SeriesSummary[]>([])
   const [err, setErr] = useState<string | null>(null)
 
   const [xCol, setXCol] = useState<string | null>(null)
@@ -105,6 +143,7 @@ export function SweepResultsPage() {
         if (!csvRes.ok) throw new Error(`results: HTTP ${csvRes.status}`)
         const parsed = parseCsv(await csvRes.text())
         if (cfgRes.ok) setConfig(await cfgRes.json())
+        fetch('/api/historical/summary').then(async (r) => { if (r.ok) setSummary(await r.json()) }).catch(() => {})
         setData(parsed)
         const distinctCount = (col: string) => new Set(parsed.rows.map((r) => r[col])).size
         const movable = parsed.sweepCols.filter((c) => distinctCount(c) > 1)
@@ -320,9 +359,25 @@ export function SweepResultsPage() {
       `}</style>
 
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Sweep results — {id}</h1>
+        <div>
+          <h1 className="text-xl font-semibold">Sweep results — {id}</h1>
+          <div className="text-sm text-muted-foreground">
+            {[
+              Array.isArray(config?.request?.symbols) ? (config!.request!.symbols as string[]).join(', ') : null,
+              config?.request?.timeframe ? String(config.request.timeframe) : null,
+              config?.request?.from || config?.request?.to ? `${config?.request?.from ?? '…'} → ${config?.request?.to ?? '…'}` : null,
+              `${data.rows.length.toLocaleString('en-US')} rows`,
+            ].filter(Boolean).join('  ·  ')}
+          </div>
+        </div>
         <button className="text-sm underline" onClick={() => navigate('/backtest/sweeps')}>← sweep jobs</button>
       </div>
+
+      {coverageWarnings(config, summary).map((w) => (
+        <div key={w} className="border border-yellow-500/50 bg-yellow-500/10 text-yellow-700 dark:text-yellow-400 rounded p-3 text-sm">
+          ⚠ Data coverage: {w}
+        </div>
+      ))}
 
       <div className="border border-border rounded p-3 text-sm">
         {config?.request && Object.entries(config.request).map(([k, v]) => (

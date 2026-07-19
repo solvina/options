@@ -81,6 +81,7 @@
 <div class="wrap">
   <h1>Sweep Results Viewer</h1>
   <div class="sub">Load a <code>results.csv</code> from <code>scripts/param-sweep.py</code> (optionally its <code>config.json</code> for the fixed-parameter chips). Everything runs locally in this page.</div>
+  <div class="sub" id="runinfo" style="display:none; font-size:14px; color:var(--ink); font-weight:600"></div>
 
   <div class="card" id="loader">
     <div class="drop" id="drop">
@@ -137,7 +138,7 @@ const METRICS = {
 };
 const SEQ_STEPS = ['#cde2fb','#b7d3f6','#9ec5f4','#86b6ef','#6da7ec','#5598e7','#3987e5','#2a78d6','#256abf','#1c5cab','#184f95','#104281','#0d366b'];
 
-let rows = [], header = [], sweepCols = [], config = null;
+let rows = [], header = [], sweepCols = [], config = null, sourceName = '';
 let xCol, yCol, sliceVals = {}, metric = 'totalPnlPct', relHold = false;
 let winners = [], robust = [], sortState = { col: null, dir: -1 };
 
@@ -170,7 +171,7 @@ function readFiles(list) {
   for (const f of list) {
     const r = new FileReader();
     if (f.name.endsWith('.json')) r.onload = () => { config = JSON.parse(r.result); if (rows.length) init(); };
-    else r.onload = () => { parseCsv(r.result); init(); };
+    else r.onload = () => { sourceName = f.name; parseCsv(r.result); init(); };
     r.readAsText(f);
   }
 }
@@ -208,6 +209,19 @@ const yOf = r => yCol ? r[yCol] : '—';
 function init() {
   document.getElementById('loader').style.display = 'none';
   document.getElementById('app').style.display = '';
+  // What are we looking at: run name, symbols, timeframe, window, size — the context that
+  // explains odd numbers (e.g. a 4h sweep over a window the local 4h data doesn't cover).
+  const req = config?.request ?? {};
+  const parts = [];
+  if (config?.name || sourceName) parts.push(config?.name ?? sourceName);
+  if (req.symbols) parts.push(Array.isArray(req.symbols) ? req.symbols.join(', ') : req.symbols);
+  if (req.timeframe) parts.push(req.timeframe);
+  if (req.from || req.to) parts.push(`${req.from ?? '…'} → ${req.to ?? '…'}`);
+  parts.push(`${rows.length.toLocaleString('en-US')} rows`);
+  const ri = document.getElementById('runinfo');
+  ri.textContent = parts.join('  ·  ');
+  ri.style.display = '';
+  document.title = `Sweep — ${config?.name ?? sourceName ?? 'results'}`;
   const movable = sweepCols.filter(c => distinct(c).length > 1);
   const frozen  = sweepCols.filter(c => distinct(c).length <= 1);
   xCol = movable[0]; yCol = movable[1] ?? null;
@@ -438,6 +452,7 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if
 // (serve the scripts dir with e.g. `python3 -m http.server`; file inputs still work regardless)
 const q = new URLSearchParams(location.search);
 if (q.get('csv')) {
+  sourceName = q.get('csv');
   const jobs = [fetch(q.get('csv')).then(r => r.text()).then(parseCsv)];
   if (q.get('config')) jobs.push(fetch(q.get('config')).then(r => r.json()).then(j => config = j));
   Promise.all(jobs).then(init).catch(e => { document.getElementById('drop').textContent = 'Load failed: ' + e; });
