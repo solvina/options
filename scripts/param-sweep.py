@@ -181,7 +181,9 @@ def main() -> None:
     name = cfg.get("name") or datetime.now().strftime("%Y%m%d-%H%M%S")
     out_dir = Path(cfg.get("outputDir") or Path("sweeps") / name)
     out_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy(cfg_path, out_dir / "config.json")
+    # Rerunning the copy that already lives in the output dir is fine — just skip the self-copy.
+    if not (out_dir / "config.json").exists() or not cfg_path.samefile(out_dir / "config.json"):
+        shutil.copy(cfg_path, out_dir / "config.json")
     results_path = out_dir / "results.csv"
     failures_path = out_dir / "failures.csv"
 
