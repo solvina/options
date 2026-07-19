@@ -6,6 +6,7 @@ import com.influxdb.client.write.Point
 import com.influxdb.query.FluxRecord
 import cz.solvina.options.domain.features.bars.BarStorePort
 import cz.solvina.options.domain.features.bars.FiveMinuteBar
+import cz.solvina.options.domain.features.bars.SeriesSummary
 import cz.solvina.options.domain.features.bars.Timeframe
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -19,11 +20,66 @@ private val logger = KotlinLogging.logger {}
 
 private const val MEASUREMENT = "candle"
 
+// readBars result cache: a parameter sweep re-reads the exact same (symbol, range, timeframe)
+// series thousands of times — the Influx round-trip + record parsing dominated sweep throughput.
+// Exact-key LRU, capped by entries AND total bars (a 5-min decade is ~400k bars ≈ 25 MB), with a
+// short TTL because replicated/backfilled writes can land in an already-cached range from outside
+// this adapter (EDR); local writes through the adapter evict matching series immediately.
+private const val CACHE_MAX_ENTRIES = 10
+private const val CACHE_MAX_TOTAL_BARS = 1_500_000
+private const val CACHE_TTL_MS = 10 * 60 * 1000L
+
 @Component
 class InfluxDbBarStoreAdapter(
     private val client: InfluxDBClientKotlin,
     private val props: InfluxDbProperties,
 ) : BarStorePort {
+    private data class ReadKey(
+        val symbol: String,
+        val from: Instant,
+        val to: Instant,
+        val interval: String,
+    )
+
+    private class CachedRead(
+        val bars: List<FiveMinuteBar>,
+        val at: Long = System.currentTimeMillis(),
+    )
+
+    private val readCache =
+        object : LinkedHashMap<ReadKey, CachedRead>(16, 0.75f, true) {
+            override fun removeEldestEntry(eldest: Map.Entry<ReadKey, CachedRead>): Boolean = size > CACHE_MAX_ENTRIES
+        }
+
+    private fun cacheGet(key: ReadKey): List<FiveMinuteBar>? =
+        synchronized(readCache) {
+            val hit = readCache[key] ?: return null
+            if (System.currentTimeMillis() - hit.at > CACHE_TTL_MS) {
+                readCache.remove(key)
+                null
+            } else {
+                hit.bars
+            }
+        }
+
+    private fun cachePut(
+        key: ReadKey,
+        bars: List<FiveMinuteBar>,
+    ) = synchronized(readCache) {
+        readCache[key] = CachedRead(bars)
+        while (readCache.values.sumOf { it.bars.size } > CACHE_MAX_TOTAL_BARS && readCache.size > 1) {
+            val eldest = readCache.keys.first()
+            readCache.remove(eldest)
+        }
+    }
+
+    private fun cacheEvict(
+        symbol: Symbol,
+        timeframe: Timeframe,
+    ) = synchronized(readCache) {
+        readCache.keys.removeIf { it.symbol == symbol.value && it.interval == timeframe.label }
+    }
+
     override suspend fun writeBar(
         symbol: Symbol,
         bar: FiveMinuteBar,
@@ -31,6 +87,7 @@ class InfluxDbBarStoreAdapter(
     ) {
         try {
             client.getWriteKotlinApi().writePoint(toPoint(symbol, bar, timeframe))
+            cacheEvict(symbol, timeframe)
         } catch (e: Exception) {
             logger.warn { "[${symbol.value}] InfluxDB write failed: ${e.message}" }
         }
@@ -44,6 +101,7 @@ class InfluxDbBarStoreAdapter(
         if (bars.isEmpty()) return
         try {
             client.getWriteKotlinApi().writePoints(bars.map { toPoint(symbol, it, timeframe) })
+            cacheEvict(symbol, timeframe)
         } catch (e: Exception) {
             logger.warn { "[${symbol.value}] InfluxDB bulk write failed (${bars.size} bars): ${e.message}" }
         }
@@ -55,6 +113,8 @@ class InfluxDbBarStoreAdapter(
         to: Instant,
         timeframe: Timeframe,
     ): List<FiveMinuteBar> {
+        val key = ReadKey(symbol.value, from, to, timeframe.label)
+        cacheGet(key)?.let { return it }
         val flux =
             """
             from(bucket: "${props.bucket}")
@@ -70,6 +130,7 @@ class InfluxDbBarStoreAdapter(
             client.getQueryKotlinApi().query(flux).consumeEach { record ->
                 parseBar(record)?.let { result.add(it) }
             }
+            cachePut(key, result)
             result
         } catch (e: Exception) {
             logger.warn { "[${symbol.value}] InfluxDB readBars failed: ${e.message}" }
@@ -144,6 +205,49 @@ class InfluxDbBarStoreAdapter(
             emptyMap()
         }
     }
+
+    override suspend fun seriesSummary(): List<SeriesSummary> {
+        // Three grouped aggregates over the whole bucket (count / first / last per series),
+        // merged by symbol+interval. Full-range scans, but this backs a maintenance page only.
+        data class Acc(
+            var count: Long = 0,
+            var first: Instant? = null,
+            var last: Instant? = null,
+        )
+
+        val acc = mutableMapOf<Pair<String, String>, Acc>()
+        val base =
+            """
+            from(bucket: "${props.bucket}")
+              |> range(start: 1990-01-01T00:00:00Z)
+              |> filter(fn: (r) => r._measurement == "$MEASUREMENT" and r._field == "close")
+              |> group(columns: ["symbol", "interval"])
+            """.trimIndent()
+        return try {
+            client.getQueryKotlinApi().query("$base\n  |> count()").consumeEach { r ->
+                acc.getOrPut(r.seriesKey()) { Acc() }.count = (r.value as? Number)?.toLong() ?: 0
+            }
+            client.getQueryKotlinApi().query("$base\n  |> first()").consumeEach { r ->
+                acc.getOrPut(r.seriesKey()) { Acc() }.first = r.getTime()
+            }
+            client.getQueryKotlinApi().query("$base\n  |> last()").consumeEach { r ->
+                acc.getOrPut(r.seriesKey()) { Acc() }.last = r.getTime()
+            }
+            acc
+                .mapNotNull { (key, a) ->
+                    val (symbol, interval) = key
+                    val first = a.first ?: return@mapNotNull null
+                    val last = a.last ?: return@mapNotNull null
+                    SeriesSummary(symbol, interval, first, last, a.count)
+                }.sortedWith(compareBy({ it.symbol }, { it.interval }))
+        } catch (e: Exception) {
+            logger.warn { "InfluxDB seriesSummary failed: ${e.message}" }
+            emptyList()
+        }
+    }
+
+    private fun FluxRecord.seriesKey(): Pair<String, String> =
+        (values["symbol"]?.toString() ?: "?") to (values["interval"]?.toString() ?: "?")
 
     private fun toPoint(
         symbol: Symbol,

@@ -14,6 +14,17 @@ export type SymbolCoverageDto = {
     };
 };
 
+export type SeriesSummaryDto = {
+    symbol: string;
+    /**
+     * Timeframe label (5min, 4h, 1d)
+     */
+    interval: string;
+    firstBar: string;
+    lastBar: string;
+    barCount: number;
+};
+
 export type FetchRequestDto = {
     /**
      * Symbols to fetch; defaults to full watchlist if omitted
@@ -21,6 +32,14 @@ export type FetchRequestDto = {
     symbols?: Array<string>;
     from: string;
     to: string;
+    /**
+     * Bar timeframe label (5min, 4h, 1d); defaults to 5min
+     */
+    timeframe?: string;
+    /**
+     * When true, only the missing head/tail of the range is fetched (idempotent, resumable); when false or omitted, the whole range is refetched.
+     */
+    ensure?: boolean;
 };
 
 export type FetchJobDto = {
@@ -28,6 +47,10 @@ export type FetchJobDto = {
     symbols: Array<string>;
     from: string;
     to: string;
+    /**
+     * Bar timeframe label (5min, 4h, 1d)
+     */
+    timeframe?: string;
     status: 'RUNNING' | 'DONE' | 'FAILED';
     barsWritten: number;
     error?: string | null;
@@ -45,6 +68,10 @@ export type GetHistoricalCoverageData = {
         symbols?: string;
         from: string;
         to: string;
+        /**
+         * Bar timeframe label (5min, 4h, 1d); defaults to 5min
+         */
+        timeframe?: string;
     };
     url: '/historical/coverage';
 };
@@ -57,6 +84,22 @@ export type GetHistoricalCoverageResponses = {
 };
 
 export type GetHistoricalCoverageResponse = GetHistoricalCoverageResponses[keyof GetHistoricalCoverageResponses];
+
+export type GetHistoricalSummaryData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/historical/summary';
+};
+
+export type GetHistoricalSummaryResponses = {
+    /**
+     * Stored series summaries, sorted by symbol then interval
+     */
+    200: Array<SeriesSummaryDto>;
+};
+
+export type GetHistoricalSummaryResponse = GetHistoricalSummaryResponses[keyof GetHistoricalSummaryResponses];
 
 export type StartHistoricalFetchData = {
     body: FetchRequestDto;

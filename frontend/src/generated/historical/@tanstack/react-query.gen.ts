@@ -3,8 +3,8 @@
 import { type DefaultError, queryOptions, type UseMutationOptions } from '@tanstack/react-query';
 
 import { client } from '../client.gen';
-import { getFetchJob, getHistoricalCoverage, listFetchJobs, type Options, startHistoricalFetch } from '../sdk.gen';
-import type { GetFetchJobData, GetFetchJobResponse, GetHistoricalCoverageData, GetHistoricalCoverageResponse, ListFetchJobsData, ListFetchJobsResponse, StartHistoricalFetchData, StartHistoricalFetchResponse } from '../types.gen';
+import { getFetchJob, getHistoricalCoverage, getHistoricalSummary, listFetchJobs, type Options, startHistoricalFetch } from '../sdk.gen';
+import type { GetFetchJobData, GetFetchJobResponse, GetHistoricalCoverageData, GetHistoricalCoverageResponse, GetHistoricalSummaryData, GetHistoricalSummaryResponse, ListFetchJobsData, ListFetchJobsResponse, StartHistoricalFetchData, StartHistoricalFetchResponse } from '../types.gen';
 
 export type QueryKey<TOptions extends Options> = [
     Pick<TOptions, 'baseUrl' | 'body' | 'headers' | 'path' | 'query'> & {
@@ -55,6 +55,24 @@ export const getHistoricalCoverageOptions = (options: Options<GetHistoricalCover
         return data;
     },
     queryKey: getHistoricalCoverageQueryKey(options)
+});
+
+export const getHistoricalSummaryQueryKey = (options?: Options<GetHistoricalSummaryData>) => createQueryKey('getHistoricalSummary', options);
+
+/**
+ * Per-series summary of everything stored — one row per symbol+timeframe with bar count and first/last bar
+ */
+export const getHistoricalSummaryOptions = (options?: Options<GetHistoricalSummaryData>) => queryOptions<GetHistoricalSummaryResponse, DefaultError, GetHistoricalSummaryResponse, ReturnType<typeof getHistoricalSummaryQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await getHistoricalSummary({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: getHistoricalSummaryQueryKey(options)
 });
 
 /**

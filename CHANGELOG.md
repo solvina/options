@@ -3,6 +3,55 @@
 Notable strategy, engine and operations changes. Newest first. Rendered in the frontend under
 **Maintenance › Changelog**.
 
+## 2026-07-19 — Sweep hot path + Historical Data page rework
+
+Follow-up to the workstation setup: with 5,000+ requests per sweep, the per-request fixed costs
+dominated — and InfluxDB was being hammered with identical queries.
+
+### Sweep request hot path (backtest, performance)
+- **Bar read cache** in `InfluxDbBarStoreAdapter`: exact-key LRU over (symbol, range, timeframe),
+  capped at 10 entries / 1.5M bars total, 10-min TTL (external EDR writes can land in a cached
+  range), evicted immediately on local writes. A sweep now reads each series from InfluxDB once
+  instead of once per combo.
+- **Coverage memo** in `HistoricalDataService`: `ensureCoverage` re-verified coverage with a
+  full-range `coverageByDay` query per symbol *and* per benchmark ETF on every request — after
+  bar reads were cached, this was the remaining InfluxDB load. Verified spans are now remembered
+  for 10 min, **including spans with a gap that yielded nothing** (backtest profile's no-op
+  fetcher, delisted tails) — without that, one stale benchmark ETF (XLK ends 2024-12-31 locally)
+  kept the re-verification firing on every single combo. A fetch that actually writes bars is
+  never memoized, so real downloads still re-verify.
+- **Adaptive job poll** in the stock backtest controller: the fixed 2s poll tick was the floor on
+  warm requests; the first 2s now poll at 100ms.
+- Net effect: warm sweep request 2.6s → **0.13s**, InfluxDB CPU per request ~0.16s → **~0.02s**.
+  Remaining influxd load in htop during a sweep is the EDR ingest stream from the RPi download
+  plus compactions, not the sweep.
+- Fetch-job records are now pruned (oldest finished beyond 2,000) — a long sweep used to grow the
+  in-memory job map without bound.
+
+### ensureCoverage stops asking IBKR for weekends (data)
+- A head/tail gap consisting only of Saturday/Sunday can never be filled, but each rerun asked
+  IBKR for it anyway — one silent 45s chunk timeout per covered symbol (≈3h wasted per universe
+  re-pass on the RPi). Weekend-only gaps are now skipped.
+
+### Historical Data page rework (frontend)
+- New **`GET /historical/summary`**: per (symbol, interval) series in InfluxDB — bar count, first
+  and last bar. Backed by three grouped Flux aggregates over the whole bucket.
+- The page now leads with a **Data in DB** table (per-symbol pivot over 5min/4h/1d with counts and
+  first→last dates, filter box, per-interval totals, 60s refresh) — it shows what the instance you
+  are on can actually serve, which on the workstation is the replica, not IBKR.
+- The coverage grid gained a timeframe selector (it was hardcoded to 5-min expectations; a full
+  day is 78 five-min bars, 2 four-hour bars, 1 daily bar).
+- The **Fetch historical bars** form is collapsed into a details panel and gained timeframe +
+  "only missing (ensure)" controls. On the backtest profile fetching is a deliberate no-op —
+  data arrives via EDR replication from the RPi.
+- Known data holes surfaced by the new table: XLK/XLI 1d end 2024-12-31 locally, and
+  XLB/XLU/XLY/XLP/XLRE/XLC have no 1d series — sector-ETF benchmarks for those sectors run on
+  stale/missing data until they're fetched on the RPi (they're not in the universe, so the bulk
+  download skips them).
+
+### Sweep script
+- ETA/elapsed now print as `H:MM:SS` (they printed raw float seconds).
+
 ## 2026-07-19 — Universe-wide history download + dedicated backtest workstation
 
 Two infrastructure steps toward serious backtesting: download **all** available history for the

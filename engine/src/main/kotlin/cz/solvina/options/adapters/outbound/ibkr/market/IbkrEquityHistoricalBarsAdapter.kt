@@ -146,7 +146,11 @@ class IbkrEquityHistoricalBarsAdapter(
             val time: Instant =
                 when {
                     DAILY_DATE.matches(raw) ->
-                        LocalDate.parse(raw, DAILY_DATE_FORMAT).atTime(16, 0).atZone(ET).toInstant()
+                        LocalDate
+                            .parse(raw, DAILY_DATE_FORMAT)
+                            .atTime(16, 0)
+                            .atZone(ET)
+                            .toInstant()
                     raw.toLongOrNull() != null -> Instant.ofEpochSecond(raw.toLong())
                     else -> LocalDateTime.parse(raw.take(17), BAR_TIME_FORMAT).atZone(ET).toInstant()
                 }

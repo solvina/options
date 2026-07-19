@@ -46,6 +46,22 @@ paths:
                 items:
                   $ref: '#/components/schemas/SymbolCoverageDto'
 
+  /historical/summary:
+    get:
+      tags:
+        - Historical
+      summary: Per-series summary of everything stored — one row per symbol+timeframe with bar count and first/last bar
+      operationId: getHistoricalSummary
+      responses:
+        '200':
+          description: Stored series summaries, sorted by symbol then interval
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SeriesSummaryDto'
+
   /historical/fetch:
     post:
       tags:
@@ -119,6 +135,30 @@ components:
           description: Key is date (yyyy-MM-dd), value is 5-min bar count for that day
           additionalProperties:
             type: integer
+
+    SeriesSummaryDto:
+      type: object
+      required:
+        - symbol
+        - interval
+        - firstBar
+        - lastBar
+        - barCount
+      properties:
+        symbol:
+          type: string
+        interval:
+          type: string
+          description: Timeframe label (5min, 4h, 1d)
+        firstBar:
+          type: string
+          format: date-time
+        lastBar:
+          type: string
+          format: date-time
+        barCount:
+          type: integer
+          format: int64
 
     FetchRequestDto:
       type: object

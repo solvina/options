@@ -25,5 +25,10 @@ object SectorEtf {
             "communication services" to "XLC",
         )
 
-    fun forSector(sector: String?): Symbol? = sector?.trim()?.lowercase()?.let { bySector[it] }?.let { Symbol(it) }
+    fun forSector(sector: String?): Symbol? =
+        sector
+            ?.trim()
+            ?.lowercase()
+            ?.let { bySector[it] }
+            ?.let { Symbol(it) }
 }

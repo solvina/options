@@ -40,4 +40,15 @@ interface BarStorePort {
         to: LocalDate,
         timeframe: Timeframe = Timeframe.FIVE_MIN,
     ): Map<LocalDate, Int>
+
+    /** One row per stored (symbol, timeframe) series: bar count and first/last bar time. */
+    suspend fun seriesSummary(): List<SeriesSummary>
 }
+
+data class SeriesSummary(
+    val symbol: String,
+    val interval: String,
+    val firstBar: Instant,
+    val lastBar: Instant,
+    val barCount: Long,
+)

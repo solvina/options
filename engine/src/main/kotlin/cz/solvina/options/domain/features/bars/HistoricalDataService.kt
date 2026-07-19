@@ -36,6 +36,37 @@ class HistoricalDataService(
     private val jobs = ConcurrentHashMap<String, FetchJob>()
     private val scope = CoroutineScope(Dispatchers.IO)
 
+    // ensureCoverage memo: a param sweep calls ensureCoverage with the identical (symbol, range,
+    // timeframe) thousands of times, and each verification is a full-range coverageByDay query —
+    // the dominant Influx load once bar reads are cached. Remember spans verified covered for a
+    // short TTL; bounded, so no eviction beyond dropping stale entries on overflow.
+    private data class CoveredKey(
+        val symbol: Symbol,
+        val from: LocalDate,
+        val to: LocalDate,
+        val timeframe: Timeframe,
+    )
+
+    private val recentlyCovered = ConcurrentHashMap<CoveredKey, Long>()
+
+    private fun isRecentlyCovered(key: CoveredKey): Boolean {
+        val at = recentlyCovered[key] ?: return false
+        if (System.currentTimeMillis() - at > COVERED_TTL_MS) {
+            recentlyCovered.remove(key)
+            return false
+        }
+        return true
+    }
+
+    private fun markCovered(key: CoveredKey) {
+        if (recentlyCovered.size >= COVERED_MAX_ENTRIES) {
+            val cutoff = System.currentTimeMillis() - COVERED_TTL_MS
+            recentlyCovered.entries.removeIf { it.value < cutoff }
+            if (recentlyCovered.size >= COVERED_MAX_ENTRIES) recentlyCovered.clear()
+        }
+        recentlyCovered[key] = System.currentTimeMillis()
+    }
+
     suspend fun getCoverage(
         symbols: List<Symbol>,
         from: LocalDate,
@@ -73,12 +104,20 @@ class HistoricalDataService(
         timeframe: Timeframe = Timeframe.FIVE_MIN,
     ): FetchJob =
         launchJob(symbols, from, to, timeframe) { symbol ->
+            val key = CoveredKey(symbol, from, to, timeframe)
+            if (isRecentlyCovered(key)) return@launchJob 0
             var written = 0
-            for ((gapFrom, gapTo) in missingRanges(symbol, from, to, timeframe)) {
+            val gaps = missingRanges(symbol, from, to, timeframe)
+            for ((gapFrom, gapTo) in gaps) {
                 logger.info { "[${symbol.value}] ensureCoverage: fetching ${timeframe.label} gap $gapFrom..$gapTo" }
                 written += equityHistoricalBarsPort.fetch5MinBarsForRange(symbol, gapFrom, gapTo, timeframe).size
             }
             if (written == 0) logger.info { "[${symbol.value}] ensureCoverage: ${timeframe.label} already covered $from..$to" }
+            // Memoize when there is nothing left to try: no gaps, or the gaps yielded nothing
+            // (backtest profile's noop fetch, delisted tail) — retrying within the TTL would only
+            // re-run the same full-range coverage query. A fetch that DID write is not memoized,
+            // so the next call re-verifies the now-changed coverage.
+            if (gaps.isEmpty() || written == 0) markCovered(key)
             written
         }
 
@@ -96,8 +135,18 @@ class HistoricalDataService(
         val gaps = mutableListOf<Pair<LocalDate, LocalDate>>()
         if (from.isBefore(earliest)) gaps += from to earliest.minusDays(1)
         if (to.isAfter(latest)) gaps += latest.plusDays(1) to to
-        return gaps
+        // A gap of only weekend days can never be filled — asking IBKR for it costs a silent
+        // 45s chunk timeout per symbol on every rerun (covered-universe reruns burned hours on it).
+        return gaps.filterNot { (gapFrom, gapTo) -> onlyWeekend(gapFrom, gapTo) }
     }
+
+    private fun onlyWeekend(
+        from: LocalDate,
+        to: LocalDate,
+    ): Boolean =
+        from.datesUntil(to.plusDays(1)).allMatch {
+            it.dayOfWeek == java.time.DayOfWeek.SATURDAY || it.dayOfWeek == java.time.DayOfWeek.SUNDAY
+        }
 
     private fun launchJob(
         symbols: List<Symbol>,
@@ -107,6 +156,14 @@ class HistoricalDataService(
         perSymbol: suspend (Symbol) -> Int,
     ): FetchJob {
         val id = UUID.randomUUID().toString()
+        // Sweeps create one job per request; drop the oldest finished ones so the map stays bounded.
+        if (jobs.size > MAX_RETAINED_JOBS) {
+            jobs.values
+                .filter { it.status != FetchJobStatus.RUNNING }
+                .sortedBy { it.startedAt }
+                .take(jobs.size - MAX_RETAINED_JOBS)
+                .forEach { jobs.remove(it.id) }
+        }
         val job =
             FetchJob(
                 id = id,
@@ -146,4 +203,10 @@ class HistoricalDataService(
     fun getJob(id: String): FetchJob? = jobs[id]
 
     fun listJobs(): List<FetchJob> = jobs.values.sortedByDescending { it.startedAt }
+
+    companion object {
+        private const val COVERED_TTL_MS = 10 * 60 * 1000L
+        private const val COVERED_MAX_ENTRIES = 5_000
+        private const val MAX_RETAINED_JOBS = 2_000
+    }
 }

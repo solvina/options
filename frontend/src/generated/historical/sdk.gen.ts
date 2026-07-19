@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { GetFetchJobData, GetFetchJobErrors, GetFetchJobResponses, GetHistoricalCoverageData, GetHistoricalCoverageResponses, ListFetchJobsData, ListFetchJobsResponses, StartHistoricalFetchData, StartHistoricalFetchResponses } from './types.gen';
+import type { GetFetchJobData, GetFetchJobErrors, GetFetchJobResponses, GetHistoricalCoverageData, GetHistoricalCoverageResponses, GetHistoricalSummaryData, GetHistoricalSummaryResponses, ListFetchJobsData, ListFetchJobsResponses, StartHistoricalFetchData, StartHistoricalFetchResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean> = Options2<TData, ThrowOnError> & {
     /**
@@ -22,6 +22,11 @@ export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends 
  * Get 5-min bar coverage per symbol per day
  */
 export const getHistoricalCoverage = <ThrowOnError extends boolean = false>(options: Options<GetHistoricalCoverageData, ThrowOnError>) => (options.client ?? client).get<GetHistoricalCoverageResponses, unknown, ThrowOnError>({ url: '/historical/coverage', ...options });
+
+/**
+ * Per-series summary of everything stored — one row per symbol+timeframe with bar count and first/last bar
+ */
+export const getHistoricalSummary = <ThrowOnError extends boolean = false>(options?: Options<GetHistoricalSummaryData, ThrowOnError>) => (options?.client ?? client).get<GetHistoricalSummaryResponses, unknown, ThrowOnError>({ url: '/historical/summary', ...options });
 
 /**
  * Start a historical data fetch job

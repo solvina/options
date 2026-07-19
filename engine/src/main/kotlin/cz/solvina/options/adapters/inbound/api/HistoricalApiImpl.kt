@@ -1,5 +1,6 @@
 package cz.solvina.options.adapters.inbound.api
 
+import cz.solvina.options.domain.features.bars.BarStorePort
 import cz.solvina.options.domain.features.bars.FetchJob
 import cz.solvina.options.domain.features.bars.FetchJobStatus
 import cz.solvina.options.domain.features.bars.HistoricalDataService
@@ -9,6 +10,7 @@ import cz.solvina.options.domain.models.Symbol
 import `cz.solvina.options.historical`.api.HistoricalApi
 import `cz.solvina.options.historical`.dto.FetchJobDto
 import `cz.solvina.options.historical`.dto.FetchRequestDto
+import `cz.solvina.options.historical`.dto.SeriesSummaryDto
 import `cz.solvina.options.historical`.dto.SymbolCoverageDto
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -25,7 +27,26 @@ import java.time.ZoneOffset
 class HistoricalApiImpl(
     private val historicalDataService: HistoricalDataService,
     private val universePort: UniversePort,
+    private val barStorePort: BarStorePort,
 ) : HistoricalApi {
+    override fun getHistoricalSummary(): ResponseEntity<Flow<SeriesSummaryDto>> {
+        val items: Flow<SeriesSummaryDto> =
+            flow {
+                barStorePort.seriesSummary().forEach {
+                    emit(
+                        SeriesSummaryDto(
+                            symbol = it.symbol,
+                            interval = it.interval,
+                            firstBar = OffsetDateTime.ofInstant(it.firstBar, ZoneOffset.UTC),
+                            lastBar = OffsetDateTime.ofInstant(it.lastBar, ZoneOffset.UTC),
+                            barCount = it.barCount,
+                        ),
+                    )
+                }
+            }
+        return ResponseEntity.ok(items)
+    }
+
     override fun getHistoricalCoverage(
         from: LocalDate,
         to: LocalDate,

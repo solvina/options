@@ -26,11 +26,12 @@ private val logger = KotlinLogging.logger {}
  * Stock rule-strategy backtest. Silently ensures the required bars are downloaded/cached at the
  * chosen timeframe (data-on-demand), then runs [RuleBacktestStrategy] through the shared
  * [BacktestEngine]. First run over a cold span downloads; later runs serve from the store.
+ *
+ * NOTE on the path: the app runs under WebFlux base-path /options, and BOTH proxies (nginx and the
+ * Vite dev server) rewrite the browser's /api/X to /options/X. Controllers must therefore map the
+ * path WITHOUT the /api prefix — "/api/backtest" here produced /options/api/backtest, which no
+ * proxy ever reached (every backtest endpoint 404'd from the UI).
  */
-// NOTE on the path: the app runs under WebFlux base-path /options, and BOTH proxies (nginx and the
-// Vite dev server) rewrite the browser's /api/X to /options/X. Controllers must therefore map the
-// path WITHOUT the /api prefix — "/api/backtest" here produced /options/api/backtest, which no
-// proxy ever reached (every backtest endpoint 404'd from the UI).
 @RestController
 @RequestMapping("/backtest")
 class StockBacktestApiController(
@@ -114,10 +115,13 @@ class StockBacktestApiController(
         // Data-on-demand: fetch only the missing head/tail, then wait for it (bounded). The UI will
         // later make this async with progress; for the API a bounded wait is fine (2nd run is instant).
         val job = historicalData.ensureCoverage(symbols + benchmarkSymbols, ensureFrom, req.to, timeframe)
-        var waited = 0
-        while (historicalData.getJob(job.id)?.status == FetchJobStatus.RUNNING && waited < MAX_WAIT_SECONDS) {
-            delay(2000)
-            waited += 2
+        // Adaptive poll: already-covered ranges (every sweep request after the first) finish in
+        // milliseconds — a fixed 2s tick made that the dominant per-request cost.
+        var waitedMs = 0L
+        while (historicalData.getJob(job.id)?.status == FetchJobStatus.RUNNING && waitedMs < MAX_WAIT_SECONDS * 1000L) {
+            val step = if (waitedMs < 2_000L) 100L else 2_000L
+            delay(step)
+            waitedMs += step
         }
         val finished = historicalData.getJob(job.id)
         if (finished?.status == FetchJobStatus.RUNNING) {

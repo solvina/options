@@ -52,7 +52,7 @@ import time
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -180,8 +180,8 @@ def main() -> None:
                 done += 1
                 if done % 25 == 0 or done == len(todo):
                     elapsed = time.time() - start
-                    eta = elapsed / done * (len(todo) - done)
-                    print(f"  {done}/{len(todo)} ({failed} failed) elapsed {elapsed:.0f}s eta {eta:.0f}s", flush=True)
+                    eta = timedelta(seconds=int(elapsed / done * (len(todo) - done)))
+                    print(f"  {done}/{len(todo)} ({failed} failed) elapsed {timedelta(seconds=int(elapsed))} eta {eta}", flush=True)
                     results_f.flush()
                     failures_f.flush()
 

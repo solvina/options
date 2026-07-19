@@ -116,7 +116,11 @@ class BacktestEngine(
                 bars.groupBy { it.time.atZone(nyZone).toLocalDate() }.mapValues { (_, dayBars) -> dayBars.last().close }.toSortedMap()
             }
         val entryOpen = withData.mapValues { (_, bars) -> bars.first().open }
-        val allDates = closesBySymbol.values.flatMap { it.keys }.distinct().sorted()
+        val allDates =
+            closesBySymbol.values
+                .flatMap { it.keys }
+                .distinct()
+                .sorted()
         val lastClose = mutableMapOf<Symbol, Double>()
         val curve =
             allDates.map { date ->
@@ -415,7 +419,9 @@ class BacktestEngine(
                 val bars = barStore.readBars(bench, fromInstant, toInstant, request.timeframe)
                 val entry = bars.firstOrNull()?.open ?: 0.0
                 if (entry <= 0.0) {
-                    logger.info { "[${bench.value}] benchmark skipped — no ${request.timeframe.label} bars stored in ${request.from}..${request.to}" }
+                    logger.info {
+                        "[${bench.value}] benchmark skipped — no ${request.timeframe.label} bars stored in ${request.from}..${request.to}"
+                    }
                     return@mapNotNull null
                 }
                 val ratio = bars.last().close / entry
@@ -429,38 +435,38 @@ class BacktestEngine(
             }
 
         val summary =
-                Summary(
-                    symbols = request.symbols.map { it.value },
-                    from = request.from,
-                    to = request.to,
-                    initialCapital = request.initialCapital,
-                    finalCapital = capital,
-                    totalPnl = totalPnl,
-                    totalPnlPct = totalPnlPct,
-                    tradeCount = winCount + lossCount + eodCount,
-                    winCount = winCount,
-                    lossCount = lossCount,
-                    eodCount = eodCount,
-                    winRate = winRate,
-                    avgRMultiple = rList.avg(),
-                    avgWinR = winRList.avg(),
-                    avgLossR = lossRList.avg(),
-                    profitFactor =
-                        if (totalLossPnl > BigDecimal.ZERO) {
-                            totalWinPnl.divide(totalLossPnl, 2, RoundingMode.HALF_UP)
-                        } else if (totalWinPnl > BigDecimal.ZERO) {
-                            BigDecimal("999.99")
-                        } else {
-                            null
-                        },
-                    maxDrawdownPct = maxDrawdown.multiply(BigDecimal("100")).setScale(2, RoundingMode.HALF_UP),
-                    annualizedReturnPct = annualizedReturnPct,
-                    buyHoldFinalCapital = buyHoldFinal,
-                    buyHoldPnl = buyHoldPnl,
-                    buyHoldPnlPct = buyHoldPnlPct,
-                    buyHoldAnnualizedPct = buyHoldAnnualizedPct,
-                    benchmarks = benchmarks,
-                )
+            Summary(
+                symbols = request.symbols.map { it.value },
+                from = request.from,
+                to = request.to,
+                initialCapital = request.initialCapital,
+                finalCapital = capital,
+                totalPnl = totalPnl,
+                totalPnlPct = totalPnlPct,
+                tradeCount = winCount + lossCount + eodCount,
+                winCount = winCount,
+                lossCount = lossCount,
+                eodCount = eodCount,
+                winRate = winRate,
+                avgRMultiple = rList.avg(),
+                avgWinR = winRList.avg(),
+                avgLossR = lossRList.avg(),
+                profitFactor =
+                    if (totalLossPnl > BigDecimal.ZERO) {
+                        totalWinPnl.divide(totalLossPnl, 2, RoundingMode.HALF_UP)
+                    } else if (totalWinPnl > BigDecimal.ZERO) {
+                        BigDecimal("999.99")
+                    } else {
+                        null
+                    },
+                maxDrawdownPct = maxDrawdown.multiply(BigDecimal("100")).setScale(2, RoundingMode.HALF_UP),
+                annualizedReturnPct = annualizedReturnPct,
+                buyHoldFinalCapital = buyHoldFinal,
+                buyHoldPnl = buyHoldPnl,
+                buyHoldPnlPct = buyHoldPnlPct,
+                buyHoldAnnualizedPct = buyHoldAnnualizedPct,
+                benchmarks = benchmarks,
+            )
         // One searchable line per run, for every strategy driving this engine — backtest results
         // otherwise live only in the HTTP response and are lost when the browser tab closes.
         logger.info { "Backtest summary: $summary" }
