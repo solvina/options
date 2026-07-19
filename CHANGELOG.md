@@ -30,6 +30,23 @@ backtest form.
   mis-click can't starve the trading engine.
 - Startup scans the sweep output dir, so pre-existing runs (including python ones) appear in
   the job list as STOPPED with openable results.
+- Viewer follow-ups (app page + standalone sweep-viewer.html): header shows **what you're
+  looking at** (run name · symbols · timeframe · window · rows); the app page adds a
+  **data-coverage warning** when local bars don't span the sweep window (a 4h sweep before the
+  4h universe download produced "strange" results — MSFT 4h only covers 2021-09→2024-12);
+  **global top-10** across all slider positions with click-to-jump (snaps sliders to the
+  combo's slice); buy & hold tile shows **absolute dollars** (initial capital derived from
+  finalCapital − totalPnl).
+
+### RPi stability (three spontaneous reboots on 2026-07-19)
+- Not thermal: 67°C under full download load, `throttled=0x0` (never throttled since boot).
+  The signature — hard freeze, zero log evidence, watchdog reboot — matches **memory
+  exhaustion**: 4 GB RAM with two JVMs + InfluxDB + full observability stack left ~30 MB free
+  and 1.3 GB deep in SD-card swap.
+- Mitigations: persistent journald enabled (next crash leaves `journalctl -b -1` evidence);
+  portainer/alloy/loki stopped for the download period (`docker start` re-enables);
+  downloader now supports `PAUSE_SECONDS` between symbols (running with 20s + nice 10) so
+  Influx compactions drain instead of piling up.
 
 ## 2026-07-19 — Sweep hot path + Historical Data page rework
 
