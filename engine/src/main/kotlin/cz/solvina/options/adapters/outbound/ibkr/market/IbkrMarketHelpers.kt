@@ -7,6 +7,7 @@ import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.MarketDataSnapshot
 import cz.solvina.options.adapters.outbound.ibkr.registry.PendingMarketDataRequest
 import cz.solvina.options.domain.features.market.MarketDataPriority
+import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
@@ -39,6 +40,13 @@ internal class MarketDataLineTimeoutException(
     message: String,
 ) : RuntimeException(message)
 
+private val logger = KotlinLogging.logger {}
+
+// Reserved-class (EXIT/EXEC/FLAG) line-acquire ceiling. Under healthy load the pool grants a line
+// instantly, so this only bites when the pool is drained — turning what used to be an unbounded
+// wait (a permanent exit-monitor wedge, restart-only) into a skipped cycle. 2026-07-21.
+private const val RESERVED_LINE_ACQUIRE_TIMEOUT_MS = 10_000L
+
 internal suspend fun reqMktDataSnapshot(
     registry: IbkrMarketDataRegistry,
     client: EClientSocket,
@@ -63,8 +71,20 @@ internal suspend fun reqMktDataSnapshot(
                     "scanner is being throttled by open-position load (see health component ibkrAdmission)",
             )
         }
-    } else {
-        admission.acquireMarketDataLine(priority)
+    } else if (!admission.tryAcquireMarketDataLine(priority, RESERVED_LINE_ACQUIRE_TIMEOUT_MS)) {
+        // Reserved classes used to acquire with NO timeout (acquireMarketDataLine → timeoutMs=null →
+        // waits forever). When the line pool drained (leaked under usopt farm flapping, 2026-07-21),
+        // getOptionMidLive on the exit monitor blocked forever; since the monitor fans out all open
+        // spreads in one coroutineScope, one stuck acquire hung the whole run and every 60s cycle
+        // logged "previous run still in progress" until an engine restart. Bound the wait and return
+        // an empty snapshot: every reserved caller already treats no-data as "skip this cycle"
+        // (getOptionMidLive→null, getOptionMid→0, getUnderlyingPrice→historical fallback), so a
+        // drained pool now degrades to a skipped cycle instead of wedging the monitor.
+        logger.warn {
+            "no $priority market-data line freed within ${RESERVED_LINE_ACQUIRE_TIMEOUT_MS}ms for " +
+                "${contract.symbol()} — line pool drained, skipping cycle (see health component ibkrAdmission)"
+        }
+        return MarketDataSnapshot()
     }
     try {
         val reqId = registry.nextReqId()
