@@ -93,48 +93,61 @@ class IbkrEquityHistoricalBarsAdapter(
         endDateTime: String,
         durationStr: String,
         barSize: String,
-    ): List<FiveMinuteBar> =
-        withTimeoutOrNull(CHUNK_TIMEOUT_MS) {
-            callbackFlow {
-                val reqId = registry.nextReqId()
-                val contract = contractFactory.stockContract(symbol)
-                // Rate-limited: suspends to respect IBKR's historical pacing before firing.
-                admission.acquireHistorical()
-                registry.pendingRawBars[reqId] =
-                    PendingRawBarsRequest(
-                        onBar = { bar -> parseBar(bar)?.let { trySend(it) } },
-                        onEnd = { close() },
-                        onError = { e -> close(e) },
+    ): List<FiveMinuteBar> {
+        val reqId = registry.nextReqId()
+        val contract = contractFactory.stockContract(symbol)
+        // Acquire OUTSIDE the flow, release in a finally that the timeout cannot skip. Both used to
+        // live inside callbackFlow (acquire in the body, release in awaitClose), which leaked a
+        // permit whenever CHUNK_TIMEOUT_MS fired in the window between the acquire and awaitClose
+        // being registered — reqHistoricalData sits in that window and blocks in paceMessage(), so
+        // the race was routinely lost. historicalMaxInFlight leaks exhausted the semaphore for good:
+        // every later request then parked in acquire, timed out at exactly 45s without a single
+        // reqHistoricalData reaching the socket, and wrote 0 bars until the engine restarted.
+        // Keeping the acquire outside the timeout also stops a long pacing wait from eating the
+        // chunk's own budget.
+        admission.acquireHistorical()
+        try {
+            return withTimeoutOrNull(CHUNK_TIMEOUT_MS) {
+                callbackFlow {
+                    registry.pendingRawBars[reqId] =
+                        PendingRawBarsRequest(
+                            onBar = { bar -> parseBar(bar)?.let { trySend(it) } },
+                            onEnd = { close() },
+                            onError = { e -> close(e) },
+                        )
+                    logger.debug { "[${symbol.value}] reqHistoricalData reqId=$reqId endDateTime='$endDateTime' duration='$durationStr'" }
+                    client.reqHistoricalData(
+                        reqId,
+                        contract,
+                        endDateTime,
+                        durationStr,
+                        // barSizeSetting
+                        barSize,
+                        // whatToShow
+                        "TRADES",
+                        // useRTH
+                        1,
+                        // formatDate
+                        2,
+                        // keepUpToDate
+                        false,
+                        // chartOptions
+                        null,
                     )
-                logger.debug { "[${symbol.value}] reqHistoricalData reqId=$reqId endDateTime='$endDateTime' duration='$durationStr'" }
-                client.reqHistoricalData(
-                    reqId,
-                    contract,
-                    endDateTime,
-                    durationStr,
-                    // barSizeSetting
-                    barSize,
-                    // whatToShow
-                    "TRADES",
-                    // useRTH
-                    1,
-                    // formatDate
-                    2,
-                    // keepUpToDate
-                    false,
-                    // chartOptions
-                    null,
-                )
-                awaitClose {
-                    registry.pendingRawBars.remove(reqId)
-                    admission.releaseHistorical()
-                }
-            }.buffer(Channel.UNLIMITED)
-                .toList()
-        } ?: run {
-            logger.warn { "[${symbol.value}] Historical chunk timed out after ${CHUNK_TIMEOUT_MS}ms (endDt=$endDateTime) — skipping" }
-            emptyList()
+                    awaitClose { registry.pendingRawBars.remove(reqId) }
+                }.buffer(Channel.UNLIMITED)
+                    .toList()
+            } ?: run {
+                logger.warn { "[${symbol.value}] Historical chunk timed out after ${CHUNK_TIMEOUT_MS}ms (endDt=$endDateTime) — skipping" }
+                emptyList()
+            }
+        } finally {
+            // Same race applies to the registry entry: awaitClose is skipped if the flow is
+            // cancelled before it registers, so drop it here too (remove is idempotent).
+            registry.pendingRawBars.remove(reqId)
+            admission.releaseHistorical()
         }
+    }
 
     private fun parseBar(bar: Bar): FiveMinuteBar? =
         runCatching {
