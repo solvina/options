@@ -139,7 +139,6 @@ class SpreadManagementServiceTest {
         ),
     )
 
-    /** Wires a [SpreadManagementService] with the given ports; other deps default to benign stubs. */
     // Every MarketDataPort mock gets the position-stream methods stubbed to the snapshot-fallback
     // path (null) + no-op reconcile, so the per-contract getOptionMidLive stubs still drive the test.
     private fun mockMarketData(): MarketDataPort =
@@ -148,6 +147,7 @@ class SpreadManagementServiceTest {
             coEvery { it.reconcilePositionQuoteStreams(any()) } returns Unit
         }
 
+    /** Wires a [SpreadManagementService] with the given ports; other deps default to benign stubs. */
     private fun buildService(
         spreadPort: BullPutSpreadPort,
         marketDataPort: MarketDataPort,
