@@ -315,6 +315,15 @@ class SpreadManagementService(
             logger.debug { "Skipped $skipped spread(s): exchange not in regular trading hours" }
         }
 
+        // Hold a persistent quote stream per tradable leg instead of snapshotting each cycle: opens
+        // streams for newly-tracked positions and cancels them for closed ones (2026-07-21). Best
+        // effort — checkSpreadExit falls back to a one-off snapshot when a stream isn't ready.
+        runCatching {
+            marketDataPort.reconcilePositionQuoteStreams(
+                (tradableOpen + tradableClosing).flatMap { listOf(it.soldLeg.contract, it.boughtLeg.contract) },
+            )
+        }.onFailure { e -> logger.warn { "position quote stream reconcile failed: ${e.message}" } }
+
         // Spreads are evaluated CONCURRENTLY: a TP/time exit now chases a limit order that can block
         // for minutes, and running spreads sequentially would let one slow chase delay a stop-loss
         // check on every other symbol. Each spread is independent (per-symbol exposure rules forbid
@@ -348,8 +357,14 @@ class SpreadManagementService(
     private suspend fun retryClose(spread: Spread) {
         // A stuck CLOSING spread must still be closed (it's already mid-exit), so we don't skip
         // when quotes are missing — we just don't re-evaluate TP/SL from synthetic prices (H3).
-        val soldMidLive = marketDataPort.getOptionMidLive(spread.soldLeg.contract)
-        val boughtMidLive = marketDataPort.getOptionMidLive(spread.boughtLeg.contract)
+        // Prefer the held per-leg stream (no farm churn); fall back to a one-off snapshot when the
+        // stream is missing or stale so exit evaluation is never worse than before (2026-07-21).
+        val soldMidLive =
+            marketDataPort.streamedOptionMid(spread.soldLeg.contract)
+                ?: marketDataPort.getOptionMidLive(spread.soldLeg.contract)
+        val boughtMidLive =
+            marketDataPort.streamedOptionMid(spread.boughtLeg.contract)
+                ?: marketDataPort.getOptionMidLive(spread.boughtLeg.contract)
         val currentSpreadValue =
             if (soldMidLive != null && boughtMidLive != null) {
                 soldMidLive.amount.subtract(boughtMidLive.amount)
@@ -408,8 +423,14 @@ class SpreadManagementService(
         // Fetch current mid-prices for both legs from LIVE quotes only (H3). Price-based exits
         // (take-profit / stop-loss) must not fire on synthetic Black-Scholes or previous-day data;
         // null means no live quote, so we evaluate only the price-independent time exit this cycle.
-        val soldMidLive = marketDataPort.getOptionMidLive(spread.soldLeg.contract)
-        val boughtMidLive = marketDataPort.getOptionMidLive(spread.boughtLeg.contract)
+        // Prefer the held per-leg stream (no farm churn); fall back to a one-off snapshot when the
+        // stream is missing or stale so exit evaluation is never worse than before (2026-07-21).
+        val soldMidLive =
+            marketDataPort.streamedOptionMid(spread.soldLeg.contract)
+                ?: marketDataPort.getOptionMidLive(spread.soldLeg.contract)
+        val boughtMidLive =
+            marketDataPort.streamedOptionMid(spread.boughtLeg.contract)
+                ?: marketDataPort.getOptionMidLive(spread.boughtLeg.contract)
         val currentSpreadValue =
             if (soldMidLive != null && boughtMidLive != null) {
                 soldMidLive.amount.subtract(boughtMidLive.amount)

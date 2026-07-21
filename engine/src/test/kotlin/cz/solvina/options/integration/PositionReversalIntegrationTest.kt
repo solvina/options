@@ -86,7 +86,13 @@ class PositionReversalIntegrationTest {
 
     private val spreadPort = mockk<BullPutSpreadPort>()
     private val openOrdersAdapter = mockk<IbkrOpenOrdersAdapter>()
-    private val marketDataPort = mockk<MarketDataPort>()
+    private val marketDataPort =
+        mockk<MarketDataPort>().also {
+            // Position-stream methods (2026-07-21): snapshot-fallback (null) + no-op reconcile so the
+            // per-contract getOptionMidLive stubs still drive checkExits.
+            every { it.streamedOptionMid(any()) } returns null
+            coEvery { it.reconcilePositionQuoteStreams(any()) } returns Unit
+        }
     private val orderPort = mockk<OrderPort>()
     private val universePort = mockk<UniversePort>(relaxed = true)
     private val mockClient = mockk<com.ib.client.EClientSocket>(relaxed = true)

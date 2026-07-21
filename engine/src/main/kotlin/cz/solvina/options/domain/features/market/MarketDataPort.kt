@@ -20,4 +20,18 @@ interface MarketDataPort {
      * this to suppress its Black-Scholes fallback.
      */
     suspend fun getOptionMidLive(contract: OptionContract): Money? = getOptionMid(contract).takeIf { it.amount > BigDecimal.ZERO }
+
+    /**
+     * Persistent per-leg quote streams for open positions — replaces the exit monitor's per-cycle
+     * snapshot churn on the options data farm with held streams (the stock farm's stable pattern).
+     * [reconcilePositionQuoteStreams] opens a lightweight streaming subscription (1 line per leg,
+     * bid/ask only) for each contract not yet streamed and cancels streams no longer wanted;
+     * [streamedOptionMid] returns the latest cached mid when a fresh (non-stale) tick exists, else
+     * null so the caller falls back to [getOptionMidLive]. Sized to the EXIT reserve
+     * (maxOpenSpreads × 2 legs). Default no-op/null leaves test/backtest adapters unchanged; the
+     * IBKR adapter overrides.
+     */
+    suspend fun reconcilePositionQuoteStreams(contracts: List<OptionContract>) {}
+
+    fun streamedOptionMid(contract: OptionContract): Money? = null
 }

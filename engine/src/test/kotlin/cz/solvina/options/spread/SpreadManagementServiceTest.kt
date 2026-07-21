@@ -140,6 +140,14 @@ class SpreadManagementServiceTest {
     )
 
     /** Wires a [SpreadManagementService] with the given ports; other deps default to benign stubs. */
+    // Every MarketDataPort mock gets the position-stream methods stubbed to the snapshot-fallback
+    // path (null) + no-op reconcile, so the per-contract getOptionMidLive stubs still drive the test.
+    private fun mockMarketData(): MarketDataPort =
+        mockk<MarketDataPort>().also {
+            every { it.streamedOptionMid(any()) } returns null
+            coEvery { it.reconcilePositionQuoteStreams(any()) } returns Unit
+        }
+
     private fun buildService(
         spreadPort: BullPutSpreadPort,
         marketDataPort: MarketDataPort,
@@ -148,23 +156,29 @@ class SpreadManagementServiceTest {
         clock: Clock = clockAtEntry,
         positionsPort: cz.solvina.options.domain.features.account.PositionsPort? = null,
         config: ScannerConfig = this.config,
-    ) = SpreadManagementService(
-        closers = buildClosers(spreadPort),
-        marketDataPort = marketDataPort,
-        orderPort = orderPort,
-        universePort = universePort,
-        volatilityPort =
-            object : VolatilityPort {
-                override suspend fun getIvRank(symbol: Symbol) = IvRank(35.0, 0.25, Instant.now())
-            },
-        executionPort = executionPort,
-        config = config,
-        clock = clock,
-        quoteHealthService = mockk(relaxed = true),
-        strategyRegistry = strategyRegistry,
-        strategyParams = strategyParams,
-        positionsPort = positionsPort,
-    )
+    ): SpreadManagementService {
+        // New MarketDataPort stream methods (2026-07-21): default to snapshot-fallback (null) and a
+        // no-op reconcile so the existing per-contract getOptionMidLive stubs drive every test.
+        every { marketDataPort.streamedOptionMid(any()) } returns null
+        coEvery { marketDataPort.reconcilePositionQuoteStreams(any()) } returns Unit
+        return SpreadManagementService(
+            closers = buildClosers(spreadPort),
+            marketDataPort = marketDataPort,
+            orderPort = orderPort,
+            universePort = universePort,
+            volatilityPort =
+                object : VolatilityPort {
+                    override suspend fun getIvRank(symbol: Symbol) = IvRank(35.0, 0.25, Instant.now())
+                },
+            executionPort = executionPort,
+            config = config,
+            clock = clock,
+            quoteHealthService = mockk(relaxed = true),
+            strategyRegistry = strategyRegistry,
+            strategyParams = strategyParams,
+            positionsPort = positionsPort,
+        )
+    }
 
     // -------------------------------------------------------------------------
     // Take-profit exit
@@ -177,7 +191,7 @@ class SpreadManagementServiceTest {
             // spread value = soldMid($0.30) − boughtMid($0.05) = $0.25  →  below threshold
             // TP has live quotes, so it closes via the limit-chase path (placeAndAwaitFill), not market.
             val spreadPort = mockk<BullPutSpreadPort>()
-            val marketDataPort = mockk<MarketDataPort>()
+            val marketDataPort = mockMarketData()
             val orderPort = mockk<OrderPort>()
 
             coEvery { spreadPort.findOpen() } returns listOf(buildOpenSpread())
@@ -209,7 +223,7 @@ class SpreadManagementServiceTest {
             val boughtMid = BigDecimal("0.05")
 
             val spreadPort = mockk<BullPutSpreadPort>()
-            val marketDataPort = mockk<MarketDataPort>()
+            val marketDataPort = mockMarketData()
             val orderPort = mockk<OrderPort>()
 
             coEvery { spreadPort.findById(spread.id!!) } returns spread
@@ -256,7 +270,7 @@ class SpreadManagementServiceTest {
             // re-establish short risk).
             val spread = buildOpenSpread()
             val spreadPort = mockk<BullPutSpreadPort>()
-            val marketDataPort = mockk<MarketDataPort>()
+            val marketDataPort = mockMarketData()
             val orderPort = mockk<OrderPort>()
 
             coEvery { spreadPort.findById(spread.id!!) } returns spread
@@ -300,7 +314,7 @@ class SpreadManagementServiceTest {
         runTest {
             val spread = buildOpenSpread()
             val spreadPort = mockk<BullPutSpreadPort>()
-            val marketDataPort = mockk<MarketDataPort>()
+            val marketDataPort = mockMarketData()
             val orderPort = mockk<OrderPort>()
 
             coEvery { spreadPort.findById(spread.id!!) } returns spread
@@ -346,7 +360,7 @@ class SpreadManagementServiceTest {
             // credit=$1.00 → SL threshold = $1.00 × 1.50 = $1.50
             // spread value = $1.70 − $0.10 = $1.60  →  exceeds threshold
             val spreadPort = mockk<BullPutSpreadPort>()
-            val marketDataPort = mockk<MarketDataPort>()
+            val marketDataPort = mockMarketData()
             val orderPort = mockk<OrderPort>()
 
             coEvery { spreadPort.findOpen() } returns listOf(buildOpenSpread())
@@ -387,7 +401,7 @@ class SpreadManagementServiceTest {
             //
             // credit=$1.00, SL threshold=$1.50; spread value=$1.60 → SL fires.
             val spreadPort = mockk<BullPutSpreadPort>()
-            val marketDataPort = mockk<MarketDataPort>()
+            val marketDataPort = mockMarketData()
             val orderPort = mockk<OrderPort>()
             val executionPort = RecordingExecutionPort()
 
@@ -415,7 +429,7 @@ class SpreadManagementServiceTest {
             // Old behaviour: SL threshold = credit × 1.5 = $1.50 → value $1.60 stops out.
             // New behaviour: SL threshold = entryMid × 1.5 = $3.00 → value $1.60 must HOLD.
             val spreadPort = mockk<BullPutSpreadPort>()
-            val marketDataPort = mockk<MarketDataPort>()
+            val marketDataPort = mockMarketData()
             val orderPort = mockk<OrderPort>(relaxed = true)
 
             val spread = buildOpenSpread().copy(entryMidPerShare = BigDecimal("2.00"))
@@ -445,7 +459,7 @@ class SpreadManagementServiceTest {
             coEvery { universePort.get(any()) } returns InstrumentConfig(symbol = symbol, stopLossPercent = 0.0)
 
             val spreadPort = mockk<BullPutSpreadPort>()
-            val marketDataPort = mockk<MarketDataPort>()
+            val marketDataPort = mockMarketData()
             val orderPort = mockk<OrderPort>(relaxed = true)
 
             coEvery { spreadPort.findOpen() } returns listOf(buildOpenSpread())
@@ -478,7 +492,7 @@ class SpreadManagementServiceTest {
                     stopLossSkipFirstRthMinutes = 0,
                 )
             val spreadPort = mockk<BullPutSpreadPort>()
-            val marketDataPort = mockk<MarketDataPort>()
+            val marketDataPort = mockMarketData()
             val orderPort = mockk<OrderPort>()
 
             coEvery { spreadPort.findOpen() } returns listOf(buildOpenSpread())
@@ -514,7 +528,7 @@ class SpreadManagementServiceTest {
                     stopLossSkipFirstRthMinutes = 0,
                 )
             val spreadPort = mockk<BullPutSpreadPort>()
-            val marketDataPort = mockk<MarketDataPort>()
+            val marketDataPort = mockMarketData()
             val orderPort = mockk<OrderPort>(relaxed = true)
 
             coEvery { spreadPort.findOpen() } returns listOf(buildOpenSpread().copy(openedAt = clockAtEntry.instant()))
@@ -539,7 +553,7 @@ class SpreadManagementServiceTest {
             // spread value = $0.25 < TP threshold $0.50 → take profit, no block.
             // TP has live quotes, so it closes via the limit-chase path (placeAndAwaitFill), not market.
             val spreadPort = mockk<BullPutSpreadPort>()
-            val marketDataPort = mockk<MarketDataPort>()
+            val marketDataPort = mockMarketData()
             val orderPort = mockk<OrderPort>()
             val executionPort = RecordingExecutionPort()
 
@@ -578,7 +592,7 @@ class SpreadManagementServiceTest {
             val clock = Clock.fixed(nearExpiry.atStartOfDay(java.time.ZoneOffset.UTC).toInstant(), java.time.ZoneOffset.UTC)
 
             val spreadPort = mockk<BullPutSpreadPort>()
-            val marketDataPort = mockk<MarketDataPort>()
+            val marketDataPort = mockMarketData()
             val orderPort = mockk<OrderPort>()
 
             coEvery { spreadPort.findOpen() } returns listOf(buildOpenSpread())
@@ -609,7 +623,7 @@ class SpreadManagementServiceTest {
             val clock = Clock.fixed(nearExpiry.atStartOfDay(java.time.ZoneOffset.UTC).toInstant(), java.time.ZoneOffset.UTC)
 
             val spreadPort = mockk<BullPutSpreadPort>()
-            val marketDataPort = mockk<MarketDataPort>()
+            val marketDataPort = mockMarketData()
             val orderPort = mockk<OrderPort>()
 
             coEvery { spreadPort.findOpen() } returns listOf(buildOpenSpread())
@@ -638,7 +652,7 @@ class SpreadManagementServiceTest {
         runTest {
             // TP=$0.50, SL=$1.50; spread value = $0.60 → hold zone, no orders placed.
             val spreadPort = mockk<BullPutSpreadPort>()
-            val marketDataPort = mockk<MarketDataPort>()
+            val marketDataPort = mockMarketData()
             val orderPort = mockk<OrderPort>()
 
             coEvery { spreadPort.findOpen() } returns listOf(buildOpenSpread())
@@ -678,7 +692,7 @@ class SpreadManagementServiceTest {
             // but the owning strategy returns an exit — the spread must close on the strategy's signal.
             // This is the path bear-call dividend protection will use; bull put returns null here.
             val spreadPort = mockk<BullPutSpreadPort>()
-            val marketDataPort = mockk<MarketDataPort>()
+            val marketDataPort = mockMarketData()
             val orderPort = mockk<OrderPort>(relaxed = true)
 
             coEvery { spreadPort.findOpen() } returns listOf(buildOpenSpread())
@@ -743,7 +757,7 @@ class SpreadManagementServiceTest {
                 )
             bearPort.save(bearSpread)
 
-            val marketDataPort = mockk<MarketDataPort>()
+            val marketDataPort = mockMarketData()
             // spread value = 0.40 − 0.05 = 0.35 ≤ TP threshold (credit $1.00 × 0.50 = 0.50) → take-profit.
             // TP has live quotes, so it closes via the limit-chase path (placeAndAwaitFill).
             coEvery { marketDataPort.getOptionMidLive(soldCall) } returns Money(BigDecimal("0.40"))
@@ -798,7 +812,7 @@ class SpreadManagementServiceTest {
                 )
 
             val spreadPort = mockk<BullPutSpreadPort>()
-            val marketDataPort = mockk<MarketDataPort>()
+            val marketDataPort = mockMarketData()
             val orderPort = mockk<OrderPort>()
 
             coEvery { spreadPort.findOpen() } returns emptyList()
@@ -837,7 +851,7 @@ class SpreadManagementServiceTest {
                 )
 
             val spreadPort = mockk<BullPutSpreadPort>()
-            val marketDataPort = mockk<MarketDataPort>()
+            val marketDataPort = mockMarketData()
             val orderPort = mockk<OrderPort>()
             val executionPort = RecordingExecutionPort()
 
@@ -875,7 +889,7 @@ class SpreadManagementServiceTest {
                 )
 
             val spreadPort = mockk<BullPutSpreadPort>()
-            val marketDataPort = mockk<MarketDataPort>()
+            val marketDataPort = mockMarketData()
             val orderPort = mockk<OrderPort>()
 
             coEvery { spreadPort.findOpen() } returns emptyList()
@@ -908,7 +922,7 @@ class SpreadManagementServiceTest {
             every { universePort.isMarketOpen(any()) } returns false
 
             val spreadPort = mockk<BullPutSpreadPort>()
-            val marketDataPort = mockk<MarketDataPort>()
+            val marketDataPort = mockMarketData()
             val orderPort = mockk<OrderPort>()
 
             coEvery { spreadPort.findOpen() } returns listOf(buildOpenSpread())
@@ -932,7 +946,7 @@ class SpreadManagementServiceTest {
             // limit order at $0 would never fill. Skip it and close directly.
             val spread = buildOpenSpread()
             val spreadPort = mockk<BullPutSpreadPort>()
-            val marketDataPort = mockk<MarketDataPort>()
+            val marketDataPort = mockMarketData()
             val orderPort = mockk<OrderPort>()
 
             coEvery { spreadPort.findById(spread.id!!) } returns spread
@@ -957,7 +971,7 @@ class SpreadManagementServiceTest {
             // the order was in flight), leave the spread in CLOSING so the monitor retries.
             val spread = buildOpenSpread()
             val spreadPort = mockk<BullPutSpreadPort>()
-            val marketDataPort = mockk<MarketDataPort>()
+            val marketDataPort = mockMarketData()
             val orderPort = mockk<OrderPort>()
 
             val updates = mutableListOf<BullPutSpread>()
@@ -991,7 +1005,7 @@ class SpreadManagementServiceTest {
             // open an unintended opposite position) — it should only buy back the still-open short.
             val spread = buildOpenSpread()
             val spreadPort = mockk<BullPutSpreadPort>()
-            val marketDataPort = mockk<MarketDataPort>()
+            val marketDataPort = mockMarketData()
             val orderPort = mockk<OrderPort>()
 
             coEvery { spreadPort.findById(spread.id!!) } returns spread
@@ -1043,7 +1057,7 @@ class SpreadManagementServiceTest {
             // skip the buy-back entirely, leaving a real position untouched.
             val spread = buildOpenSpread()
             val spreadPort = mockk<BullPutSpreadPort>()
-            val marketDataPort = mockk<MarketDataPort>()
+            val marketDataPort = mockMarketData()
             val orderPort = mockk<OrderPort>()
 
             coEvery { spreadPort.findById(spread.id!!) } returns spread
