@@ -4,6 +4,7 @@ import cz.solvina.options.domain.features.alert.AlertLevel
 import cz.solvina.options.domain.features.alert.AlertPort
 import cz.solvina.options.domain.features.market.MarketDataPriority
 import io.github.oshai.kotlinlogging.KotlinLogging
+import io.micrometer.core.instrument.MockClock.clock
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -76,10 +77,45 @@ class IbkrAdmissionController(
     // Shared executionCoroutineScope bean: alerts must not block (or die with) the starved caller.
     private val alertScope: CoroutineScope,
 ) {
-    private companion object {
+    companion object {
         const val WINDOW_MS = 600_000L // 10 minutes
         const val PACED_WARN_INTERVAL_MS = 60_000L
         const val HIST_EXHAUST_WARN_INTERVAL_MS = 30_000L
+
+        // --- Broker-side limit errors (100 = msg rate, 101 = line cap, 162/420 = historical pacing).
+        // Must stay zero: the admission controller exists to make these impossible.
+        private val brokerLimitHits = ConcurrentHashMap<Int, AtomicLong>()
+
+        /**
+         * A broker-side limit error arrived (100 msg-rate / 101 line-cap / 162, 420 historical
+         * pacing). The whole point of this controller is that these never fire — count them loudly.
+         */
+        fun noteBrokerLimitHit(code: Int) {
+            val count = brokerLimitHits.computeIfAbsent(code) { AtomicLong() }.incrementAndGet()
+            logger.error {
+                "IBKR LIMIT HIT code=$code (count=$count) — admission control failed to prevent a " +
+                    "broker-side pacing/limit violation; investigate which path bypassed it"
+            }
+            if (code == 100 || code == 101) {
+                logger.error { "IBKR limit hit: error $code" }
+//                alertScope.launch {
+//                    alertPort.send(
+//                        AlertLevel.CRITICAL,
+//                        "IBKR limit hit: error $code",
+//                        "IBKR reported ${if (code == 100) "max messages/sec exceeded" else "max market-data lines reached"} " +
+//                                "(occurrence #$count). The admission controller should make this impossible — " +
+//                                "some request path is bypassing it.",
+//                    )
+//                }
+            }
+        }
+
+        /** Called when IBKR reports a historical pacing violation (error 162/420) so subsequent requests back off. */
+        fun notePacingViolation(code: Int) {
+            noteBrokerLimitHit(code)
+//            pacingPenaltyUntilMs = clock.millis() + config.pacingBackoffMs
+            logger.warn { "IBKR pacing violation noted" }
+        }
     }
 
     init {
@@ -103,10 +139,6 @@ class IbkrAdmissionController(
     private val scannerHeadroomWaits = AtomicLong()
 
     @Volatile private var lastPacedWarnMs = 0L
-
-    // --- Broker-side limit errors (100 = msg rate, 101 = line cap, 162/420 = historical pacing).
-    // Must stay zero: the admission controller exists to make these impossible.
-    private val brokerLimitHits = ConcurrentHashMap<Int, AtomicLong>()
 
     // --- Market-data lines: partitioned budget. All state below is guarded by lineLock (a plain
     // monitor, not a coroutine Mutex, so releaseMarketDataLine stays callable from awaitClose).
@@ -183,29 +215,6 @@ class IbkrAdmissionController(
         if (messageBucket.level() >= config.scannerTokenFloor) return
         scannerHeadroomWaits.incrementAndGet()
         while (messageBucket.level() < config.scannerTokenFloor) delay(25)
-    }
-
-    /**
-     * A broker-side limit error arrived (100 msg-rate / 101 line-cap / 162, 420 historical
-     * pacing). The whole point of this controller is that these never fire — count them loudly.
-     */
-    fun noteBrokerLimitHit(code: Int) {
-        val count = brokerLimitHits.computeIfAbsent(code) { AtomicLong() }.incrementAndGet()
-        logger.error {
-            "IBKR LIMIT HIT code=$code (count=$count) — admission control failed to prevent a " +
-                "broker-side pacing/limit violation; investigate which path bypassed it"
-        }
-        if (code == 100 || code == 101) {
-            alertScope.launch {
-                alertPort.send(
-                    AlertLevel.CRITICAL,
-                    "IBKR limit hit: error $code",
-                    "IBKR reported ${if (code == 100) "max messages/sec exceeded" else "max market-data lines reached"} " +
-                        "(occurrence #$count). The admission controller should make this impossible — " +
-                        "some request path is bypassing it.",
-                )
-            }
-        }
     }
 
     fun brokerLimitHitCounts(): Map<Int, Long> = brokerLimitHits.mapValues { it.value.get() }
@@ -454,13 +463,6 @@ class IbkrAdmissionController(
 
     fun releaseHistorical() {
         histInFlight.release()
-    }
-
-    /** Called when IBKR reports a historical pacing violation (error 162/420) so subsequent requests back off. */
-    fun notePacingViolation(code: Int) {
-        noteBrokerLimitHit(code)
-        pacingPenaltyUntilMs = clock.millis() + config.pacingBackoffMs
-        logger.warn { "IBKR pacing violation noted — backing off historical requests for ${config.pacingBackoffMs}ms" }
     }
 
     /** Run [block] (a contract-details lookup) serialised against other contract-details lookups. */

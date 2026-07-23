@@ -2,7 +2,6 @@ package cz.solvina.options.adapters.outbound.ibkr.market
 
 import com.ib.client.Contract
 import com.ib.client.EClientSocket
-import cz.solvina.options.adapters.outbound.ibkr.IbkrAdmissionController
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.MarketDataSnapshot
 import cz.solvina.options.adapters.outbound.ibkr.registry.PendingMarketDataRequest
@@ -50,7 +49,6 @@ private const val RESERVED_LINE_ACQUIRE_TIMEOUT_MS = 10_000L
 internal suspend fun reqMktDataSnapshot(
     registry: IbkrMarketDataRegistry,
     client: EClientSocket,
-    admission: IbkrAdmissionController,
     contract: Contract,
     genericTickList: String,
     isReady: (MarketDataSnapshot) -> Boolean,
@@ -63,48 +61,22 @@ internal suspend fun reqMktDataSnapshot(
     // MarketDataPriority decides which partition pays: SCANNER waits bounded (skip beats hang) and
     // first yields message-bucket headroom to orders/exits; reserved classes acquire directly.
     val priority = coroutineContext[MarketDataPriority] ?: MarketDataPriority.EXEC
-    if (priority == MarketDataPriority.SCANNER) {
-        admission.awaitScannerMessageHeadroom()
-        if (!admission.tryAcquireScannerLine()) {
-            throw MarketDataLineTimeoutException(
-                "no SCANNER market-data line freed in time for ${contract.symbol()} — " +
-                    "scanner is being throttled by open-position load (see health component ibkrAdmission)",
-            )
-        }
-    } else if (!admission.tryAcquireMarketDataLine(priority, RESERVED_LINE_ACQUIRE_TIMEOUT_MS)) {
-        // Reserved classes used to acquire with NO timeout (acquireMarketDataLine → timeoutMs=null →
-        // waits forever). When the line pool drained (leaked under usopt farm flapping, 2026-07-21),
-        // getOptionMidLive on the exit monitor blocked forever; since the monitor fans out all open
-        // spreads in one coroutineScope, one stuck acquire hung the whole run and every 60s cycle
-        // logged "previous run still in progress" until an engine restart. Bound the wait and return
-        // an empty snapshot: every reserved caller already treats no-data as "skip this cycle"
-        // (getOptionMidLive→null, getOptionMid→0, getUnderlyingPrice→historical fallback), so a
-        // drained pool now degrades to a skipped cycle instead of wedging the monitor.
-        logger.warn {
-            "no $priority market-data line freed within ${RESERVED_LINE_ACQUIRE_TIMEOUT_MS}ms for " +
-                "${contract.symbol()} — line pool drained, skipping cycle (see health component ibkrAdmission)"
-        }
-        return MarketDataSnapshot()
-    }
-    try {
-        val reqId = registry.nextReqId()
-        val deferred = CompletableDeferred<MarketDataSnapshot>()
-        val pending = PendingMarketDataRequest(deferred, isReady)
-        registry.pendingMarketData[reqId] = pending
-        return try {
-            client.reqMktData(reqId, contract, genericTickList, false, false, null)
-            withTimeout(timeoutMs) { awaitSnapshot(deferred, pending, priority, quiescenceMs) }
-        } catch (_: TimeoutCancellationException) {
-            // Streaming mode: never got every field in time. Return whatever real ticks did arrive
-            // rather than discarding them — partial bid/ask still beats an all-NaN snapshot, and the
-            // caller's own NaN checks (e.g. delta → BS-fallback) decide what's usable.
-            pending.snapshot
-        } finally {
-            registry.pendingMarketData.remove(reqId)
-            client.cancelMktData(reqId)
-        }
+
+    val reqId = registry.nextReqId()
+    val deferred = CompletableDeferred<MarketDataSnapshot>()
+    val pending = PendingMarketDataRequest(deferred, isReady)
+    registry.pendingMarketData[reqId] = pending
+    return try {
+        client.reqMktData(reqId, contract, genericTickList, false, false, null)
+        withTimeout(timeoutMs) { awaitSnapshot(deferred, pending, priority, quiescenceMs) }
+    } catch (_: TimeoutCancellationException) {
+        // Streaming mode: never got every field in time. Return whatever real ticks did arrive
+        // rather than discarding them — partial bid/ask still beats an all-NaN snapshot, and the
+        // caller's own NaN checks (e.g. delta → BS-fallback) decide what's usable.
+        pending.snapshot
     } finally {
-        admission.releaseMarketDataLine(priority)
+        registry.pendingMarketData.remove(reqId)
+        client.cancelMktData(reqId)
     }
 }
 

@@ -1,7 +1,6 @@
 package cz.solvina.options.adapters.outbound.ibkr.market
 
 import com.ib.client.EClientSocket
-import cz.solvina.options.adapters.outbound.ibkr.IbkrAdmissionController
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.PendingRealTimeBarsRequest
@@ -9,7 +8,6 @@ import cz.solvina.options.domain.features.alert.AlertLevel
 import cz.solvina.options.domain.features.alert.AlertPort
 import cz.solvina.options.domain.features.bars.RealTimeBar
 import cz.solvina.options.domain.features.bars.RealTimeBarsPort
-import cz.solvina.options.domain.features.market.MarketDataPriority
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CoroutineScope
@@ -29,7 +27,6 @@ class IbkrRealTimeBarsAdapter(
     private val registry: IbkrMarketDataRegistry,
     private val client: EClientSocket,
     private val contractFactory: IbkrContractFactory,
-    private val admission: IbkrAdmissionController,
     private val alertPort: AlertPort,
     // Shared executionCoroutineScope bean: alerts must outlive the (possibly cancelled) flow.
     private val alertScope: CoroutineScope,
@@ -44,7 +41,6 @@ class IbkrRealTimeBarsAdapter(
 
             // Each real-time bar subscription holds one IBKR market-data line for the session.
             // Always the flag strategy's feed — pays from the FLAG reserve regardless of caller.
-            admission.acquireMarketDataLine(MarketDataPriority.FLAG)
             registry.pendingRealTimeBars[reqId] =
                 PendingRealTimeBarsRequest(
                     onBar = { bar -> trySend(bar) },
@@ -76,7 +72,6 @@ class IbkrRealTimeBarsAdapter(
                 registry.pendingRealTimeBars.remove(reqId)
                 runCatching { client.cancelRealTimeBars(reqId) }
                     .onFailure { e -> logger.warn { "[${symbol.value}] cancelRealTimeBars failed: ${e.message}" } }
-                admission.releaseMarketDataLine(MarketDataPriority.FLAG)
                 logger.info { "[${symbol.value}] Unsubscribed from real-time bars (reqId=$reqId)" }
             }
         }.buffer(Channel.UNLIMITED)

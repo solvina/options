@@ -2,13 +2,10 @@ package cz.solvina.options.adapters.outbound.ibkr.market
 
 import com.ib.client.Contract
 import com.ib.client.EClientSocket
-import cz.solvina.options.adapters.outbound.ibkr.IbkrAdmissionConfig
-import cz.solvina.options.adapters.outbound.ibkr.IbkrAdmissionController
 import cz.solvina.options.adapters.outbound.ibkr.IbkrConnectionConfig
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.IbkrInstrumentsConfig
 import cz.solvina.options.adapters.outbound.ibkr.InstrumentDef
-import cz.solvina.options.adapters.outbound.ibkr.NoopAlertPort
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrOptionParamsCache
 import cz.solvina.options.adapters.outbound.ibkr.cache.OptionContractKey
@@ -58,13 +55,6 @@ class IbkrMarketTickAdapterContractResolutionTest {
             contractFactory = contractFactory,
             contractCache = contractCache,
             optionParamsCache = optionParamsCache,
-            admission =
-                IbkrAdmissionController(
-                    IbkrAdmissionConfig(),
-                    java.time.Clock.systemUTC(),
-                    NoopAlertPort,
-                    kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined),
-                ),
             connectionConfig = IbkrConnectionConfig(useLiveMarketData = true),
             // SupervisorJob (matching production) so a failed fetch surfaces only via await();
             // Unconfined runs the detached fetch inline so resolution completes deterministically

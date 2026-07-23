@@ -2,7 +2,6 @@ package cz.solvina.options.adapters.outbound.ibkr.market
 
 import com.ib.client.Bar
 import com.ib.client.EClientSocket
-import cz.solvina.options.adapters.outbound.ibkr.IbkrAdmissionController
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrHistoricalDataRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.PendingRawBarsRequest
@@ -25,6 +24,7 @@ import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
+import kotlin.time.Duration.Companion.milliseconds
 
 private val logger = KotlinLogging.logger {}
 private val ET = ZoneId.of("America/New_York")
@@ -47,7 +47,6 @@ class IbkrEquityHistoricalBarsAdapter(
     private val registry: IbkrHistoricalDataRegistry,
     private val client: EClientSocket,
     private val contractFactory: IbkrContractFactory,
-    private val admission: IbkrAdmissionController,
 ) : EquityHistoricalBarsPort {
     override suspend fun fetch5MinBars(
         symbol: Symbol,
@@ -96,18 +95,8 @@ class IbkrEquityHistoricalBarsAdapter(
     ): List<FiveMinuteBar> {
         val reqId = registry.nextReqId()
         val contract = contractFactory.stockContract(symbol)
-        // Acquire OUTSIDE the flow, release in a finally that the timeout cannot skip. Both used to
-        // live inside callbackFlow (acquire in the body, release in awaitClose), which leaked a
-        // permit whenever CHUNK_TIMEOUT_MS fired in the window between the acquire and awaitClose
-        // being registered — reqHistoricalData sits in that window and blocks in paceMessage(), so
-        // the race was routinely lost. historicalMaxInFlight leaks exhausted the semaphore for good:
-        // every later request then parked in acquire, timed out at exactly 45s without a single
-        // reqHistoricalData reaching the socket, and wrote 0 bars until the engine restarted.
-        // Keeping the acquire outside the timeout also stops a long pacing wait from eating the
-        // chunk's own budget.
-        admission.acquireHistorical()
         try {
-            return withTimeoutOrNull(CHUNK_TIMEOUT_MS) {
+            return withTimeoutOrNull(CHUNK_TIMEOUT_MS.milliseconds) {
                 callbackFlow {
                     registry.pendingRawBars[reqId] =
                         PendingRawBarsRequest(
@@ -145,7 +134,6 @@ class IbkrEquityHistoricalBarsAdapter(
             // Same race applies to the registry entry: awaitClose is skipped if the flow is
             // cancelled before it registers, so drop it here too (remove is idempotent).
             registry.pendingRawBars.remove(reqId)
-            admission.releaseHistorical()
         }
     }
 

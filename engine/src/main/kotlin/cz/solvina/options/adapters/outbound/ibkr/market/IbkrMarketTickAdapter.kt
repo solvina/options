@@ -2,7 +2,6 @@ package cz.solvina.options.adapters.outbound.ibkr.market
 
 import com.ib.client.Contract
 import com.ib.client.EClientSocket
-import cz.solvina.options.adapters.outbound.ibkr.IbkrAdmissionController
 import cz.solvina.options.adapters.outbound.ibkr.IbkrConnectionConfig
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
@@ -44,7 +43,6 @@ class IbkrMarketTickAdapter(
     private val contractFactory: IbkrContractFactory,
     private val contractCache: IbkrContractCache,
     private val optionParamsCache: IbkrOptionParamsCache,
-    private val admission: IbkrAdmissionController,
     private val connectionConfig: IbkrConnectionConfig,
     // Independent scope for conId resolution so a bounded caller-side wait never cancels (and thus
     // poisons) an in-flight IBKR contract lookup — a late-but-successful response still caches.
@@ -58,8 +56,6 @@ class IbkrMarketTickAdapter(
         callbackFlow {
             val reqId = registry.nextReqId()
             // Collector's priority class pays for the line (EXEC entry pricing vs EXIT monitoring).
-            val priority = coroutineContext[MarketDataPriority] ?: MarketDataPriority.EXEC
-            admission.acquireMarketDataLine(priority)
             registry.pendingContinuousMarketData[reqId] =
                 PendingContinuousMarketDataRequest(
                     onUpdate = { snapshot ->
@@ -74,7 +70,6 @@ class IbkrMarketTickAdapter(
             awaitClose {
                 registry.pendingContinuousMarketData.remove(reqId)
                 client.cancelMktData(reqId)
-                admission.releaseMarketDataLine(priority)
                 logger.debug { "[$symbol] Cancelled underlying price stream (reqId=$reqId)" }
             }
         }
@@ -178,35 +173,12 @@ class IbkrMarketTickAdapter(
             val mktDataLines = if (useTickByTick) 4 else 2
             val greeksGenericTicks = if (useTickByTick) "100" else ""
 
-            // Setup below has suspension points (conId resolution, line acquisition) BEFORE awaitClose
-            // exists. If the collector cancels in that window (calculateFreshCredit's 3s budget vs up
-            // to 2×1.5s of conId lookups, or a blocked acquire on exhausted lines), awaitClose never
-            // runs — so registry entries and already-acquired lines must be released on the way out,
-            // or every aborted setup permanently leaks a market-data line until entry pricing starves.
             var linesAcquired = 0
             try {
-                // Resolve leg conIds SEQUENTIALLY (not concurrently): IBKR paces near-simultaneous
-                // reqContractDetails for the same underlying/expiry, delaying the second response by ~5s
-                // (past the lookup's timeout). One request at a time resolves in ~400ms and caches.
                 val soldContract4Mkt = contractForMktData(soldContract)
                 val boughtContract4Mkt = contractForMktData(boughtContract)
 
-                // Live: 4 market-data lines — 2 tick-by-tick (bid/ask) + 2 continuous (greeks/fallback
-                // bid/ask). Delayed: 2 continuous only. Generic tick 100 (option volume) is not on the
-                // delayed allow-list and would error the whole request, so delayed mode requests none —
-                // model greeks (delayed field 83) still arrive with base option data.
-                // DIAGNOSTIC: log free lines before acquiring — if ~0, lines are exhausted and the acquire
-                // below blocks, delaying the subscription past calculateFreshCredit's 3s tick wait.
-                logger.info {
-                    "[${soldContract.symbol}] Spread credit stream acquiring $mktDataLines mkt-data lines " +
-                        "(available=${admission.availableMarketDataLines()}) for ${soldContract.strike}P/${boughtContract.strike}P"
-                }
-                repeat(mktDataLines) {
-                    admission.acquireMarketDataLine(priority)
-                    linesAcquired++
-                }
-                // From here on nothing suspends until awaitClose, so the requests below and the
-                // awaitClose cleanup are effectively atomic with respect to cancellation.
+                linesAcquired++
                 if (useTickByTick) {
                     client.reqTickByTickData(soldTickReqId, soldContract4Mkt, "BidAsk", 0, true)
                     client.reqTickByTickData(boughtTickReqId, boughtContract4Mkt, "BidAsk", 0, true)
@@ -218,7 +190,6 @@ class IbkrMarketTickAdapter(
                 registry.pendingTickByTick.remove(boughtTickReqId)
                 registry.pendingContinuousMarketData.remove(soldGreeksReqId)
                 registry.pendingContinuousMarketData.remove(boughtGreeksReqId)
-                repeat(linesAcquired) { admission.releaseMarketDataLine(priority) }
                 logger.info {
                     "[${soldContract.symbol}] Spread credit stream setup aborted " +
                         "(${e.javaClass.simpleName}) — released $linesAcquired mkt-data lines"
@@ -242,7 +213,6 @@ class IbkrMarketTickAdapter(
                 client.cancelMktData(soldGreeksReqId)
                 registry.pendingContinuousMarketData.remove(boughtGreeksReqId)
                 client.cancelMktData(boughtGreeksReqId)
-                repeat(mktDataLines) { admission.releaseMarketDataLine(priority) }
                 logger.debug {
                     "Cancelled spread credit stream for " +
                         "${soldContract.strike}P/${boughtContract.strike}P"

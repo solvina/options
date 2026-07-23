@@ -1,7 +1,6 @@
 package cz.solvina.options.adapters.outbound.ibkr.market
 
 import com.ib.client.EClientSocket
-import cz.solvina.options.adapters.outbound.ibkr.IbkrAdmissionController
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrHistoricalDataRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.PendingBarsRequest
@@ -26,7 +25,6 @@ class IbkrHistoricalDataAdapter(
     private val registry: IbkrHistoricalDataRegistry,
     private val client: EClientSocket,
     private val contractFactory: IbkrContractFactory,
-    private val admission: IbkrAdmissionController,
 ) : HistoricalDataPort,
     PriceHistoryPort {
     override fun fetchDailyBars(
@@ -55,7 +53,6 @@ class IbkrHistoricalDataAdapter(
             // scanner wedged) until an engine restart. This is the IV-rank path, which bursts at
             // startup, so it leaked fast. 2026-07-23.
             val reqId = registry.nextReqId()
-            admission.acquireHistorical()
             try {
                 emitAll(
                     callbackFlow {
@@ -87,7 +84,6 @@ class IbkrHistoricalDataAdapter(
                 // permit exactly once — acquireHistorical released it itself only if IT threw, and in
                 // that case this finally is not reached, so there is no double release.
                 registry.pendingHistoricalBars.remove(reqId)
-                admission.releaseHistorical()
             }
         }
 }

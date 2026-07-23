@@ -108,7 +108,6 @@ class IbkrEWrapper(
     private val pnlRegistry: IbkrPnlRegistry,
     private val dividendTickRegistry: IbkrDividendTickRegistry,
     private val marketDataHealthTracker: MarketDataHealthTracker,
-    private val admission: IbkrAdmissionController,
 ) : EWrapper {
     override fun tickPrice(
         tickerId: Int,
@@ -631,7 +630,7 @@ class IbkrEWrapper(
         // 100 = max messages/sec exceeded, 101 = max market-data lines reached. The admission
         // controller exists to make both impossible — count every occurrence loudly.
         if (errorCode == 100 || errorCode == 101) {
-            admission.noteBrokerLimitHit(errorCode)
+            IbkrAdmissionController.noteBrokerLimitHit(errorCode)
         }
 
         if (errorCode in listOf(2104, 2106, 2108, 2119, 2158, 2161, 10090, 10167)) {

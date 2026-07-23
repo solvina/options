@@ -28,7 +28,6 @@ internal data class PendingRawBarsRequest(
 @Component
 class IbkrHistoricalDataRegistry(
     private val idCounter: IbkrIdCounter,
-    private val admission: IbkrAdmissionController,
 ) {
     internal val pendingHistoricalBars = ConcurrentHashMap<Int, PendingBarsRequest>()
 
@@ -72,7 +71,7 @@ class IbkrHistoricalDataRegistry(
         // address", "query returned no data", missing permissions) are unrelated and must NOT
         // inflate the broker-limit metric or trigger a spurious back-off. 420 = message-rate pacing.
         if (code == 420 || (code == 162 && msg.contains("pacing", ignoreCase = true))) {
-            admission.notePacingViolation(code)
+            IbkrAdmissionController.noteBrokerLimitHit(code)
         }
         val ex = RuntimeException("IBKR error [code=$code]: $msg")
         pendingHistoricalBars.remove(id)?.onError?.invoke(ex)

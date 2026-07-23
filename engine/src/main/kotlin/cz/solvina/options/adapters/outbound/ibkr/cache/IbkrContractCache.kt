@@ -2,7 +2,6 @@ package cz.solvina.options.adapters.outbound.ibkr.cache
 
 import com.ib.client.EClientSocket
 import com.ib.client.PriceIncrement
-import cz.solvina.options.adapters.outbound.ibkr.IbkrAdmissionController
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrContractRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.PendingContractRequest
@@ -28,6 +27,7 @@ import java.util.TreeSet
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.math.abs
+import kotlin.time.Duration.Companion.milliseconds
 
 private val logger = KotlinLogging.logger {}
 
@@ -36,7 +36,6 @@ class IbkrContractCache(
     private val registry: IbkrContractRegistry,
     private val client: EClientSocket,
     private val contractFactory: IbkrContractFactory,
-    private val admission: IbkrAdmissionController,
     private val tradingHoursCache: cz.solvina.options.adapters.outbound.ibkr.TradingHoursCache,
 ) {
     @Lazy @Autowired
@@ -121,18 +120,16 @@ class IbkrContractCache(
         val deferred = CompletableDeferred<List<com.ib.client.ContractDetails>>()
         registry.pendingContractDetails[reqId] = PendingContractRequest(deferred, CopyOnWriteArrayList())
 
-        return admission.withContractDetails {
-            client.reqContractDetails(reqId, contractFactory.stockContract(symbol))
-            try {
-                withTimeout(5000L) {
-                    deferred.await()
-                }
-            } catch (e: TimeoutCancellationException) {
-                registry.pendingContractDetails.remove(reqId)
-                registry.timedOutReqIds.add(reqId)
-                logger.error { "[$symbol] Contract lookup timeout (5s) — IBKR not responding" }
-                error("Contract lookup timeout for $symbol after 5s")
+        client.reqContractDetails(reqId, contractFactory.stockContract(symbol))
+        return try {
+            withTimeout(5000L.milliseconds) {
+                deferred.await()
             }
+        } catch (e: TimeoutCancellationException) {
+            registry.pendingContractDetails.remove(reqId)
+            registry.timedOutReqIds.add(reqId)
+            logger.error { "[$symbol] Contract lookup timeout (5s) — IBKR not responding" }
+            error("Contract lookup timeout for $symbol after 5s")
         }
     }
 
@@ -253,20 +250,19 @@ class IbkrContractCache(
         // discarded IBKR's ~250ms-late response, so the conId was never learned.)
         // Serialised via the rate limiter: IBKR paces concurrent contract-details for the same
         // underlying (~5s), so one lookup fires at a time.
+
+        client.reqContractDetails(reqId, searchContract)
         val details: List<com.ib.client.ContractDetails> =
-            admission.withContractDetails {
-                client.reqContractDetails(reqId, searchContract)
-                withTimeoutOrNull(5000L) { deferred.await() }
-                    ?: run {
-                        registry.pendingContractDetails.remove(reqId)
-                        registry.timedOutReqIds.add(reqId)
-                        val msg = "Option contract lookup timeout for $key after 5s"
-                        logger.error { "[$key] Option contract lookup timeout (5s) — IBKR not responding" }
-                        inFlightOptionConIds.remove(key)
-                        resultDeferred.completeExceptionally(IllegalStateException(msg))
-                        error(msg)
-                    }
-            }
+            withTimeoutOrNull(5000L.milliseconds) { deferred.await() }
+                ?: run {
+                    registry.pendingContractDetails.remove(reqId)
+                    registry.timedOutReqIds.add(reqId)
+                    val msg = "Option contract lookup timeout for $key after 5s"
+                    logger.error { "[$key] Option contract lookup timeout (5s) — IBKR not responding" }
+                    inFlightOptionConIds.remove(key)
+                    resultDeferred.completeExceptionally(IllegalStateException(msg))
+                    error(msg)
+                }
         logger.debug { "[$key] reqContractDetails returned ${details.size} contracts" }
 
         // Cache the authoritative strike list for this expiry+right from the real IBKR response.
@@ -358,18 +354,16 @@ class IbkrContractCache(
                 right(optionType.ibkrCode)
             }
 
+        client.reqContractDetails(reqId, searchContract)
         val details: List<com.ib.client.ContractDetails> =
-            admission.withContractDetails {
-                client.reqContractDetails(reqId, searchContract)
-                withTimeoutOrNull(30000L) { deferred.await() }
-                    ?: run {
-                        registry.pendingContractDetails.remove(reqId)
-                        registry.timedOutReqIds.add(reqId)
-                        verifiedStrikesCooldown[vkey] = Instant.now()
-                        logger.warn { "[$symbol $expiry $optionType] verified-strikes timeout (30s), cooldown active" }
-                        null
-                    }
-            } ?: return null
+            withTimeoutOrNull(30000L.milliseconds) { deferred.await() }
+                ?: run {
+                    registry.pendingContractDetails.remove(reqId)
+                    registry.timedOutReqIds.add(reqId)
+                    verifiedStrikesCooldown[vkey] = Instant.now()
+                    logger.warn { "[$symbol $expiry $optionType] verified-strikes timeout (30s), cooldown active" }
+                    null
+                } ?: return null
 
         val actualStrikes = details.map { it.contract().strike() }.toSet()
         verifiedStrikes[VerifiedKey(symbol, expiry, optionType)] =

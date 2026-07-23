@@ -122,7 +122,7 @@ class IbkrDiagnosticProbeAdapter(
         return runCatching {
             logger.info { "[$symbol] DIAG reqMktData snapshot (stock spot)" }
             val snapshot =
-                reqMktDataSnapshot(registry, client, admission, contractFactory.stockContract(symbol), "", SnapshotReady.STOCK_PRICE)
+                reqMktDataSnapshot(registry, client, contractFactory.stockContract(symbol), "", SnapshotReady.STOCK_PRICE)
             val ms = System.currentTimeMillis() - start
             logger.info {
                 "[$symbol] DIAG reqMktData stock → bid=${snapshot.bid} ask=${snapshot.ask} " +
@@ -156,7 +156,7 @@ class IbkrDiagnosticProbeAdapter(
         val start = System.currentTimeMillis()
         logger.info { "[${contract.symbol}] DIAG reqMktData snapshot (option ${contract.strike}P exp=${contract.expiry})" }
         val snapshot =
-            reqMktDataSnapshot(registry, client, admission, contractFactory.optionContract(contract), "", SnapshotReady.OPTION_QUOTE)
+            reqMktDataSnapshot(registry, client, contractFactory.optionContract(contract), "", SnapshotReady.OPTION_QUOTE)
         val ms = System.currentTimeMillis() - start
         logger.info {
             "[${contract.symbol}] DIAG reqMktData option ${contract.strike}P → " +
@@ -177,7 +177,7 @@ class IbkrDiagnosticProbeAdapter(
             val spot =
                 runCatching {
                     val stock = contractFactory.stockContract(contract.symbol)
-                    val snap = reqMktDataSnapshot(registry, client, admission, stock, "", SnapshotReady.STOCK_PRICE)
+                    val snap = reqMktDataSnapshot(registry, client, stock, "", SnapshotReady.STOCK_PRICE)
                     snap.last.takeIf { !it.isNaN() } ?: snap.close.takeIf { !it.isNaN() }
                 }.getOrNull()
             val sigma = runCatching { volatilityPort.getIvRank(contract.symbol).currentIv }.getOrNull()

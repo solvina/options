@@ -1,7 +1,6 @@
 package cz.solvina.options.adapters.outbound.ibkr.market
 
 import com.ib.client.EClientSocket
-import cz.solvina.options.adapters.outbound.ibkr.IbkrAdmissionController
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrDividendTickRegistry
 import cz.solvina.options.domain.features.market.MarketDataPriority
@@ -16,6 +15,7 @@ import java.math.BigDecimal
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import kotlin.coroutines.coroutineContext
+import kotlin.time.Duration.Companion.milliseconds
 
 private val logger = KotlinLogging.logger {}
 
@@ -51,7 +51,6 @@ internal fun parseIbDividends(raw: String): DividendInfo {
 class IbkrDividendTickAdapter(
     private val registry: IbkrDividendTickRegistry,
     private val client: EClientSocket,
-    private val admission: IbkrAdmissionController,
     private val contractFactory: IbkrContractFactory,
 ) : DividendDataPort {
     override suspend fun fetchDividendInfo(symbol: Symbol): DividendInfo? = fetchDividendTick(symbol)?.let { parseIbDividends(it) }
@@ -64,12 +63,11 @@ class IbkrDividendTickAdapter(
         // subscription — previously this bypassed the line budget. The daily refresh job runs
         // tagged SCANNER, so a 15s dividend wait can never displace exec/exit/flag lines.
         val priority = coroutineContext[MarketDataPriority] ?: MarketDataPriority.EXEC
-        admission.acquireMarketDataLine(priority)
         val reqId = registry.nextReqId()
         val deferred = registry.register(reqId)
         return try {
             client.reqMktData(reqId, contractFactory.stockContract(symbol), "456", false, false, null)
-            withTimeout(timeoutMs) { deferred.await() }
+            withTimeout(timeoutMs.milliseconds) { deferred.await() }
         } catch (e: TimeoutCancellationException) {
             logger.warn { "[$symbol] IB_DIVIDENDS tick timed out after ${timeoutMs}ms" }
             null
@@ -79,7 +77,6 @@ class IbkrDividendTickAdapter(
         } finally {
             registry.remove(reqId)
             runCatching { client.cancelMktData(reqId) }
-            admission.releaseMarketDataLine(priority)
         }
     }
 }
