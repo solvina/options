@@ -79,6 +79,7 @@ class IbkrAdmissionController(
     private companion object {
         const val WINDOW_MS = 600_000L // 10 minutes
         const val PACED_WARN_INTERVAL_MS = 60_000L
+        const val HIST_EXHAUST_WARN_INTERVAL_MS = 30_000L
     }
 
     init {
@@ -136,6 +137,9 @@ class IbkrAdmissionController(
     private val histInFlight = Semaphore(config.historicalMaxInFlight)
 
     @Volatile private var lastHistFireMs = 0L
+
+    // Rate-limit for the historical-pool-exhaustion warning above.
+    @Volatile private var lastHistExhaustWarnMs = 0L
 
     @Volatile private var pacingPenaltyUntilMs = 0L
 
@@ -401,6 +405,20 @@ class IbkrAdmissionController(
      * call [releaseHistorical] exactly once when the request finishes (end or error).
      */
     suspend fun acquireHistorical() {
+        // Early-warning: silent permit exhaustion (a leaked permit) previously blinded the engine for
+        // hours with NO log. Warn when the pool is saturated on entry — under a healthy burst this is
+        // rate-limited to noise, but a true leak (pool stuck at 0) makes every parked fetch log it.
+        if (histInFlight.availablePermits == 0) {
+            val now = clock.millis()
+            if (now - lastHistExhaustWarnMs >= HIST_EXHAUST_WARN_INTERVAL_MS) {
+                lastHistExhaustWarnMs = now
+                logger.warn {
+                    "Historical in-flight pool exhausted (0/${config.historicalMaxInFlight} free) — a fetch is queuing. " +
+                        "If this persists the permit pool has LEAKED: reqHistoricalData stops reaching the socket and every " +
+                        "historical fetch (flag bootstrap, IV-rank, verified strikes) stalls until the engine is restarted."
+                }
+            }
+        }
         histInFlight.acquire()
         try {
             while (true) {
