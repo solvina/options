@@ -316,7 +316,10 @@ class IbkrEWrapper(
         reqId: Int,
         contractDetails: ContractDetails,
     ) {
-        logger.debug { "contractDetails: reqId=$reqId, symbol=${contractDetails.contract().symbol()}" }
+        // Per-row DEBUG removed 2026-07-22: an under-specified option reqContractDetails returns the
+        // whole chain across every listing exchange (thousands of rows per symbol), and one log line
+        // each flooded and rotated the journal during a competing-session storm (evidence loss). The
+        // row count is logged once by IbkrContractCache; raw rows still go to twsRaw below.
         val c = contractDetails.contract()
         twsRaw.debug {
             twsJson(

@@ -77,6 +77,13 @@ class IbkrContractCache(
 
     private val verifiedStrikes = ConcurrentHashMap<VerifiedKey, TreeSet<BigDecimal>>()
 
+    // Cooldown after a verified-strikes lookup times out (IBKR degraded / competing-session denial).
+    // Without this the scanner re-issues a full-chain reqContractDetails for the same key every cycle;
+    // serialized behind contractDetailsGate those 30s timeouts pile up and the thousands-of-rows
+    // response floods the message path — the wedge that hung the exit monitor on 2026-07-22.
+    private val verifiedStrikesCooldown = ConcurrentHashMap<VerifiedKey, Instant>()
+    private val verifiedStrikesCooldownTtl: Duration = Duration.ofMinutes(3)
+
     suspend fun getOrFetchUnderlyingConId(symbol: Symbol): Int {
         underlyingConIds[symbol]?.let { return it }
 
@@ -323,6 +330,12 @@ class IbkrContractCache(
         verifiedStrikes[VerifiedKey(symbol, expiry, optionType)]?.let { return it }
         evictExpired()
 
+        val vkey = VerifiedKey(symbol, expiry, optionType)
+        verifiedStrikesCooldown[vkey]?.let { failedAt ->
+            if (Duration.between(failedAt, Instant.now()) < verifiedStrikesCooldownTtl) return null
+            verifiedStrikesCooldown.remove(vkey)
+        }
+
         val reqId = registry.nextReqId()
         val deferred = CompletableDeferred<List<com.ib.client.ContractDetails>>()
         registry.pendingContractDetails[reqId] = PendingContractRequest(deferred, CopyOnWriteArrayList())
@@ -352,7 +365,8 @@ class IbkrContractCache(
                     ?: run {
                         registry.pendingContractDetails.remove(reqId)
                         registry.timedOutReqIds.add(reqId)
-                        logger.warn { "[$symbol $expiry $optionType] Verified-strikes lookup timeout (30s) — skipping symbol this cycle" }
+                        verifiedStrikesCooldown[vkey] = Instant.now()
+                        logger.warn { "[$symbol $expiry $optionType] verified-strikes timeout (30s), cooldown active" }
                         null
                     }
             } ?: return null
