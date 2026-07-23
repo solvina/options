@@ -92,10 +92,13 @@ class HistoricalDataService(
         }
 
     /**
-     * Ensures [from]..[to] is covered for each symbol at [timeframe], fetching only the missing
-     * head/tail (extend history backward / forward) — the "type AAPL 1999-now and it downloads once"
-     * path. Interior holes are left alone (mostly weekends/holidays with legitimately no bar). A
-     * second call over an already-covered span is a no-op. Backtests call this before running.
+     * Ensures [from]..[to] is covered for each symbol at [timeframe], fetching every gap — head,
+     * tail, AND interior holes (a timed-out chunk buried inside otherwise-covered history). A hole is
+     * any trading day whose stored bar count is below the timeframe's [Timeframe.minBarsPerDay]; its
+     * chunk is fetched and the scan jumps past it. Re-running therefore CONVERGES to complete data:
+     * chunks skipped by a 45s timeout on one run are re-detected as holes and re-fetched on the next.
+     * Backtests call this before running. (Historical market holidays have no bar and no calendar
+     * covers them, so a holiday's chunk is re-attempted each run and returns nothing new — harmless.)
      */
     fun ensureCoverage(
         symbols: List<Symbol>,
@@ -121,32 +124,54 @@ class HistoricalDataService(
             written
         }
 
-    /** The head/tail date ranges not yet stored for [symbol] at [timeframe] within [from]..[to]. */
+    /**
+     * The date ranges still needing a fetch within [from]..[to] for [symbol] at [timeframe] —
+     * head, tail, AND interior holes. Walks the per-day coverage and groups consecutive under-covered
+     * trading days (below [Timeframe.minBarsPerDay]; weekends skipped, they never have a bar) into
+     * maximal runs, emitting only runs of at least [MIN_GAP_TRADING_DAYS] days. Backfill always writes
+     * in ~59-day (≈41-trading-day) chunks, so a genuine hole — a skipped/timed-out chunk — is always
+     * a long run and is re-fetched, while an isolated market holiday or half-day is a single day and
+     * is left alone (no historical calendar covers holidays; re-requesting them would only 45s-timeout
+     * and would defeat the covered-span memo). Each emitted run is handed to fetch5MinBarsForRange,
+     * which splits it back into per-request chunks.
+     */
     private suspend fun missingRanges(
         symbol: Symbol,
         from: LocalDate,
         to: LocalDate,
         timeframe: Timeframe,
     ): List<Pair<LocalDate, LocalDate>> {
-        val stored = barStorePort.coverageByDay(symbol, from, to, timeframe).filterValues { it > 0 }.keys
-        if (stored.isEmpty()) return listOf(from to to)
-        val earliest = stored.min()
-        val latest = stored.max()
-        val gaps = mutableListOf<Pair<LocalDate, LocalDate>>()
-        if (from.isBefore(earliest)) gaps += from to earliest.minusDays(1)
-        if (to.isAfter(latest)) gaps += latest.plusDays(1) to to
-        // A gap of only weekend days can never be filled — asking IBKR for it costs a silent
-        // 45s chunk timeout per symbol on every rerun (covered-universe reruns burned hours on it).
-        return gaps.filterNot { (gapFrom, gapTo) -> onlyWeekend(gapFrom, gapTo) }
-    }
-
-    private fun onlyWeekend(
-        from: LocalDate,
-        to: LocalDate,
-    ): Boolean =
-        from.datesUntil(to.plusDays(1)).allMatch {
-            it.dayOfWeek == java.time.DayOfWeek.SATURDAY || it.dayOfWeek == java.time.DayOfWeek.SUNDAY
+        val coverage = barStorePort.coverageByDay(symbol, from, to, timeframe)
+        val ranges = mutableListOf<Pair<LocalDate, LocalDate>>()
+        var runStart: LocalDate? = null
+        var runEnd: LocalDate? = null
+        var runDays = 0
+        var day = from
+        while (!day.isAfter(to)) {
+            val weekend =
+                day.dayOfWeek == java.time.DayOfWeek.SATURDAY || day.dayOfWeek == java.time.DayOfWeek.SUNDAY
+            if (!weekend) {
+                if ((coverage[day] ?: 0) < timeframe.minBarsPerDay) {
+                    if (runStart == null) runStart = day
+                    runEnd = day
+                    runDays++
+                } else {
+                    // A covered trading day closes any open hole-run.
+                    val s = runStart
+                    val e = runEnd
+                    if (s != null && e != null && runDays >= MIN_GAP_TRADING_DAYS) ranges += s to e
+                    runStart = null
+                    runEnd = null
+                    runDays = 0
+                }
+            }
+            day = day.plusDays(1)
         }
+        val s = runStart
+        val e = runEnd
+        if (s != null && e != null && runDays >= MIN_GAP_TRADING_DAYS) ranges += s to e
+        return ranges
+    }
 
     private fun launchJob(
         symbols: List<Symbol>,
@@ -208,5 +233,11 @@ class HistoricalDataService(
         private const val COVERED_TTL_MS = 10 * 60 * 1000L
         private const val COVERED_MAX_ENTRIES = 5_000
         private const val MAX_RETAINED_JOBS = 2_000
+
+        // A hole must span at least this many consecutive trading days to be re-fetched. Backfill
+        // writes in ~59-day (≈41-trading-day) chunks, so a real hole (a skipped/timed-out chunk) is
+        // always far larger, while an isolated holiday/half-day is 1 day — so genuine gaps are
+        // healed without ever re-requesting holidays, keeping a fully-covered span a memoized no-op.
+        private const val MIN_GAP_TRADING_DAYS = 3
     }
 }
