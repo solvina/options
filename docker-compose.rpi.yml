@@ -35,6 +35,12 @@ services:
   influxdb:
     image: influxdb:2.7
     restart: unless-stopped
+    # 2026-07-20: hard memory cap. Unbounded, influxd grew to 1.75 GB RSS (46% of the Pi) and the
+    # kernel OOM-killed the trading engine mid-boot (signal 9). Influx serves only bar history
+    # (flag strategy + backtests) — never the options-spread trading path — so it must never
+    # outweigh the engine. If Influx itself starts getting OOM-killed, shrink its retention
+    # instead of raising this.
+    mem_limit: 512m
     environment:
       DOCKER_INFLUXDB_INIT_MODE: setup
       DOCKER_INFLUXDB_INIT_USERNAME: admin
@@ -80,7 +86,10 @@ services:
     user: root
     volumes:
       - ./deploy/alloy-config.alloy:/etc/alloy/config.alloy:ro
-      - /run/log/journal:/run/log/journal:ro
+      # journald runs persistent (journald.conf.d/persistent.conf → /var); volatile /run only holds
+      # the pre-flush boot window, so alloy must read /var or it ships nothing. See also the host
+      # journald provisioning that keeps SystemMaxUse=2G — not yet captured in deploy.sh.
+      - /var/log/journal:/var/log/journal:ro
       - /etc/machine-id:/etc/machine-id:ro
     command: run /etc/alloy/config.alloy
     depends_on: [loki]
