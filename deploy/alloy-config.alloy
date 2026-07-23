@@ -1,5 +1,5 @@
 loki.source.journal "options" {
-  max_age    = "1h"
+  max_age    = "18h"
   path       = "/var/log/journal"
   labels     = { job = "options-engine" }
   matches    = "_SYSTEMD_UNIT=options-engine.service"
