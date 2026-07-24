@@ -420,6 +420,8 @@ export function BacktestPage() {
   const [riskPerTrade, setRiskPerTrade] = useState('100')
   const [maxOpenPositions, setMaxOpenPositions] = useState('3')
   const [entryBlock, setEntryBlock] = useState('30')
+  // Close positions at end of day (engine holdOvernight = !this). Default on = intraday.
+  const [closeAtEod, setCloseAtEod] = useState(true)
 
   // Quality filters — defaults match application.yml tuned values
   const [skipFirstRthMinutes, setSkipFirstRthMinutes] = useState('90')
@@ -454,6 +456,7 @@ export function BacktestPage() {
     if (p.riskPerTrade != null) setRiskPerTrade(String(p.riskPerTrade))
     if (p.maxOpenPositions != null) setMaxOpenPositions(String(p.maxOpenPositions))
     if (p.entryBlockMinutesBeforeClose != null) setEntryBlock(String(p.entryBlockMinutesBeforeClose))
+    if (typeof p.holdOvernight === 'boolean') setCloseAtEod(!p.holdOvernight)
     if (p.skipFirstRthMinutes != null) setSkipFirstRthMinutes(String(p.skipFirstRthMinutes))
     if (typeof p.requireNegativeChannelSlope === 'boolean') setRequireNegativeSlope(p.requireNegativeChannelSlope)
     if (p.minFlagpoleAtrMultiple != null) setMinPoleAtr(String(p.minFlagpoleAtrMultiple))
@@ -487,6 +490,7 @@ export function BacktestPage() {
           riskPerTrade: parseFloat(riskPerTrade),
           maxOpenPositions: parseInt(maxOpenPositions),
           entryBlockMinutesBeforeClose: parseInt(entryBlock),
+          holdOvernight: !closeAtEod,
           skipFirstRthMinutes: parseInt(skipFirstRthMinutes),
           requireNegativeChannelSlope: requireNegativeSlope,
           minFlagpoleAtrMultiple: parseFloat(minPoleAtr),
@@ -568,6 +572,10 @@ export function BacktestPage() {
           <label className="flex flex-col gap-1 text-xs text-muted-foreground">
             Entry block (min)
             <input type="number" value={entryBlock} onChange={e => setEntryBlock(e.target.value)} className={`${inputCls} w-24`} title="Minutes before close when no new entries are allowed" />
+          </label>
+          <label className="flex items-center gap-2 text-xs text-muted-foreground self-end pb-1.5 cursor-pointer" title="On: force-close every open position at the last bar of the day (intraday). Off: hold overnight until stop/target.">
+            <input type="checkbox" checked={closeAtEod} onChange={e => setCloseAtEod(e.target.checked)} className="w-3.5 h-3.5" />
+            Close at EOD
           </label>
           <button
             onClick={run}
