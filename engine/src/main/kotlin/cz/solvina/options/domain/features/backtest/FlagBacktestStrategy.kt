@@ -36,6 +36,16 @@ class FlagBacktestStrategy(
     // Exit/R:R levers (live strategy is fixed at 2R + flag-low stop). Tunable here for backtest sweeps.
     private val profitTargetR: Double = 2.0,
     private val stopAtrMultiple: Double? = null,
+    // ATR-based stop/target expressed as % of ATR (150.0 = 1.5×ATR), mirroring the stock param
+    // strategy. stopAtrPct takes precedence over the legacy [stopAtrMultiple]; both null → flag-low
+    // stop. targetAtrPct set → ATR target, else the [profitTargetR] R-multiple of the stop distance.
+    private val stopAtrPct: Double? = null,
+    private val targetAtrPct: Double? = null,
+    // Risk per trade as % of CURRENT account equity (e.g. 1.0 = 1%); overrides the fixed
+    // tradingConfig.riskPerTrade so sizing compounds down as well as up.
+    private val riskPerTradePct: Double? = null,
+    // ATR lookback in bars; defaults to the strategy config's atrPeriod (14).
+    private val atrPeriod: Int? = null,
 ) : BacktestableStrategy {
     private val detectors = mutableMapOf<Symbol, PatternDetector>()
     private val buffers = mutableMapOf<Symbol, BarBuffer>()
@@ -88,7 +98,7 @@ class FlagBacktestStrategy(
         }
 
         val signal =
-            buildSignal(symbol, bar, state, buffer, session) ?: run {
+            buildSignal(symbol, bar, state, buffer, session, account) ?: run {
                 detector.reset()
                 return emptyList()
             }
@@ -189,29 +199,51 @@ class FlagBacktestStrategy(
         state: PatternState.BreakoutReady,
         buffer: BarBuffer,
         session: String,
+        account: BacktestAccountView,
     ): BacktestSignal.OpenBracket? {
         val entryPrice = BigDecimal(state.resistanceLevel).setScale(2, RoundingMode.HALF_UP)
         val bars = buffer.snapshot()
-        val atrAtEntry = AtrCalculator.atr(bars, strategyConfig.atrPeriod).takeIf { !it.isNaN() }
+        val atrAtEntry = AtrCalculator.atr(bars, atrPeriod ?: strategyConfig.atrPeriod).takeIf { !it.isNaN() }
+
+        // ATR stop as % of ATR (150 = 1.5×ATR); the legacy raw multiple is the fallback, then flag low.
+        val stopAtrMult = stopAtrPct?.let { it / 100.0 } ?: stopAtrMultiple
         val stopLossPrice =
-            if (stopAtrMultiple != null && atrAtEntry != null && atrAtEntry > 0) {
+            if (stopAtrMult != null && atrAtEntry != null && atrAtEntry > 0) {
                 // ATR-based stop instead of the flag low — wider stop, fewer noise stop-outs.
-                BigDecimal(entryPrice.toDouble() - stopAtrMultiple * atrAtEntry).setScale(2, RoundingMode.HALF_UP)
+                BigDecimal(entryPrice.toDouble() - stopAtrMult * atrAtEntry).setScale(2, RoundingMode.HALF_UP)
             } else {
                 BigDecimal(state.flag.lowestLow).subtract(BigDecimal("0.01")).setScale(2, RoundingMode.HALF_UP)
             }
         val risk = entryPrice.subtract(stopLossPrice).abs()
         if (risk <= BigDecimal.ZERO) return null
 
-        val shares =
-            tradingConfig.riskPerTrade
-                .divide(risk, 0, RoundingMode.FLOOR)
-                .toInt()
-                .coerceAtLeast(1)
+        // Risk budget: % of CURRENT equity when set (compounds down as well as up), else fixed $.
+        val riskDollars =
+            riskPerTradePct
+                ?.let { account.capital.multiply(BigDecimal(it / 100.0)) }
+                ?: tradingConfig.riskPerTrade
+        // Account-aware sizing: risk-based shares, capped by an affordability slot
+        // (equity / maxOpenPositions) so aggregate concurrent notional stays within equity. When
+        // equity is drained the slot floors shares to 0 and NO trade opens — a blown-up account
+        // cannot bounce back from thin air (note: no coerceAtLeast(1) here, unlike the live sizer).
+        val riskShares = riskDollars.divide(risk, 0, RoundingMode.FLOOR).toInt()
+        val maxNotionalPerSlot =
+            account.capital.divide(BigDecimal(tradingConfig.maxOpenPositions.coerceAtLeast(1)), 2, RoundingMode.FLOOR)
+        val affordableShares =
+            if (entryPrice > BigDecimal.ZERO) maxNotionalPerSlot.divide(entryPrice, 0, RoundingMode.FLOOR).toInt() else 0
+        val shares = minOf(riskShares, affordableShares)
+        if (shares <= 0) return null
+
+        // Target: % of ATR when set (150 = 1.5×ATR), else the R-multiple of the stop distance.
+        val targetAtrMult = targetAtrPct?.let { it / 100.0 }
         val profitTarget =
-            entryPrice
-                .add(entryPrice.subtract(stopLossPrice).multiply(BigDecimal.valueOf(profitTargetR)))
-                .setScale(2, RoundingMode.HALF_UP)
+            if (targetAtrMult != null && atrAtEntry != null && atrAtEntry > 0) {
+                BigDecimal(entryPrice.toDouble() + targetAtrMult * atrAtEntry).setScale(2, RoundingMode.HALF_UP)
+            } else {
+                entryPrice
+                    .add(entryPrice.subtract(stopLossPrice).multiply(BigDecimal.valueOf(profitTargetR)))
+                    .setScale(2, RoundingMode.HALF_UP)
+            }
         val volumeMaRaw = VolumeAnalysis.volumeMa(bars, strategyConfig.volumeMaPeriod).takeIf { !it.isNaN() }
         val flagAvgVolume =
             state.flag.bars
@@ -291,7 +323,9 @@ class FlagBacktestStrategy(
                 stopLossPrice = stopLossPrice,
                 profitTargetPrice = profitTarget,
                 shares = shares,
-                riskAmount = tradingConfig.riskPerTrade,
+                // Actual dollar risk (entry−stop × shares), not the budget — matches the engine's
+                // R-multiple basis and stays correct when the affordability cap trims the size.
+                riskAmount = risk.multiply(BigDecimal(shares)),
                 flagpoleHeight = BigDecimal(state.pole.height).setScale(4, RoundingMode.HALF_UP),
                 flagRetracement = BigDecimal(state.flag.retracement).setScale(4, RoundingMode.HALF_UP),
                 resistanceAtEntry = entryPrice,

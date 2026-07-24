@@ -56,6 +56,14 @@ class BacktestApiController(
         // Exit / reward-risk levers (backtest-only sweep knobs)
         val profitTargetR: Double = 2.0,
         val stopAtrMultiple: Double? = null,
+        // ATR-based stop/target as % of ATR (150.0 = 1.5×ATR). stopAtrPct wins over stopAtrMultiple;
+        // targetAtrPct set → ATR target, else profitTargetR. Both null → flag-low stop / R target.
+        val stopAtrPct: Double? = null,
+        val targetAtrPct: Double? = null,
+        // Risk per trade as % of current account equity (e.g. 1.0 = 1%); overrides riskPerTrade.
+        val riskPerTradePct: Double? = null,
+        // ATR lookback in bars (default from config = 14).
+        val atrPeriod: Int? = null,
         val holdOvernight: Boolean = false,
         val trailStopRMultiple: Double? = null,
         val barMinutes: Int = 5,
@@ -120,6 +128,13 @@ class BacktestApiController(
     ): ResponseEntity<FlagBacktestResponse> {
         if (request.symbols.isEmpty()) return ResponseEntity.badRequest().build()
         if (request.from.isAfter(request.to)) return ResponseEntity.badRequest().build()
+        // Money-management / ATR levers must be sane, else a run silently produces garbage sizing.
+        if (request.riskPerTradePct != null && (request.riskPerTradePct <= 0.0 || request.riskPerTradePct > 100.0)) {
+            return ResponseEntity.badRequest().build()
+        }
+        if (request.stopAtrPct != null && request.stopAtrPct <= 0.0) return ResponseEntity.badRequest().build()
+        if (request.targetAtrPct != null && request.targetAtrPct <= 0.0) return ResponseEntity.badRequest().build()
+        if (request.atrPeriod != null && request.atrPeriod < 1) return ResponseEntity.badRequest().build()
 
         val tradingConfig =
             FlagTradingConfig(
@@ -143,6 +158,10 @@ class BacktestApiController(
                 tradingConfig,
                 profitTargetR = request.profitTargetR,
                 stopAtrMultiple = request.stopAtrMultiple,
+                stopAtrPct = request.stopAtrPct,
+                targetAtrPct = request.targetAtrPct,
+                riskPerTradePct = request.riskPerTradePct,
+                atrPeriod = request.atrPeriod,
             )
         val engine = BacktestEngine(barStore)
         val engineRequest =
