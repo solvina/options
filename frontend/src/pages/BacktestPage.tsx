@@ -435,6 +435,7 @@ export function BacktestPage() {
   const [stopAtrPct, setStopAtrPct] = useState('')
   const [targetAtrPct, setTargetAtrPct] = useState('')
   const [atrPeriod, setAtrPeriod] = useState('')
+  const [maxLeverage, setMaxLeverage] = useState('')
   const [moneyOpen, setMoneyOpen] = useState(false)
 
   const [loading, setLoading] = useState(false)
@@ -464,7 +465,8 @@ export function BacktestPage() {
     setStopAtrPct(str(p.stopAtrPct))
     setTargetAtrPct(str(p.targetAtrPct))
     setAtrPeriod(str(p.atrPeriod))
-    if (p.riskPerTradePct != null || p.stopAtrPct != null || p.targetAtrPct != null || p.atrPeriod != null) setMoneyOpen(true)
+    setMaxLeverage(str(p.maxLeverage))
+    if (p.riskPerTradePct != null || p.stopAtrPct != null || p.targetAtrPct != null || p.atrPeriod != null || p.maxLeverage != null) setMoneyOpen(true)
     setFiltersOpen(true)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
@@ -496,6 +498,7 @@ export function BacktestPage() {
           ...(stopAtrPct.trim() ? { stopAtrPct: parseFloat(stopAtrPct) } : {}),
           ...(targetAtrPct.trim() ? { targetAtrPct: parseFloat(targetAtrPct) } : {}),
           ...(atrPeriod.trim() ? { atrPeriod: parseInt(atrPeriod) } : {}),
+          ...(maxLeverage.trim() ? { maxLeverage: parseFloat(maxLeverage) } : {}),
         }),
       })
       if (!res.ok) {
@@ -647,6 +650,10 @@ export function BacktestPage() {
               <label className="flex flex-col gap-1 text-xs text-muted-foreground">
                 ATR period
                 <input type="number" min={1} value={atrPeriod} onChange={e => setAtrPeriod(e.target.value)} placeholder="14" className={`${inputCls} w-20`} title="ATR lookback in bars. Blank = 14." />
+              </label>
+              <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+                Max leverage
+                <input type="number" min={0} step={0.5} value={maxLeverage} onChange={e => setMaxLeverage(e.target.value)} placeholder="uncapped" className={`${inputCls} w-24`} title="Cap a position's notional at equity × this. Blank = uncapped (pure risk sizing). 1 = cash account, 4 = Reg-T intraday." />
               </label>
             </div>
           )}
