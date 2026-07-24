@@ -163,27 +163,38 @@ function SummaryGrid({ r }: { r: BacktestResult }) {
 
 function TradesTable({ trades }: { trades: BacktestTradeDto[] }) {
   if (trades.length === 0) return <p className="text-sm text-muted-foreground">No trades.</p>
+  // Full date incl. year, in ET (matches the data's trading session).
+  const dateOpts: Intl.DateTimeFormatOptions = {
+    year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'America/New_York',
+  }
+  // Running (cumulative) realized P&L down the trade list.
+  let running = 0
+  const rows = trades.map(t => {
+    running += t.realizedPnl ?? 0
+    return { t, cum: running }
+  })
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-xs">
         <thead>
           <tr className="border-b border-border text-left text-muted-foreground">
-            {['Symbol', 'Opened', 'Closed', 'Result', 'Entry', 'Stop', 'PT', 'Close', 'Shares', 'P&L', 'R', 'MFE-R', 'MAE-R', 'Hold'].map(h => (
+            {['Symbol', 'Opened', 'Closed', 'Result', 'Entry', 'Stop', 'PT', 'Close', 'Shares', 'P&L', 'Cum P&L', 'R', 'MFE-R', 'MAE-R', 'Hold'].map(h => (
               <th key={h} className="pb-2 pr-3 font-medium whitespace-nowrap">{h}</th>
             ))}
           </tr>
         </thead>
         <tbody>
-          {trades.map(t => {
+          {rows.map(({ t, cum }) => {
             const pnlColor = (t.realizedPnl ?? 0) >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'
+            const cumColor = cum >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'
             return (
               <tr key={t.id} className="border-b border-border/40 last:border-0 hover:bg-muted/30 transition-colors">
                 <td className="py-1.5 pr-3 font-mono font-medium">{t.symbol}</td>
                 <td className="py-1.5 pr-3 tabular-nums text-muted-foreground whitespace-nowrap">
-                  {t.openedAt ? new Date(t.openedAt).toLocaleString('en-GB', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'America/New_York' }) : '—'}
+                  {t.openedAt ? new Date(t.openedAt).toLocaleString('en-GB', dateOpts) : '—'}
                 </td>
                 <td className="py-1.5 pr-3 tabular-nums text-muted-foreground whitespace-nowrap">
-                  {t.closedAt ? new Date(t.closedAt).toLocaleString('en-GB', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'America/New_York' }) : '—'}
+                  {t.closedAt ? new Date(t.closedAt).toLocaleString('en-GB', dateOpts) : '—'}
                 </td>
                 <td className="py-1.5 pr-3">{closeReasonBadge(t.closeReason)}</td>
                 <td className="py-1.5 pr-3 tabular-nums">{fmt(t.actualEntryPrice ?? t.entryPrice)}</td>
@@ -192,6 +203,7 @@ function TradesTable({ trades }: { trades: BacktestTradeDto[] }) {
                 <td className="py-1.5 pr-3 tabular-nums">{fmt(t.closePriceActual)}</td>
                 <td className="py-1.5 pr-3 tabular-nums">{t.shares}</td>
                 <td className={`py-1.5 pr-3 tabular-nums font-medium ${pnlColor}`}>{fmtMoney(t.realizedPnl)}</td>
+                <td className={`py-1.5 pr-3 tabular-nums font-medium ${cumColor}`}>{fmtMoney(cum)}</td>
                 <td className={`py-1.5 pr-3 tabular-nums ${pnlColor}`}>{fmt(t.rMultiple)}R</td>
                 <td className="py-1.5 pr-3 tabular-nums text-green-600 dark:text-green-400">{fmt(t.mfeR)}R</td>
                 <td className="py-1.5 pr-3 tabular-nums text-red-600 dark:text-red-400">{fmt(t.maeR)}R</td>
@@ -250,13 +262,16 @@ function ParamsBlock({ params }: { params: Record<string, unknown> }) {
   )
 }
 
+const HISTORY_PAGE_SIZE = 100
+
 /** Browse persisted backtest runs and open one to view its params + summary + trades. */
-function BacktestHistory({ reloadSignal }: { reloadSignal: number }) {
+function BacktestHistory({ reloadSignal, onApplyParams }: { reloadSignal: number; onApplyParams: (p: Record<string, unknown>) => void }) {
   const [runs, setRuns] = useState<RunOverview[]>([])
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [selected, setSelected] = useState<RunDetail | null>(null)
   const [selectedLoading, setSelectedLoading] = useState(false)
+  const [page, setPage] = useState(0)
 
   useEffect(() => {
     let cancelled = false
@@ -267,7 +282,10 @@ function BacktestHistory({ reloadSignal }: { reloadSignal: number }) {
         return r.json()
       })
       .then((d: RunOverview[]) => {
-        if (!cancelled) setRuns(d)
+        if (!cancelled) {
+          setRuns(d)
+          setPage(0)
+        }
       })
       .catch(e => {
         if (!cancelled) setError(String(e))
@@ -286,13 +304,20 @@ function BacktestHistory({ reloadSignal }: { reloadSignal: number }) {
     try {
       const res = await fetch(`/api/backtest/runs/${id}`)
       if (!res.ok) throw new Error(`${res.status}`)
-      setSelected(await res.json())
+      const data: RunDetail = await res.json()
+      setSelected(data)
+      // Recall this run's exact parameters into the form so it can be tweaked and re-run.
+      onApplyParams(data.params)
     } catch (e) {
       setError(String(e))
     } finally {
       setSelectedLoading(false)
     }
   }
+
+  const totalPages = Math.max(1, Math.ceil(runs.length / HISTORY_PAGE_SIZE))
+  const clampedPage = Math.min(page, totalPages - 1)
+  const pageRuns = runs.slice(clampedPage * HISTORY_PAGE_SIZE, (clampedPage + 1) * HISTORY_PAGE_SIZE)
 
   return (
     <section className="space-y-3">
@@ -311,7 +336,7 @@ function BacktestHistory({ reloadSignal }: { reloadSignal: number }) {
               </tr>
             </thead>
             <tbody>
-              {runs.map(r => {
+              {pageRuns.map(r => {
                 const pnlColor = r.totalPnl >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'
                 return (
                   <tr
@@ -330,12 +355,36 @@ function BacktestHistory({ reloadSignal }: { reloadSignal: number }) {
                     <td className={`py-1.5 pr-3 tabular-nums font-medium ${pnlColor}`}>{fmtMoney(r.totalPnl)}</td>
                     <td className="py-1.5 pr-3 tabular-nums">{fmt(r.profitFactor)}</td>
                     <td className="py-1.5 pr-3 tabular-nums">{fmtPct(r.maxDrawdownPct)}</td>
-                    <td className="py-1.5 pr-3 text-muted-foreground whitespace-nowrap">view →</td>
+                    <td className="py-1.5 pr-3 text-muted-foreground whitespace-nowrap">load →</td>
                   </tr>
                 )
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {runs.length > HISTORY_PAGE_SIZE && (
+        <div className="flex items-center gap-3 text-xs text-muted-foreground">
+          <button
+            type="button"
+            onClick={() => setPage(p => Math.max(0, p - 1))}
+            disabled={clampedPage === 0}
+            className="px-2 py-1 rounded border border-border hover:bg-muted/40 disabled:opacity-40"
+          >
+            ← Prev
+          </button>
+          <span>
+            Page {clampedPage + 1} of {totalPages} · showing {clampedPage * HISTORY_PAGE_SIZE + 1}–{Math.min((clampedPage + 1) * HISTORY_PAGE_SIZE, runs.length)} of {runs.length}
+          </span>
+          <button
+            type="button"
+            onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+            disabled={clampedPage >= totalPages - 1}
+            className="px-2 py-1 rounded border border-border hover:bg-muted/40 disabled:opacity-40"
+          >
+            Next →
+          </button>
         </div>
       )}
 
@@ -381,10 +430,44 @@ export function BacktestPage() {
   const [minFlagBars, setMinFlagBars] = useState('7')
   const [filtersOpen, setFiltersOpen] = useState(false)
 
+  // Money management — blank = server defaults (fixed $ risk, flag-low stop, 2R target, ATR period 14)
+  const [riskPerTradePct, setRiskPerTradePct] = useState('')
+  const [stopAtrPct, setStopAtrPct] = useState('')
+  const [targetAtrPct, setTargetAtrPct] = useState('')
+  const [atrPeriod, setAtrPeriod] = useState('')
+  const [moneyOpen, setMoneyOpen] = useState(false)
+
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<BacktestResult | null>(null)
   const [reloadSignal, setReloadSignal] = useState(0)
+  const [tradesOpen, setTradesOpen] = useState(false)
+
+  /** Loads a stored run's parameters back into the form (called when a history row is clicked). */
+  function applyParams(p: Record<string, unknown>) {
+    const str = (v: unknown) => (v == null ? '' : String(v))
+    if (Array.isArray(p.symbols)) setSymbols((p.symbols as unknown[]).join(','))
+    if (p.from != null) setFrom(String(p.from))
+    if (p.to != null) setTo(String(p.to))
+    if (p.initialCapital != null) setInitialCapital(String(p.initialCapital))
+    if (p.riskPerTrade != null) setRiskPerTrade(String(p.riskPerTrade))
+    if (p.maxOpenPositions != null) setMaxOpenPositions(String(p.maxOpenPositions))
+    if (p.entryBlockMinutesBeforeClose != null) setEntryBlock(String(p.entryBlockMinutesBeforeClose))
+    if (p.skipFirstRthMinutes != null) setSkipFirstRthMinutes(String(p.skipFirstRthMinutes))
+    if (typeof p.requireNegativeChannelSlope === 'boolean') setRequireNegativeSlope(p.requireNegativeChannelSlope)
+    if (p.minFlagpoleAtrMultiple != null) setMinPoleAtr(String(p.minFlagpoleAtrMultiple))
+    if (p.maxFlagpoleAtrMultiple != null) setMaxPoleAtr(String(p.maxFlagpoleAtrMultiple))
+    if (p.minFlagRetracementPct != null) setMinRetracement(String(p.minFlagRetracementPct))
+    if (p.minFlagBarsForEntry != null) setMinFlagBars(String(p.minFlagBarsForEntry))
+    // Money management — set to the run's value, or clear (server default) when the run didn't use it.
+    setRiskPerTradePct(str(p.riskPerTradePct))
+    setStopAtrPct(str(p.stopAtrPct))
+    setTargetAtrPct(str(p.targetAtrPct))
+    setAtrPeriod(str(p.atrPeriod))
+    if (p.riskPerTradePct != null || p.stopAtrPct != null || p.targetAtrPct != null || p.atrPeriod != null) setMoneyOpen(true)
+    setFiltersOpen(true)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
 
   async function run() {
     setLoading(true)
@@ -408,6 +491,11 @@ export function BacktestPage() {
           maxFlagpoleAtrMultiple: parseFloat(maxPoleAtr),
           minFlagRetracementPct: parseFloat(minRetracement),
           minFlagBarsForEntry: parseInt(minFlagBars),
+          // Money management — sent only when set, so a blank field falls back to the server default.
+          ...(riskPerTradePct.trim() ? { riskPerTradePct: parseFloat(riskPerTradePct) } : {}),
+          ...(stopAtrPct.trim() ? { stopAtrPct: parseFloat(stopAtrPct) } : {}),
+          ...(targetAtrPct.trim() ? { targetAtrPct: parseFloat(targetAtrPct) } : {}),
+          ...(atrPeriod.trim() ? { atrPeriod: parseInt(atrPeriod) } : {}),
         }),
       })
       if (!res.ok) {
@@ -459,9 +547,16 @@ export function BacktestPage() {
             Capital ($)
             <input type="number" value={initialCapital} onChange={e => setInitialCapital(e.target.value)} className={`${inputCls} w-28`} />
           </label>
-          <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+          <label className={`flex flex-col gap-1 text-xs text-muted-foreground ${riskPerTradePct.trim() ? 'opacity-40' : ''}`}>
             Risk/trade ($)
-            <input type="number" value={riskPerTrade} onChange={e => setRiskPerTrade(e.target.value)} className={`${inputCls} w-24`} />
+            <input
+              type="number"
+              value={riskPerTrade}
+              onChange={e => setRiskPerTrade(e.target.value)}
+              disabled={!!riskPerTradePct.trim()}
+              title={riskPerTradePct.trim() ? 'Overridden by Risk/trade (% equity)' : undefined}
+              className={`${inputCls} w-24 disabled:cursor-not-allowed`}
+            />
           </label>
           <label className="flex flex-col gap-1 text-xs text-muted-foreground">
             Max positions
@@ -525,29 +620,70 @@ export function BacktestPage() {
           )}
         </div>
 
+        {/* Money management */}
+        <div>
+          <button
+            type="button"
+            onClick={() => setMoneyOpen(o => !o)}
+            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <span className={`transition-transform ${moneyOpen ? 'rotate-90' : ''}`}>▶</span>
+            Money management
+          </button>
+          {moneyOpen && (
+            <div className="mt-3 flex flex-wrap gap-3 items-end border border-border rounded-lg p-4 bg-muted/20">
+              <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+                Risk/trade (% equity)
+                <input type="number" min={0} max={100} step={0.25} value={riskPerTradePct} onChange={e => setRiskPerTradePct(e.target.value)} placeholder="fixed $" className={`${inputCls} w-28`} title="Risk per trade as % of current account equity. Overrides Risk/trade ($) when set; blank = use the fixed dollar amount." />
+              </label>
+              <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+                Stop (% of ATR)
+                <input type="number" min={0} step={10} value={stopAtrPct} onChange={e => setStopAtrPct(e.target.value)} placeholder="flag low" className={`${inputCls} w-28`} title="Stop distance as % of ATR (150 = 1.5×ATR). Blank = flag-low stop." />
+              </label>
+              <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+                Target (% of ATR)
+                <input type="number" min={0} step={10} value={targetAtrPct} onChange={e => setTargetAtrPct(e.target.value)} placeholder="2R" className={`${inputCls} w-28`} title="Target distance as % of ATR (150 = 1.5×ATR). Blank = 2R of the stop distance." />
+              </label>
+              <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+                ATR period
+                <input type="number" min={1} value={atrPeriod} onChange={e => setAtrPeriod(e.target.value)} placeholder="14" className={`${inputCls} w-20`} title="ATR lookback in bars. Blank = 14." />
+              </label>
+            </div>
+          )}
+        </div>
+
         {error && (
           <p className="text-sm text-red-600 dark:text-red-400">Error: {error}</p>
         )}
       </section>
 
-      {/* Results */}
+      {/* Current-run summary (kept up top for immediate feedback) */}
       {result && (
-        <div className="space-y-6">
+        <div className="space-y-4">
           <div className="text-xs text-muted-foreground">
             {result.symbols.join(', ')} · {result.from} – {result.to}
           </div>
-
           <SummaryGrid r={result} />
-
-          <section className="space-y-3">
-            <h2 className="text-base font-medium">Trades ({result.trades.length})</h2>
-            <TradesTable trades={result.trades} />
-          </section>
         </div>
       )}
 
-      {/* Saved-run history */}
-      <BacktestHistory reloadSignal={reloadSignal} />
+      {/* Saved-run history — shown before the per-trade detail (click a row to load its params) */}
+      <BacktestHistory reloadSignal={reloadSignal} onApplyParams={applyParams} />
+
+      {/* Current-run trades — collapsed by default, expand on demand */}
+      {result && (
+        <section className="space-y-3">
+          <button
+            type="button"
+            onClick={() => setTradesOpen(o => !o)}
+            className="flex items-center gap-1.5 text-base font-medium hover:text-foreground/80 transition-colors"
+          >
+            <span className={`text-xs transition-transform ${tradesOpen ? 'rotate-90' : ''}`}>▶</span>
+            Trades ({result.trades.length})
+          </button>
+          {tradesOpen && <TradesTable trades={result.trades} />}
+        </section>
+      )}
     </div>
   )
 }
