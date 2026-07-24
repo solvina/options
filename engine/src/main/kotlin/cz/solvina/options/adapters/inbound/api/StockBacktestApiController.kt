@@ -61,6 +61,7 @@ class StockBacktestApiController(
         val riskPerTrade: Double? = null,
         val riskPerTradePct: Double? = null,
         val maxOpenPositions: Int? = null,
+        val maxLeverage: Double? = null,
     ) {
         /** Nulls fall back to [RuleBacktestStrategy.Params] defaults. Shared with the sweep API. */
         fun toParams(): RuleBacktestStrategy.Params {
@@ -81,6 +82,7 @@ class StockBacktestApiController(
                 riskPerTrade = riskPerTrade ?: d.riskPerTrade,
                 riskPerTradePct = riskPerTradePct ?: d.riskPerTradePct,
                 maxOpenPositions = maxOpenPositions ?: d.maxOpenPositions,
+                maxLeverage = maxLeverage ?: d.maxLeverage,
             )
         }
     }

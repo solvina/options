@@ -42,6 +42,10 @@ class RuleBacktestStrategy(
         /** When > 0, overrides [riskPerTrade]: dollar risk = current capital × this / 100. */
         val riskPerTradePct: Double = 0.0,
         val maxOpenPositions: Int = 1,
+        /** Optional buying-power ceiling: cap a position's notional at capital × this. 0 = uncapped
+         *  (pure risk sizing). A cash/1× cap clamps tight-stop, high-priced names to a few shares
+         *  regardless of risk, so it's opt-in, not a silent default. */
+        val maxLeverage: Double = 0.0,
     )
 
     companion object {
@@ -65,6 +69,7 @@ class RuleBacktestStrategy(
                 p.targetAtrMultiple < 0.0 -> "targetAtrMultiple must be >= 0 (0 = use targetPct)"
                 p.riskPerTradePct < 0.0 || p.riskPerTradePct > 100.0 -> "riskPerTradePct must be in [0, 100]"
                 p.riskPerTradePct == 0.0 && p.riskPerTrade <= 0.0 -> "riskPerTrade must be > 0 when riskPerTradePct is unset"
+                p.maxLeverage < 0.0 -> "maxLeverage must be >= 0 (0 = uncapped)"
                 else -> null
             }
     }
@@ -148,13 +153,18 @@ class RuleBacktestStrategy(
         val target = if (p.targetAtrMultiple > 0.0) entry + atr * p.targetAtrMultiple else entry * (1.0 + p.targetPct / 100.0)
         val perShareRisk = entry - stop
         if (perShareRisk <= 0.0) return emptyList()
-        val riskDollars = if (p.riskPerTradePct > 0.0) account.capital.toDouble() * p.riskPerTradePct / 100.0 else p.riskPerTrade
-        // Cap notional at capital/maxOpenPositions: risk-based sizing with a tight stop would
-        // otherwise buy more stock than the account can pay for (the engine tracks realized
-        // capital only and would happily book the leveraged P&L). The per-slot split keeps the
-        // aggregate notional of concurrent positions within capital.
-        val maxNotional = account.capital.toDouble() / p.maxOpenPositions
-        val shares = minOf(floor(riskDollars / perShareRisk), floor(maxNotional / entry)).toInt()
+        // Size straight off the risk budget: % of current equity when set, else the fixed dollar
+        // risk. Ruin guard: never risk more than the account holds, so size shrinks as equity falls
+        // and a drained account (<= 0) opens nothing — no bounce-back from thin air.
+        val rawRiskDollars = if (p.riskPerTradePct > 0.0) account.capital.toDouble() * p.riskPerTradePct / 100.0 else p.riskPerTrade
+        val riskDollars = rawRiskDollars.coerceAtMost(account.capital.toDouble()).coerceAtLeast(0.0)
+        var shares = floor(riskDollars / perShareRisk).toInt()
+        // Optional buying-power ceiling: cap notional at capital × maxLeverage. 0 (default) = uncapped
+        // (pure risk sizing) — a cash/1× cap silently masks the risk lever on tight-stop, high-priced
+        // names (the old mandatory capital/maxOpenPositions cap did exactly that).
+        if (p.maxLeverage > 0.0 && entry > 0.0) {
+            shares = minOf(shares, floor(account.capital.toDouble() * p.maxLeverage / entry).toInt())
+        }
         if (shares <= 0) return emptyList()
 
         val tradeId = "rule-${counter.incrementAndGet()}"
