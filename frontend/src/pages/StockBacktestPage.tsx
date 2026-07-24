@@ -26,6 +26,7 @@ interface StockForm {
   riskPerTrade: number
   riskPerTradePct: number
   maxOpenPositions: number
+  maxLeverage: number
 }
 
 const STORAGE_KEY = 'stockBacktestForm'
@@ -46,6 +47,7 @@ const NUM_MIN: Partial<Record<keyof StockForm, number>> = {
   riskPerTrade: 1,
   riskPerTradePct: 0,
   maxOpenPositions: 1,
+  maxLeverage: 0,
 }
 
 /** Coerces an untrusted form (localStorage blob, DB preset payload, mid-typing NaN state) into a
@@ -85,6 +87,7 @@ const DEFAULTS: StockForm = {
   riskPerTrade: 200,
   riskPerTradePct: 0,
   maxOpenPositions: 1,
+  maxLeverage: 0,
 }
 
 interface Summary {
@@ -164,7 +167,8 @@ const HELP: Partial<Record<keyof StockForm, string>> = {
   targetPct: 'Exit if price rises this % above entry. 6 with a 3 stop = 2:1 reward-to-risk; break-even win rate ≈ 33%.',
   riskPerTrade: 'Fixed $ lost if the stop is hit; shares = risk ÷ (entry − stop). $200 risk, 3% stop, $150 stock ≈ 44 shares. Ignored when % of capital is set.',
   riskPerTradePct: 'Risk this % of CURRENT capital per trade — compounds as the account grows (1% = $200 on $20k, $300 on $30k). 0 = use the fixed $ instead.',
-  maxOpenPositions: 'Max simultaneous positions. Each position is also capped at capital ÷ this, so the account is never over-invested.',
+  maxOpenPositions: 'Max simultaneous positions.',
+  maxLeverage: 'Optional buying-power ceiling: cap a position\'s notional at capital × this. 0 = uncapped (pure risk sizing). 1 = cash account, 4 = Reg-T intraday. Leave 0 unless you want to constrain leverage — a low cap silently masks the risk lever on high-priced, tight-stop names.',
 }
 
 function Help({ text }: { text?: string }) {
@@ -382,6 +386,7 @@ export function StockBacktestPage() {
           riskPerTrade: f.riskPerTrade,
           riskPerTradePct: f.riskPerTradePct,
           maxOpenPositions: f.maxOpenPositions,
+          maxLeverage: f.maxLeverage,
         }),
       })
       if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`)
@@ -508,6 +513,7 @@ export function StockBacktestPage() {
                 onChange={(e) => set('riskPerTradePct', parseFloat(e.target.value))} />
             </label>
             {num('maxOpenPositions', 'Max open positions', '1')}
+            {num('maxLeverage', 'Max leverage (0 = uncapped)', '0.5')}
           </div>
         )}
       </section>
