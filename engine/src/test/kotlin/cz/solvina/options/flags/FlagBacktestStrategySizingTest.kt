@@ -105,7 +105,7 @@ class FlagBacktestStrategySizingTest {
     @Test
     fun `drained equity opens no trade (no bounce-back from thin air)`() {
         val bracket = bracketFor(strategy(), BigDecimal("1.00"))
-        assertEquals(null, bracket, "A drained account must not open trades — the affordability floor forces 0 shares")
+        assertEquals(null, bracket, "A drained account must not open trades — risk of ~1% of \$1 floors shares to 0")
     }
 
     @Test
@@ -113,6 +113,15 @@ class FlagBacktestStrategySizingTest {
         val small = bracketFor(strategy(), BigDecimal("20000"))!!.shares
         val big = bracketFor(strategy(), BigDecimal("40000"))!!.shares
         assertTrue(big > small, "Doubling equity must increase size under percent-of-equity risk (was $small → $big)")
+    }
+
+    @Test
+    fun `higher risk percent sizes a bigger position at the same equity`() {
+        // Regression guard: an over-tight affordability cap once made every risk setting collapse to
+        // the same share count (SPY intraday clamped to equity/maxPositions/price). Risk must drive size.
+        val onePct = bracketFor(strategy(riskPerTradePct = 1.0), BigDecimal("20000"))!!.shares
+        val fourPct = bracketFor(strategy(riskPerTradePct = 4.0), BigDecimal("20000"))!!.shares
+        assertTrue(fourPct > onePct, "4% risk must size larger than 1% at the same equity (was $onePct → $fourPct)")
     }
 
     @Test

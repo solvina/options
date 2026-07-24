@@ -64,6 +64,9 @@ class BacktestApiController(
         val riskPerTradePct: Double? = null,
         // ATR lookback in bars (default from config = 14).
         val atrPeriod: Int? = null,
+        // Optional buying-power ceiling: cap a position's notional at equity × maxLeverage. Null =
+        // uncapped (pure risk sizing). Set e.g. 1.0 for a cash account, 4.0 for Reg-T intraday.
+        val maxLeverage: Double? = null,
         val holdOvernight: Boolean = false,
         val trailStopRMultiple: Double? = null,
         val barMinutes: Int = 5,
@@ -135,6 +138,7 @@ class BacktestApiController(
         if (request.stopAtrPct != null && request.stopAtrPct <= 0.0) return ResponseEntity.badRequest().build()
         if (request.targetAtrPct != null && request.targetAtrPct <= 0.0) return ResponseEntity.badRequest().build()
         if (request.atrPeriod != null && request.atrPeriod < 1) return ResponseEntity.badRequest().build()
+        if (request.maxLeverage != null && request.maxLeverage <= 0.0) return ResponseEntity.badRequest().build()
 
         val tradingConfig =
             FlagTradingConfig(
@@ -162,6 +166,7 @@ class BacktestApiController(
                 targetAtrPct = request.targetAtrPct,
                 riskPerTradePct = request.riskPerTradePct,
                 atrPeriod = request.atrPeriod,
+                maxLeverage = request.maxLeverage,
             )
         val engine = BacktestEngine(barStore)
         val engineRequest =

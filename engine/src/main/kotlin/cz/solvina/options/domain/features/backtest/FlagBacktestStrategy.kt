@@ -46,6 +46,10 @@ class FlagBacktestStrategy(
     private val riskPerTradePct: Double? = null,
     // ATR lookback in bars; defaults to the strategy config's atrPeriod (14).
     private val atrPeriod: Int? = null,
+    // Optional buying-power ceiling: cap a position's notional at equity × maxLeverage. Null = no cap
+    // (pure risk sizing). A cash/1× cap would clamp tight-stop, high-priced names to a few shares
+    // regardless of the risk setting — so it's opt-in, not a silent default.
+    private val maxLeverage: Double? = null,
 ) : BacktestableStrategy {
     private val detectors = mutableMapOf<Symbol, PatternDetector>()
     private val buffers = mutableMapOf<Symbol, BarBuffer>()
@@ -217,21 +221,31 @@ class FlagBacktestStrategy(
         val risk = entryPrice.subtract(stopLossPrice).abs()
         if (risk <= BigDecimal.ZERO) return null
 
-        // Risk budget: % of CURRENT equity when set (compounds down as well as up), else fixed $.
-        val riskDollars =
+        // Size straight off the risk budget: % of CURRENT equity when set (compounds down as well as
+        // up), else the fixed dollar risk. shares = riskDollars / per-share stop distance — the risk
+        // lever is what actually moves position size.
+        val rawRiskDollars =
             riskPerTradePct
                 ?.let { account.capital.multiply(BigDecimal(it / 100.0)) }
                 ?: tradingConfig.riskPerTrade
-        // Account-aware sizing: risk-based shares, capped by an affordability slot
-        // (equity / maxOpenPositions) so aggregate concurrent notional stays within equity. When
-        // equity is drained the slot floors shares to 0 and NO trade opens — a blown-up account
-        // cannot bounce back from thin air (note: no coerceAtLeast(1) here, unlike the live sizer).
-        val riskShares = riskDollars.divide(risk, 0, RoundingMode.FLOOR).toInt()
-        val maxNotionalPerSlot =
-            account.capital.divide(BigDecimal(tradingConfig.maxOpenPositions.coerceAtLeast(1)), 2, RoundingMode.FLOOR)
-        val affordableShares =
-            if (entryPrice > BigDecimal.ZERO) maxNotionalPerSlot.divide(entryPrice, 0, RoundingMode.FLOOR).toInt() else 0
-        val shares = minOf(riskShares, affordableShares)
+        // Ruin guard: never risk more than the account holds, so size shrinks as equity falls and a
+        // drained account (<= 0) opens nothing — no bounce-back from thin air. (% risk is already
+        // <= equity; this only bites fixed-$ risk near zero.)
+        val riskDollars = rawRiskDollars.coerceAtMost(account.capital).coerceAtLeast(BigDecimal.ZERO)
+        var shares = riskDollars.divide(risk, 0, RoundingMode.FLOOR).toInt()
+        // Optional buying-power ceiling: cap the position's notional at equity × maxLeverage. Null
+        // (default) = uncapped, so the risk lever is never silently masked on tight-stop, high-priced
+        // names (a cash/1× cap clamps SPY intraday to a handful of shares regardless of risk).
+        maxLeverage?.let { lev ->
+            if (entryPrice > BigDecimal.ZERO) {
+                val cap =
+                    account.capital
+                        .multiply(BigDecimal(lev))
+                        .divide(entryPrice, 0, RoundingMode.FLOOR)
+                        .toInt()
+                shares = minOf(shares, cap)
+            }
+        }
         if (shares <= 0) return null
 
         // Target: % of ATR when set (150 = 1.5×ATR), else the R-multiple of the stop distance.
