@@ -51,6 +51,7 @@ import java.time.Clock
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneOffset
 import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -81,8 +82,8 @@ class SpreadManagementServiceTest {
     // unless we deliberately move the clock forward.
     private val clockAtEntry =
         Clock.fixed(
-            LocalDate.of(2025, 1, 1).atStartOfDay(java.time.ZoneOffset.UTC).toInstant(),
-            java.time.ZoneOffset.UTC,
+            LocalDate.of(2025, 1, 1).atStartOfDay(ZoneOffset.UTC).toInstant(),
+            ZoneOffset.UTC,
         )
 
     // SL quality gates (confirm cycles / entry grace / opening-rotation skip) are disabled here so
@@ -589,7 +590,7 @@ class SpreadManagementServiceTest {
             // spread value = $0.60 — above TP($0.50) and below SL($1.50) → only DTE fires.
             // Time exit has live quotes here, so it closes via the limit-chase path, not market.
             val nearExpiry = LocalDate.of(2025, 3, 21).minusDays(10)
-            val clock = Clock.fixed(nearExpiry.atStartOfDay(java.time.ZoneOffset.UTC).toInstant(), java.time.ZoneOffset.UTC)
+            val clock = Clock.fixed(nearExpiry.atStartOfDay(ZoneOffset.UTC).toInstant(), ZoneOffset.UTC)
 
             val spreadPort = mockk<BullPutSpreadPort>()
             val marketDataPort = mockMarketData()
@@ -620,7 +621,7 @@ class SpreadManagementServiceTest {
             // Same DTE trigger as above, but no live quotes are available — a limit can't be priced,
             // so the time exit must still go out, via forceCloseSpread (market).
             val nearExpiry = LocalDate.of(2025, 3, 21).minusDays(10)
-            val clock = Clock.fixed(nearExpiry.atStartOfDay(java.time.ZoneOffset.UTC).toInstant(), java.time.ZoneOffset.UTC)
+            val clock = Clock.fixed(nearExpiry.atStartOfDay(ZoneOffset.UTC).toInstant(), ZoneOffset.UTC)
 
             val spreadPort = mockk<BullPutSpreadPort>()
             val marketDataPort = mockMarketData()

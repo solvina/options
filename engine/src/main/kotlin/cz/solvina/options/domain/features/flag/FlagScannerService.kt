@@ -291,7 +291,7 @@ class FlagScannerService(
                     .coerceAtLeast(0)
             val flagAvgVolume =
                 breakout.flag.bars
-                    .map { it.volume.toLong() }
+                    .map { it.volume }
                     .average()
                     .toLong()
 
@@ -450,7 +450,7 @@ class FlagScannerService(
         val symbol: String,
         val subscriptionActive: Boolean,
         val candlesBuffered: Int,
-        val lastCandleAt: java.time.Instant?,
+        val lastCandleAt: Instant?,
         val patternState: String,
         val poleHeightPct: Double?,
         val flagBars: Int?,

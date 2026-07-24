@@ -29,6 +29,8 @@ import kotlinx.coroutines.SupervisorJob
 import org.junit.jupiter.api.Test
 import java.math.BigDecimal
 import java.time.LocalDate
+import java.time.LocalTime
+import java.time.ZoneId
 import kotlin.test.assertTrue
 
 /**
@@ -97,9 +99,9 @@ class BacktestSmokeTest {
 
                 override fun getMarketSchedule(symbol: Symbol) =
                     cz.solvina.options.domain.features.universe.MarketSchedule(
-                        zone = java.time.ZoneId.of("America/New_York"),
-                        open = java.time.LocalTime.of(9, 30),
-                        close = java.time.LocalTime.of(16, 0),
+                        zone = ZoneId.of("America/New_York"),
+                        open = LocalTime.of(9, 30),
+                        close = LocalTime.of(16, 0),
                         session = "US",
                     )
 
@@ -127,7 +129,7 @@ class BacktestSmokeTest {
                 config,
                 clock,
                 noopIvStore,
-                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined),
+                CoroutineScope(Dispatchers.Unconfined),
             )
 
         val spreadQuery = SpreadQueryFacade(spreadAdapter, InMemoryBearCallSpreadPort())

@@ -7,6 +7,7 @@ import cz.solvina.options.domain.models.OptionContract
 import cz.solvina.options.domain.models.Symbol
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import java.time.temporal.ChronoUnit
 
 /**
  * Backtest implementation of [MarketTickPort].
@@ -43,7 +44,7 @@ class BacktestMarketTickAdapter(
             val spot = marketDataAdapter.getUnderlyingPrice(soldContract.symbol).amount.toDouble()
             val iv = marketDataAdapter.getIv(soldContract.symbol)
             val tteDays =
-                java.time.temporal.ChronoUnit.DAYS
+                ChronoUnit.DAYS
                     .between(clock.currentDate(), soldContract.expiry)
                     .toDouble()
             val tte = tteDays / 365.0

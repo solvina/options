@@ -38,8 +38,11 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import java.math.BigDecimal
 import java.time.Clock
+import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalTime
+import java.time.ZoneId
 import java.util.UUID
 import kotlin.test.assertEquals
 
@@ -256,9 +259,9 @@ class ScannerServiceTest {
 
                 override fun getMarketSchedule(symbol: Symbol) =
                     cz.solvina.options.domain.features.universe.MarketSchedule(
-                        zone = java.time.ZoneId.of("America/New_York"),
-                        open = java.time.LocalTime.of(9, 30),
-                        close = java.time.LocalTime.of(16, 0),
+                        zone = ZoneId.of("America/New_York"),
+                        open = LocalTime.of(9, 30),
+                        close = LocalTime.of(16, 0),
                         session = "US",
                     )
 
@@ -397,7 +400,7 @@ class ScannerServiceTest {
 
         override fun blockEntry(
             symbol: Symbol,
-            duration: java.time.Duration,
+            duration: Duration,
         ) {}
     }
 }

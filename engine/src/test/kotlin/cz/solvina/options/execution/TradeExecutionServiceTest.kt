@@ -31,7 +31,6 @@ import cz.solvina.options.domain.models.OptionContract
 import cz.solvina.options.domain.models.OptionType
 import cz.solvina.options.domain.models.Symbol
 import cz.solvina.options.testutil.InMemoryBearCallSpreadPort
-import io.github.oshai.kotlinlogging.KotlinLogging
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.CompletableDeferred
@@ -50,6 +49,8 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import java.math.BigDecimal
 import java.time.Clock
+import java.time.Duration
+import java.time.Instant
 import java.time.LocalDate
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -59,8 +60,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
-
-private val logger = KotlinLogging.logger {}
+import kotlin.time.Duration.Companion.milliseconds
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class TradeExecutionServiceTest {
@@ -79,7 +79,7 @@ class TradeExecutionServiceTest {
             executionTimeoutMinutes = 1,
             ticksBeforePriceAdjust = 3,
             maxLegBidAskSpreadPct = 0.30,
-            feePerContract = java.math.BigDecimal.ZERO,
+            feePerContract = BigDecimal.ZERO,
         )
 
     // Bull-put drift default for the execution tests; the drift-abort test overrides it.
@@ -153,7 +153,7 @@ class TradeExecutionServiceTest {
     // -------------------------------------------------------------------------
 
     @Test
-    fun `fills_immediately_at_target_credit`() =
+    fun fills_immediately_at_target_credit() =
         runTest {
             val fillChannel = Channel<OrderStatus>(1)
 
@@ -287,7 +287,7 @@ class TradeExecutionServiceTest {
         }
 
     @Test
-    fun `ladders_price_down_over_ticks`() =
+    fun ladders_price_down_over_ticks() =
         runTest {
             val submitCount = AtomicInteger(0)
 
@@ -331,7 +331,7 @@ class TradeExecutionServiceTest {
 
                     override suspend fun getSymbolsWithOpenOrders(): Set<Symbol> = emptySet()
 
-                    override fun consumeFillPrice(orderId: Int): java.math.BigDecimal? = null
+                    override fun consumeFillPrice(orderId: Int): BigDecimal? = null
                 }
 
             val service =
@@ -408,7 +408,7 @@ class TradeExecutionServiceTest {
 
                     override suspend fun getSymbolsWithOpenOrders(): Set<Symbol> = emptySet()
 
-                    override fun consumeFillPrice(orderId: Int): java.math.BigDecimal? = null
+                    override fun consumeFillPrice(orderId: Int): BigDecimal? = null
                 }
 
             val service =
@@ -431,7 +431,7 @@ class TradeExecutionServiceTest {
         }
 
     @Test
-    fun `never_goes_below_floor`() =
+    fun never_goes_below_floor() =
         runTest {
             val submittedCredits = mutableListOf<BigDecimal>()
 
@@ -451,7 +451,7 @@ class TradeExecutionServiceTest {
                     }
 
                     override suspend fun awaitFill(orderId: Int): OrderStatus {
-                        delay(Long.MAX_VALUE)
+                        delay(Long.MAX_VALUE.milliseconds)
                         return OrderStatus.CANCELLED
                     }
 
@@ -467,7 +467,7 @@ class TradeExecutionServiceTest {
 
                     override suspend fun getSymbolsWithOpenOrders(): Set<Symbol> = emptySet()
 
-                    override fun consumeFillPrice(orderId: Int): java.math.BigDecimal? = null
+                    override fun consumeFillPrice(orderId: Int): BigDecimal? = null
                 }
 
             val service =
@@ -494,7 +494,7 @@ class TradeExecutionServiceTest {
         }
 
     @Test
-    fun `drift_aborts_execution`() =
+    fun drift_aborts_execution() =
         runTest {
             val service =
                 buildService(
@@ -518,7 +518,7 @@ class TradeExecutionServiceTest {
         }
 
     @Test
-    fun `timeout_cancels_order`() =
+    fun timeout_cancels_order() =
         runTest {
             var cancelCalled = false
             val orderPort =
@@ -532,7 +532,7 @@ class TradeExecutionServiceTest {
                     ): Int = 1
 
                     override suspend fun awaitFill(orderId: Int): OrderStatus {
-                        delay(Long.MAX_VALUE)
+                        delay(Long.MAX_VALUE.milliseconds)
                         return OrderStatus.CANCELLED
                     }
 
@@ -551,7 +551,7 @@ class TradeExecutionServiceTest {
 
                     override suspend fun getSymbolsWithOpenOrders(): Set<Symbol> = emptySet()
 
-                    override fun consumeFillPrice(orderId: Int): java.math.BigDecimal? = null
+                    override fun consumeFillPrice(orderId: Int): BigDecimal? = null
                 }
 
             val service =
@@ -561,7 +561,7 @@ class TradeExecutionServiceTest {
                     config = baseConfig.copy(executionTimeoutMinutes = 1),
                 )
 
-            launch { advanceTimeBy(61_000) }
+            launch { advanceTimeBy(61_000.milliseconds) }
 
             val result = service.execute(buildRequest())
 
@@ -591,7 +591,7 @@ class TradeExecutionServiceTest {
                     ): Int = 1
 
                     override suspend fun awaitFill(orderId: Int): OrderStatus {
-                        delay(Long.MAX_VALUE)
+                        delay(Long.MAX_VALUE.milliseconds)
                         return OrderStatus.CANCELLED
                     }
 
@@ -613,7 +613,7 @@ class TradeExecutionServiceTest {
 
                     override suspend fun getSymbolsWithOpenOrders(): Set<Symbol> = emptySet()
 
-                    override fun consumeFillPrice(orderId: Int): java.math.BigDecimal? = null
+                    override fun consumeFillPrice(orderId: Int): BigDecimal? = null
                 }
 
             val service =
@@ -624,7 +624,7 @@ class TradeExecutionServiceTest {
                     config = baseConfig.copy(ticksBeforePriceAdjust = 1, executionTimeoutMinutes = 1),
                 )
 
-            launch { advanceTimeBy(61_000) }
+            launch { advanceTimeBy(61_000.milliseconds) }
 
             val result = service.execute(buildRequest(targetCredit = BigDecimal("1.00")))
 
@@ -678,7 +678,7 @@ class TradeExecutionServiceTest {
 
                     override suspend fun getSymbolsWithOpenOrders(): Set<Symbol> = emptySet()
 
-                    override fun consumeFillPrice(orderId: Int): java.math.BigDecimal? = null
+                    override fun consumeFillPrice(orderId: Int): BigDecimal? = null
                 }
 
             val service =
@@ -745,7 +745,7 @@ class TradeExecutionServiceTest {
 
                     override suspend fun getSymbolsWithOpenOrders(): Set<Symbol> = emptySet()
 
-                    override fun consumeFillPrice(orderId: Int): java.math.BigDecimal? = null
+                    override fun consumeFillPrice(orderId: Int): BigDecimal? = null
                 }
 
             val service =
@@ -814,7 +814,7 @@ class TradeExecutionServiceTest {
 
                     override suspend fun getSymbolsWithOpenOrders(): Set<Symbol> = emptySet()
 
-                    override fun consumeFillPrice(orderId: Int): java.math.BigDecimal? = null
+                    override fun consumeFillPrice(orderId: Int): BigDecimal? = null
                 }
 
             val service =
@@ -868,7 +868,7 @@ class TradeExecutionServiceTest {
                     ): Int = 1
 
                     override suspend fun awaitFill(orderId: Int): OrderStatus {
-                        delay(Long.MAX_VALUE)
+                        delay(Long.MAX_VALUE.milliseconds)
                         return OrderStatus.CANCELLED
                     }
 
@@ -884,7 +884,7 @@ class TradeExecutionServiceTest {
 
                     override suspend fun getSymbolsWithOpenOrders(): Set<Symbol> = emptySet()
 
-                    override fun consumeFillPrice(orderId: Int): java.math.BigDecimal? = null
+                    override fun consumeFillPrice(orderId: Int): BigDecimal? = null
                 }
 
             val service =
@@ -895,7 +895,7 @@ class TradeExecutionServiceTest {
                 )
 
             val resultDeferred = backgroundScope.async { service.execute(buildRequest(targetCredit = BigDecimal("1.00"))) }
-            advanceTimeBy(61_000)
+            advanceTimeBy(61_000.milliseconds)
             val result = resultDeferred.await()
 
             assertEquals(
@@ -906,7 +906,7 @@ class TradeExecutionServiceTest {
         }
 
     @Test
-    fun `exposure_rejects_duplicate`() =
+    fun exposure_rejects_duplicate() =
         runTest {
             val spreadPort =
                 object : InMemoryBullPutSpreadPort() {
@@ -927,7 +927,7 @@ class TradeExecutionServiceTest {
         }
 
     @Test
-    fun `capital_rejects_underfunded`() =
+    fun capital_rejects_underfunded() =
         runTest {
             // maxRiskPerContract = 4.00 × 100 = 400; available = 300
             val service =
@@ -943,7 +943,7 @@ class TradeExecutionServiceTest {
         }
 
     @Test
-    fun `liquidity_rejects_wide_spread`() =
+    fun liquidity_rejects_wide_spread() =
         runTest {
             // sold bid-ask spread = (1.50 - 0.10) / mid(0.80) ≈ 175 % > 30 %
             val service =
@@ -1008,7 +1008,7 @@ class TradeExecutionServiceTest {
 
             override suspend fun getSymbolsWithOpenOrders(): Set<Symbol> = emptySet()
 
-            override fun consumeFillPrice(orderId: Int): java.math.BigDecimal? = null
+            override fun consumeFillPrice(orderId: Int): BigDecimal? = null
         }
     }
 
@@ -1073,7 +1073,7 @@ class TradeExecutionServiceTest {
 
             override suspend fun getSymbolsWithOpenOrders(): Set<Symbol> = emptySet()
 
-            override fun consumeFillPrice(orderId: Int): java.math.BigDecimal? = null
+            override fun consumeFillPrice(orderId: Int): BigDecimal? = null
         }
 
     private fun neverFillOrderPort(): OrderExecutionPort {
@@ -1088,7 +1088,7 @@ class TradeExecutionServiceTest {
             ): Int = nextId.getAndIncrement()
 
             override suspend fun awaitFill(orderId: Int): OrderStatus {
-                delay(Long.MAX_VALUE)
+                delay(Long.MAX_VALUE.milliseconds)
                 return OrderStatus.CANCELLED
             }
 
@@ -1104,11 +1104,11 @@ class TradeExecutionServiceTest {
 
             override suspend fun getSymbolsWithOpenOrders(): Set<Symbol> = emptySet()
 
-            override fun consumeFillPrice(orderId: Int): java.math.BigDecimal? = null
+            override fun consumeFillPrice(orderId: Int): BigDecimal? = null
         }
     }
 
-    private open inner class InMemoryBullPutSpreadPort : BullPutSpreadPort {
+    private open class InMemoryBullPutSpreadPort : BullPutSpreadPort {
         private val store = mutableListOf<BullPutSpread>()
 
         override suspend fun save(spread: BullPutSpread): BullPutSpread {
@@ -1148,7 +1148,7 @@ class TradeExecutionServiceTest {
 
         override suspend fun countByStatus(status: SpreadStatus): Long = store.count { it.status == status }.toLong()
 
-        override suspend fun countFilledSince(since: java.time.Instant): Long =
+        override suspend fun countFilledSince(since: Instant): Long =
             store.count { it.openedAt >= since && it.status !in SpreadStatus.NOT_FILLED }.toLong()
 
         override suspend fun findByStatus(status: SpreadStatus): List<BullPutSpread> = store.filter { it.status == status }
@@ -1179,7 +1179,7 @@ class TradeExecutionServiceTest {
             status = SpreadStatus.OPEN,
             ivRankAtEntry = 35.0,
             underlyingPriceAtEntry = BigDecimal("500"),
-            openedAt = java.time.Instant.now(),
+            openedAt = Instant.now(),
         )
 
     // -------------------------------------------------------------------------
@@ -1268,7 +1268,7 @@ class TradeExecutionServiceTest {
                 )
 
             assertFalse(service.isCoolingDown(symbol), "Symbol should be eligible before any block")
-            service.blockEntry(symbol, java.time.Duration.ofHours(2))
+            service.blockEntry(symbol, Duration.ofHours(2))
             assertTrue(service.isCoolingDown(symbol), "Symbol must be ineligible while the block is active")
         }
 
@@ -1285,7 +1285,7 @@ class TradeExecutionServiceTest {
             assertFalse(service.isCoolingDown(symbol))
 
             val resultDeferred = backgroundScope.async { service.execute(buildRequest()) }
-            advanceTimeBy(baseConfig.executionTimeoutMinutes * 60_000 + 1)
+            advanceTimeBy((baseConfig.executionTimeoutMinutes * 60_000 + 1).milliseconds)
             val result = resultDeferred.await()
 
             assertEquals(ExecutionOutcome.TIMED_OUT, result.outcome)
@@ -1320,7 +1320,7 @@ class TradeExecutionServiceTest {
         }
 
     @Test
-    fun `quote_freshness_timeout_aborts_entry`() =
+    fun quote_freshness_timeout_aborts_entry() =
         runTest {
             val service =
                 buildService(
@@ -1328,14 +1328,14 @@ class TradeExecutionServiceTest {
                         fixedMarketTickPort(
                             underlyingPrice = 500.0,
                             // Flow that never emits — triggers the 3s freshness timeout
-                            creditFlow = flow { delay(Long.MAX_VALUE) },
+                            creditFlow = flow { delay(Long.MAX_VALUE.milliseconds) },
                         ),
                     orderExecutionPort = neverFillOrderPort(),
                 )
 
             val resultDeferred = backgroundScope.async { service.execute(buildRequest()) }
             // Advance past freshness delay (500ms) + freshness timeout (3000ms)
-            advanceTimeBy(4_000)
+            advanceTimeBy(4_000.milliseconds)
             val result = resultDeferred.await()
 
             // No tick within the freshness window = market-data starvation, now distinctly labelled
@@ -1449,7 +1449,7 @@ class TradeExecutionServiceTest {
     ): Flow<Double> =
         flow {
             emit(startPrice)
-            delay(100)
+            delay(100.milliseconds)
             val driftedPrice = startPrice * (1 + driftPct)
             emit(driftedPrice)
         }
@@ -1471,7 +1471,7 @@ class TradeExecutionServiceTest {
                         netCredit = credit,
                     ),
                 )
-                if (prices.indexOf(credit) < prices.size - 1) delay(delayMs)
+                if (prices.indexOf(credit) < prices.size - 1) delay(delayMs.milliseconds)
             }
         }
 }

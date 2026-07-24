@@ -6,6 +6,7 @@ import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
 import cz.solvina.options.domain.models.Symbol
+import java.math.BigDecimal
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -61,7 +62,7 @@ class BacktestOrderExecutionAdapter : OrderExecutionPort {
 
     override suspend fun getSymbolsWithOpenOrders(): Set<Symbol> = emptySet()
 
-    override fun consumeFillPrice(orderId: Int): java.math.BigDecimal? = null
+    override fun consumeFillPrice(orderId: Int): BigDecimal? = null
 }
 
 data class ComboFillRecord(

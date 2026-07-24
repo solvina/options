@@ -19,6 +19,8 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
 import org.springframework.stereotype.Component
+import java.math.BigDecimal
+import kotlin.time.Duration.Companion.milliseconds
 
 private val logger = KotlinLogging.logger {}
 
@@ -125,7 +127,7 @@ class IbkrOrderExecutionAdapter(
         registry.markSelfCancelled(orderId)
         client.cancelOrder(orderId, OrderCancel())
         runCatching {
-            withTimeout(10_000L) {
+            withTimeout(10_000L.milliseconds) {
                 val deferred = registry.pendingOrderStatus[orderId]
                 if (deferred != null && !deferred.isCompleted) {
                     deferred.await()
@@ -134,7 +136,7 @@ class IbkrOrderExecutionAdapter(
         }.onFailure {
             registry.pendingOrderStatus.remove(orderId)?.complete(OrderStatus.CANCELLED)
         }
-        delay(200)
+        delay(200.milliseconds)
         // A fill can race the cancel: IBKR fills the order before processing the cancel request.
         // Report the true terminal state so callers never record a filled order as aborted.
         return if (registry.isFilled(orderId)) {
@@ -208,7 +210,7 @@ class IbkrOrderExecutionAdapter(
             .map { Symbol(it.symbol) }
             .toSet()
 
-    override fun consumeFillPrice(orderId: Int): java.math.BigDecimal? = registry.consumeFillPrice(orderId)
+    override fun consumeFillPrice(orderId: Int): BigDecimal? = registry.consumeFillPrice(orderId)
 
     override fun consumeRejectReason(orderId: Int): String? = registry.consumeRejectReason(orderId)
 

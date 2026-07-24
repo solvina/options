@@ -19,13 +19,14 @@ import `cz.solvina.options.flags`.dto.FlagSymbolBreakdownDto
 import `cz.solvina.options.flags`.dto.FlagTradingConfigDto
 import `cz.solvina.options.flags`.dto.PagedFlagsDto
 import `cz.solvina.options.flags`.dto.ScannerSubscribeRequestDto
-import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.RestController
+import java.math.BigDecimal
+import java.math.RoundingMode
+import java.time.OffsetDateTime
+import java.time.ZoneOffset
 import java.util.UUID
-
-private val logger = KotlinLogging.logger {}
 
 @RestController
 class FlagsApiImpl(
@@ -150,7 +151,7 @@ class FlagsApiImpl(
      * high-water mark: max(initial stop, highest seen − trail). Null when the trail is unknown
      * (pre-v26 rows before the backfill).
      */
-    private fun FlagPosition.effectiveStopPrice(): java.math.BigDecimal? =
+    private fun FlagPosition.effectiveStopPrice(): BigDecimal? =
         trailAmount?.let { trail ->
             val ratcheted = highestPriceSeen?.subtract(trail)
             if (ratcheted != null && ratcheted > stopLossPrice) ratcheted else stopLossPrice
@@ -164,12 +165,10 @@ class FlagsApiImpl(
                 null
             }
         val unrealized =
-            livePrice?.let { price ->
-                price
-                    .subtract(entryPrice)
-                    .multiply(java.math.BigDecimal(shares))
-                    .setScale(2, java.math.RoundingMode.HALF_UP)
-            }
+            livePrice
+                ?.subtract(entryPrice)
+                ?.multiply(BigDecimal(shares))
+                ?.setScale(2, RoundingMode.HALF_UP)
         return FlagPositionDto(
             id = requireNotNull(id),
             symbol = symbol.value,
@@ -187,9 +186,9 @@ class FlagsApiImpl(
             flagpoleHeight = flagpoleHeight,
             flagRetracement = flagRetracement,
             resistanceAtEntry = resistanceAtEntry,
-            patternStartedAt = patternStartedAt?.let { java.time.OffsetDateTime.ofInstant(it, java.time.ZoneOffset.UTC) },
-            openedAt = java.time.OffsetDateTime.ofInstant(openedAt, java.time.ZoneOffset.UTC),
-            closedAt = closedAt?.let { java.time.OffsetDateTime.ofInstant(it, java.time.ZoneOffset.UTC) },
+            patternStartedAt = patternStartedAt?.let { OffsetDateTime.ofInstant(it, ZoneOffset.UTC) },
+            openedAt = OffsetDateTime.ofInstant(openedAt, ZoneOffset.UTC),
+            closedAt = closedAt?.let { OffsetDateTime.ofInstant(it, ZoneOffset.UTC) },
             closeReason = closeReason,
             closePriceActual = closePriceActual,
             realizedPnl = realizedPnl,

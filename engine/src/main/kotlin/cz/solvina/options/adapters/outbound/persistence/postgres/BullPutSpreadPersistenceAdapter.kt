@@ -18,6 +18,7 @@ import org.springframework.data.domain.PageRequest
 import org.springframework.data.domain.Sort
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
+import java.math.RoundingMode
 import java.time.Instant
 
 @Component
@@ -107,7 +108,7 @@ class BullPutSpreadPersistenceAdapter(
             quantity = quantity,
             soldOrderId = soldLeg.orderId,
             boughtOrderId = boughtLeg.orderId,
-            ivRankAtEntry = ivRankAtEntry?.let { BigDecimal(it).setScale(2, java.math.RoundingMode.HALF_UP) },
+            ivRankAtEntry = ivRankAtEntry?.let { BigDecimal(it).setScale(2, RoundingMode.HALF_UP) },
             underlyingPriceAtEntry = underlyingPriceAtEntry,
             openedAt = openedAt,
             closedAt = closedAt,

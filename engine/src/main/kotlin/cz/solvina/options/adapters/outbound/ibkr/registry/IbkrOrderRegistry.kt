@@ -4,6 +4,8 @@ import cz.solvina.options.domain.features.order.OrderStatus
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CompletableDeferred
 import org.springframework.stereotype.Component
+import java.math.BigDecimal
+import java.math.RoundingMode
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -14,7 +16,7 @@ private val TERMINAL_CANCEL_STATUSES = setOf("cancelled", "inactive", "apicancel
 @Component
 class IbkrOrderRegistry {
     internal val pendingOrderStatus = ConcurrentHashMap<Int, CompletableDeferred<OrderStatus>>()
-    private val fillPrices = ConcurrentHashMap<Int, java.math.BigDecimal>()
+    private val fillPrices = ConcurrentHashMap<Int, BigDecimal>()
     private val selfCancelledOrders = ConcurrentHashMap.newKeySet<Int>()
 
     // Broker-reported rejection reason per orderId (IBKR code + message), so the execution loop can
@@ -48,8 +50,8 @@ class IbkrOrderRegistry {
         orderId: Int,
         status: String,
         avgFillPrice: Double = 0.0,
-        filled: java.math.BigDecimal = java.math.BigDecimal.ZERO,
-        remaining: java.math.BigDecimal = java.math.BigDecimal.ZERO,
+        filled: BigDecimal = BigDecimal.ZERO,
+        remaining: BigDecimal = BigDecimal.ZERO,
     ) {
         // Record terminal state BEFORE the deferred lookup: a late "filled"/"cancelled" callback
         // arriving after the deferred was consumed/removed (e.g. a fill racing a cancel) must still be
@@ -58,7 +60,7 @@ class IbkrOrderRegistry {
         val lower = status.lowercase()
         if (lower == "filled") {
             filledOrders.add(orderId)
-            if (avgFillPrice > 0.0) fillPrices[orderId] = java.math.BigDecimal(avgFillPrice).setScale(4, java.math.RoundingMode.HALF_UP)
+            if (avgFillPrice > 0.0) fillPrices[orderId] = BigDecimal(avgFillPrice).setScale(4, RoundingMode.HALF_UP)
         }
         if (lower in TERMINAL_CANCEL_STATUSES) {
             cancelledOrders.add(orderId)
@@ -67,7 +69,7 @@ class IbkrOrderRegistry {
         // Qty is always 1 today, so no code path currently expects a partial fill. This is a tripwire
         // for when that stops being true: a terminal status with 0 < filled < total would otherwise
         // pass through silently as fully filled or fully cancelled.
-        if (filled > java.math.BigDecimal.ZERO && remaining > java.math.BigDecimal.ZERO) {
+        if (filled > BigDecimal.ZERO && remaining > BigDecimal.ZERO) {
             logger.warn {
                 "Order $orderId reported terminal status '$status' with a PARTIAL quantity " +
                     "(filled=$filled remaining=$remaining) — partial fills are not modeled; treating per the terminal status"
@@ -80,7 +82,7 @@ class IbkrOrderRegistry {
         }
     }
 
-    fun consumeFillPrice(orderId: Int): java.math.BigDecimal? = fillPrices.remove(orderId)
+    fun consumeFillPrice(orderId: Int): BigDecimal? = fillPrices.remove(orderId)
 
     /** True while a fill watcher is armed for [orderId] (deferred registered and not yet consumed). */
     fun hasActiveWatch(orderId: Int): Boolean = pendingOrderStatus.containsKey(orderId)

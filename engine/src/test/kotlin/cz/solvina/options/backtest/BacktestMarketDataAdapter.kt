@@ -9,6 +9,7 @@ import cz.solvina.options.domain.models.OptionType
 import cz.solvina.options.domain.models.Symbol
 import java.math.BigDecimal
 import java.math.RoundingMode
+import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 
 /**
@@ -78,7 +79,7 @@ class BacktestMarketDataAdapter(
 
     private fun currentIv(
         symbol: Symbol,
-        today: java.time.LocalDate,
+        today: LocalDate,
     ): Double {
         val bars = ivCache.getOrPut(symbol) { FixtureLoader.loadIvBars(symbol) }
         return bars

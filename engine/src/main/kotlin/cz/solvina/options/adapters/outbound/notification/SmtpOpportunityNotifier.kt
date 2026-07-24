@@ -18,6 +18,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
+import java.math.RoundingMode
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
@@ -285,7 +286,7 @@ class SmtpOpportunityNotifier(
         return "<table style=\"$tableStyle\"><thead><tr>$head</tr></thead><tbody>$body</tbody></table>"
     }
 
-    private fun money(v: BigDecimal): String = v.setScale(2, java.math.RoundingMode.HALF_UP).toPlainString()
+    private fun money(v: BigDecimal): String = v.setScale(2, RoundingMode.HALF_UP).toPlainString()
 
     private fun strike(v: BigDecimal): String = v.stripTrailingZeros().toPlainString()
 

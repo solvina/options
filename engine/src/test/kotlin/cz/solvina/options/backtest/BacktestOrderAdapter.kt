@@ -6,6 +6,7 @@ import cz.solvina.options.domain.features.order.OrderPort
 import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
+import java.math.BigDecimal
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -48,7 +49,7 @@ class BacktestOrderAdapter(
         qty: Int,
     ): LegOrder {
         val orderId = nextOrderId.getAndIncrement()
-        fills.add(FillRecord(orderId = orderId, contract = contract, action = action, price = Money(java.math.BigDecimal.ZERO), qty = qty))
+        fills.add(FillRecord(orderId = orderId, contract = contract, action = action, price = Money(BigDecimal.ZERO), qty = qty))
         return LegOrder(orderId = orderId, status = OrderStatus.FILLED)
     }
 

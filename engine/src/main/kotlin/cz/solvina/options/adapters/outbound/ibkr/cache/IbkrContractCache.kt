@@ -23,6 +23,7 @@ import java.math.RoundingMode
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
+import java.time.format.DateTimeFormatter
 import java.util.TreeSet
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
@@ -128,7 +129,7 @@ class IbkrContractCache(
             withTimeout(5000L.milliseconds) {
                 deferred.await()
             }
-        } catch (e: TimeoutCancellationException) {
+        } catch (_: TimeoutCancellationException) {
             registry.pendingContractDetails.remove(reqId)
             registry.timedOutReqIds.add(reqId)
             logger.error { "[$symbol] Contract lookup timeout (5s) — IBKR not responding" }
@@ -189,7 +190,7 @@ class IbkrContractCache(
         registry.cachedMarketRule(marketRuleId)?.let { return it }
         val deferred = registry.registerMarketRule(marketRuleId)
         client.reqMarketRule(marketRuleId)
-        return withTimeoutOrNull(3_000L) { deferred.await() }
+        return withTimeoutOrNull(3_000L.milliseconds) { deferred.await() }
     }
 
     suspend fun getOrFetchOptionConId(key: OptionContractKey): Int {
@@ -235,7 +236,7 @@ class IbkrContractCache(
                 currency(def.currency)
                 lastTradeDateOrContractMonth(
                     key.expiry.format(
-                        java.time.format.DateTimeFormatter
+                        DateTimeFormatter
                             .ofPattern("yyyyMMdd"),
                     ),
                 )
@@ -353,7 +354,7 @@ class IbkrContractCache(
                 currency(def.currency)
                 lastTradeDateOrContractMonth(
                     expiry.format(
-                        java.time.format.DateTimeFormatter
+                        DateTimeFormatter
                             .ofPattern("yyyyMMdd"),
                     ),
                 )

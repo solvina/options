@@ -20,6 +20,8 @@ import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
+import java.math.BigDecimal
+import java.math.RoundingMode
 import java.time.ZoneOffset
 import java.util.UUID
 
@@ -194,17 +196,17 @@ class BullPutSpreadsApiImpl(
  * safe side (bull put: spot above the short strike; bear call: spot below it). Null when no spot.
  */
 internal fun cushionPct(
-    underlying: java.math.BigDecimal?,
-    shortStrike: java.math.BigDecimal,
+    underlying: BigDecimal?,
+    shortStrike: BigDecimal,
     bullish: Boolean,
-): java.math.BigDecimal? {
-    if (underlying == null || underlying <= java.math.BigDecimal.ZERO) return null
+): BigDecimal? {
+    if (underlying == null || underlying <= BigDecimal.ZERO) return null
     val gap = if (bullish) underlying.subtract(shortStrike) else shortStrike.subtract(underlying)
     return gap
         .divide(
             underlying,
             6,
-            java.math.RoundingMode.HALF_UP,
-        ).multiply(java.math.BigDecimal("100"))
-        .setScale(2, java.math.RoundingMode.HALF_UP)
+            RoundingMode.HALF_UP,
+        ).multiply(BigDecimal("100"))
+        .setScale(2, RoundingMode.HALF_UP)
 }

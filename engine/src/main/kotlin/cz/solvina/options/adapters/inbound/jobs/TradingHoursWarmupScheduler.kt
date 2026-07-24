@@ -13,6 +13,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
+import java.time.Duration
+import java.time.Instant
 
 private val logger = KotlinLogging.logger {}
 
@@ -37,15 +39,15 @@ class TradingHoursWarmupScheduler(
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val mutex = Mutex()
 
-    @Volatile private var lastSuccessfulWarm: java.time.Instant = java.time.Instant.EPOCH
-    private val staleAfter: java.time.Duration = java.time.Duration.ofHours(6)
+    @Volatile private var lastSuccessfulWarm: Instant = Instant.EPOCH
+    private val staleAfter: Duration = Duration.ofHours(6)
 
     @Scheduled(
         fixedDelayString = "\${trading-hours.refresh-ms:900000}",
         initialDelayString = "\${trading-hours.initial-delay-ms:45000}",
     )
     fun refresh() {
-        if (java.time.Duration.between(lastSuccessfulWarm, java.time.Instant.now()) < staleAfter) {
+        if (Duration.between(lastSuccessfulWarm, Instant.now()) < staleAfter) {
             return // calendar still fresh — nothing to do this tick
         }
         if (!connectionStatusPort.isConnected()) {
@@ -78,7 +80,7 @@ class TradingHoursWarmupScheduler(
         // Only mark the calendar fresh when IBKR actually answered — an all-failed pass (connected
         // but timing out) must retry on the next tick, not sleep out the staleness window.
         if (warmed > 0) {
-            lastSuccessfulWarm = java.time.Instant.now()
+            lastSuccessfulWarm = Instant.now()
         }
         logger.info { "Trading-hours warmup: $warmed/${symbols.size} symbol(s) refreshed" }
     }

@@ -1,11 +1,13 @@
 package cz.solvina.options.domain.features.bars
 
+import cz.solvina.options.domain.features.bars.HistoricalDataService.Companion.MIN_GAP_TRADING_DAYS
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import org.springframework.stereotype.Service
+import java.time.DayOfWeek
 import java.time.Instant
 import java.time.LocalDate
 import java.util.UUID
@@ -149,7 +151,7 @@ class HistoricalDataService(
         var day = from
         while (!day.isAfter(to)) {
             val weekend =
-                day.dayOfWeek == java.time.DayOfWeek.SATURDAY || day.dayOfWeek == java.time.DayOfWeek.SUNDAY
+                day.dayOfWeek == DayOfWeek.SATURDAY || day.dayOfWeek == DayOfWeek.SUNDAY
             if (!weekend) {
                 if ((coverage[day] ?: 0) < timeframe.minBarsPerDay) {
                     if (runStart == null) runStart = day

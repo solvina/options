@@ -7,6 +7,7 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CompletableDeferred
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
+import java.time.Instant
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.ConcurrentHashMap
@@ -112,7 +113,7 @@ class IbkrContractRegistry(
                 expirations = strikesByExpiry.keys,
                 strikes = strikesByExpiry.values.flatten().toSet(),
                 strikesByExpiry = strikesByExpiry,
-                fetchedAt = java.time.Instant.now(),
+                fetchedAt = Instant.now(),
                 exchange = request.exchange,
                 tradingClass = request.tradingClass,
                 multiplier = request.multiplier,
