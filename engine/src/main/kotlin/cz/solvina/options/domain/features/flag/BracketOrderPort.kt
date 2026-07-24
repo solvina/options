@@ -73,12 +73,17 @@ interface BracketOrderPort {
     ): Int
 
     /**
-     * Places an immediate market SELL for [shares] of [symbol].
-     * Used for EOD liquidation and manual closes of OPEN positions.
-     * Returns the new order ID.
+     * Places an immediate market SELL for [shares] of [symbol] and suspends until it reaches a
+     * terminal state. Returns the fill status + broker avg price. Used for EOD liquidation and
+     * manual closes of OPEN positions.
+     *
+     * Callers MUST check the status: a market order placed outside regular trading hours is rejected
+     * by IBKR (error 399 → CANCELLED) and parked for the next open — nothing is sold now. Recording
+     * such a position as closed fabricates a realized P&L for shares still held and, because the
+     * protective children were cancelled first, leaves the position naked overnight.
      */
     suspend fun submitMarketSell(
         symbol: Symbol,
         shares: Int,
-    ): Int
+    ): OrderFill
 }

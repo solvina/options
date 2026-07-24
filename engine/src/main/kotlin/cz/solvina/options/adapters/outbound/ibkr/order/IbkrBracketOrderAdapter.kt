@@ -179,7 +179,7 @@ class IbkrBracketOrderAdapter(
     override suspend fun submitMarketSell(
         symbol: Symbol,
         shares: Int,
-    ): Int {
+    ): OrderFill {
         val contract = contractFactory.stockContract(symbol)
         val orderId = registry.nextOrderId()
 
@@ -196,7 +196,11 @@ class IbkrBracketOrderAdapter(
 
         logger.info { "[$symbol] Market SELL $shares shares (orderId=$orderId)" }
         client.placeOrder(orderId, contract, order)
-        return orderId
+        // Await the terminal state so the caller can distinguish a real fill from an after-hours
+        // reject (error 399 → CANCELLED, queued for next open) — a market order otherwise fills in
+        // well under a second during RTH.
+        val status = awaitFill(orderId, MARKET_SELL_TIMEOUT_MS)
+        return OrderFill(status, registry.consumeFillPrice(orderId))
     }
 
     private suspend fun awaitFill(
@@ -217,5 +221,6 @@ class IbkrBracketOrderAdapter(
     companion object {
         private const val PARENT_TIMEOUT_MS = 10L * 3_600_000 // 10 h — one trading session
         private const val CHILD_TIMEOUT_MS = 30L * 24 * 3_600_000 // 30 days — GTC safety net
+        private const val MARKET_SELL_TIMEOUT_MS = 30_000L // a market SELL fills in seconds during RTH
     }
 }

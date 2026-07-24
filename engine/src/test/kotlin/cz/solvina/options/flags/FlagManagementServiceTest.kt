@@ -25,6 +25,7 @@ import java.time.Instant
 import java.time.ZoneOffset
 import java.util.UUID
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -286,6 +287,34 @@ class FlagManagementServiceTest {
             assertEquals(FlagStatus.CLOSED_MANUAL, flagPort.findById(position.id!!)!!.status)
         }
 
+    @Test
+    fun `manual close that does not fill (after-hours reject) stays OPEN, books no PnL, and re-protects`() =
+        runTest {
+            val position = openPosition()
+            val flagPort = InMemoryFlagPort(listOf(position))
+            // Simulate IBKR rejecting the market SELL outside RTH (error 399 → CANCELLED, queued for
+            // next open): the broker still holds the shares, but nothing was sold now.
+            val bracketPort =
+                RecordingBracketOrderPort().apply { marketSellFill = OrderFill(status = OrderStatus.CANCELLED) }
+            val service =
+                buildService(
+                    flagPort = flagPort,
+                    bracketPort = bracketPort,
+                    brokerHoldings = listOf(stkHolding(symbol.value, position.shares)),
+                )
+
+            val result = service.manualClose(position.id!!)
+
+            assertTrue(result is FlagManagementService.ManualCloseResult.Failed, "A non-filling close must NOT report success, got $result")
+            val after = flagPort.findById(position.id!!)!!
+            assertEquals(FlagStatus.OPEN, after.status, "Position must stay OPEN when nothing was sold")
+            assertNull(after.realizedPnl, "No realized P&L may be booked when the sell did not fill")
+            assertTrue(
+                bracketPort.trailingStopReprotects.any { it.first == symbol && it.second == position.shares },
+                "The still-held shares must be re-protected with a fresh trailing stop",
+            )
+        }
+
     // -------------------------------------------------------------------------
     // Test infrastructure
     // -------------------------------------------------------------------------
@@ -382,6 +411,10 @@ class FlagManagementServiceTest {
     private class RecordingBracketOrderPort : BracketOrderPort {
         val cancelledOrders = mutableListOf<Int>()
         val marketSells = mutableListOf<Pair<Symbol, Int>>()
+        val trailingStopReprotects = mutableListOf<Pair<Symbol, Int>>()
+
+        // Overridable so a test can simulate an after-hours reject (IBKR 399 → CANCELLED, nothing sold).
+        var marketSellFill: OrderFill = OrderFill(status = OrderStatus.FILLED, avgPrice = BigDecimal("150.00"))
 
         override suspend fun submitBracketOrder(
             symbol: Symbol,
@@ -410,14 +443,17 @@ class FlagManagementServiceTest {
             shares: Int,
             initialStop: BigDecimal,
             trailAmount: BigDecimal,
-        ) = 998
+        ): Int {
+            trailingStopReprotects.add(symbol to shares)
+            return 998
+        }
 
         override suspend fun submitMarketSell(
             symbol: Symbol,
             shares: Int,
-        ): Int {
+        ): OrderFill {
             marketSells.add(symbol to shares)
-            return 999
+            return marketSellFill
         }
     }
 }

@@ -6,6 +6,7 @@ import cz.solvina.options.domain.features.flag.model.FlagPosition
 import cz.solvina.options.domain.features.flag.model.FlagStatus
 import cz.solvina.options.domain.features.flag.model.isTerminal
 import cz.solvina.options.domain.features.market.MarketDataPort
+import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.delay
@@ -207,14 +208,31 @@ class FlagManagementService(
                             "selling the held quantity only"
                     }
                 }
-                runCatching { bracketOrderPort.submitMarketSell(position.symbol, sellQty) }
-                    .onFailure { e -> logger.error(e) { "[${position.symbol}] Market sell failed: ${e.message}" } }
+                // Await the sell's terminal state. A market SELL placed outside RTH is rejected by
+                // IBKR (error 399 → CANCELLED) and queued for the next open — i.e. NOTHING is sold
+                // now. Never fabricate a close (and a mark-price "win") for shares we still hold: that
+                // misreports P&L and, since the protective children were cancelled above, leaves the
+                // position naked. On any non-fill, re-arm protection and abort — the row stays OPEN.
+                val fill =
+                    runCatching { bracketOrderPort.submitMarketSell(position.symbol, sellQty) }
+                        .onFailure { e -> logger.error(e) { "[${position.symbol}] Market sell failed: ${e.message}" } }
+                        .getOrNull()
 
-                // Best-effort price capture
+                if (fill?.status != OrderStatus.FILLED) {
+                    logger.error {
+                        "[${position.symbol}] Close ($reason) did NOT fill (status=${fill?.status ?: "submit_error"}) — " +
+                            "market likely closed (IBKR 399) or order rejected. Re-protecting the $sellQty still-held " +
+                            "shares and leaving the position OPEN; nothing sold, no realized P&L recorded."
+                    }
+                    reprotectAfterAbortedClose(position, sellQty)
+                    return null
+                }
+
+                // Realized P&L from the ACTUAL broker fill, not a theoretical mark. Fall back to the
+                // live underlying only when the status callback carried no avg price.
                 closePriceActual =
-                    runCatching {
-                        marketDataPort.getUnderlyingPrice(position.symbol).amount
-                    }.getOrNull()
+                    fill.avgPrice
+                        ?: runCatching { marketDataPort.getUnderlyingPrice(position.symbol).amount }.getOrNull()
 
                 val effectiveEntry = position.actualEntryPrice ?: position.entryPrice
                 if (closePriceActual != null) {
@@ -278,6 +296,38 @@ class FlagManagementService(
         flagPort.update(closed)
         tradeLogger.info { "${effectiveStatus.name} ${position.symbol} reason=$effectiveReason pnl=${realizedPnl ?: "n/a"} R=$rMultiple" }
         return closed
+    }
+
+    /**
+     * A close was aborted after the protective children were already cancelled but the market sell
+     * did NOT fill (outside RTH / rejected). Re-arm a standalone trailing stop so the still-held
+     * shares are not left naked, and repoint the position's protective order ids at it. Best-effort:
+     * a failure here is logged loudly (shares stay unprotected until the next management cycle) but
+     * does not change the OPEN status. Mirrors the ratcheted trigger used elsewhere —
+     * max(initial stop, peak − trail) — so we never re-arm looser than the stop had already climbed.
+     */
+    private suspend fun reprotectAfterAbortedClose(
+        position: FlagPosition,
+        heldShares: Int,
+    ) {
+        // trailAmount persisted since v26; fall back to the initial risk-per-share for older rows.
+        val trail = position.trailAmount ?: position.entryPrice.subtract(position.stopLossPrice)
+        val ratcheted = position.highestPriceSeen?.subtract(trail)
+        val initialStop =
+            if (ratcheted != null && ratcheted > position.stopLossPrice) ratcheted else position.stopLossPrice
+        runCatching { bracketOrderPort.submitTrailingStopSell(position.symbol, heldShares, initialStop, trail) }
+            .onSuccess { newId ->
+                flagPort.update(position.copy(stopLossOrderId = newId, profitTargetOrderId = newId))
+                logger.warn {
+                    "[${position.symbol}] Re-armed trailing stop (order $newId, stop≈$initialStop trail=$trail) " +
+                        "after an aborted close — $heldShares shares protected again"
+                }
+            }.onFailure { e ->
+                logger.error(e) {
+                    "[${position.symbol}] FAILED to re-arm protection after an aborted close — $heldShares shares " +
+                        "are UNPROTECTED until the next management cycle: ${e.message}"
+                }
+            }
     }
 
     /**

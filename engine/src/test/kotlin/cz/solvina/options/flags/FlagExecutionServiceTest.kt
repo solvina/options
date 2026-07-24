@@ -312,7 +312,7 @@ class FlagExecutionServiceTest {
         override suspend fun submitMarketSell(
             symbol: Symbol,
             shares: Int,
-        ) = 99
+        ) = OrderFill(OrderStatus.FILLED, BigDecimal("150.00"))
     }
 
     // -------------------------------------------------------------------------
@@ -419,6 +419,6 @@ class FlagExecutionServiceTest {
         override suspend fun submitMarketSell(
             symbol: Symbol,
             shares: Int,
-        ) = 99
+        ) = OrderFill(OrderStatus.FILLED, BigDecimal("150.00"))
     }
 }
