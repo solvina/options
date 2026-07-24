@@ -108,6 +108,10 @@ class IbkrMarketDataAdapter(
             val reqId = registry.nextReqId()
             registry.pendingContinuousMarketData[reqId] = PendingContinuousMarketDataRequest()
             positionStreams[key] = reqId
+            // TWS_LIMITS: +1 market-data line per open-position leg = 2 per spread (EXIT reserve, sized
+            // maxOpenSpreads × 2). HELD FOR THE LIFE OF THE POSITION — retires only when the leg drops
+            // out of the wanted set (position closed) → cancelMktData in the reconcile loop above, NOT
+            // per pricing cycle. Subscribe-on-open / unsubscribe-on-close; steady occupancy, low churn.
             runCatching { client.reqMktData(reqId, contractFactory.optionContract(contract), "", false, false, null) }
                 .onFailure { e ->
                     positionStreams.remove(key)

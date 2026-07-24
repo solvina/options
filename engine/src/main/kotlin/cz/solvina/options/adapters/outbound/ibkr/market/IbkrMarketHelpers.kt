@@ -67,6 +67,9 @@ internal suspend fun reqMktDataSnapshot(
     val pending = PendingMarketDataRequest(deferred, isReady)
     registry.pendingMarketData[reqId] = pending
     return try {
+        // TWS_LIMITS: +1 market-data line for the duration of ONE snapshot. Self-retiring — the
+        // finally below always cancelMktData once the snapshot completes, quiesces, or times out.
+        // Shortest-lived line in the system (sub-5s typical); every snapshot flows through here.
         client.reqMktData(reqId, contract, genericTickList, false, false, null)
         withTimeout(timeoutMs) { awaitSnapshot(deferred, pending, priority, quiescenceMs) }
     } catch (_: TimeoutCancellationException) {

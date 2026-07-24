@@ -120,6 +120,9 @@ class IbkrContractCache(
         val deferred = CompletableDeferred<List<com.ib.client.ContractDetails>>()
         registry.pendingContractDetails[reqId] = PendingContractRequest(deferred, CopyOnWriteArrayList())
 
+        // TWS_LIMITS: reqContractDetails holds NO market-data line — one-shot request/response that
+        // self-retires on contractDetailsEnd (→ deferred completes) or the 5s timeout. Costs only
+        // message rate + IBKR's contract-details pacing (~one at a time per underlying).
         client.reqContractDetails(reqId, contractFactory.stockContract(symbol))
         return try {
             withTimeout(5000L.milliseconds) {
@@ -251,6 +254,9 @@ class IbkrContractCache(
         // Serialised via the rate limiter: IBKR paces concurrent contract-details for the same
         // underlying (~5s), so one lookup fires at a time.
 
+        // TWS_LIMITS: one-shot request/response, no standing line. Self-retires on contractDetailsEnd
+        // or the 5s timeout. Serialised by the rate limiter (~one per underlying at a time) because
+        // IBKR paces concurrent contract-details lookups.
         client.reqContractDetails(reqId, searchContract)
         val details: List<com.ib.client.ContractDetails> =
             withTimeoutOrNull(5000L.milliseconds) { deferred.await() }
@@ -354,6 +360,10 @@ class IbkrContractCache(
                 right(optionType.ibkrCode)
             }
 
+        // TWS_LIMITS: one-shot request/response, no standing line. Self-retires on contractDetailsEnd
+        // or the 30s timeout (verified-strikes fan-out is heavy → longer bound + per-key cooldown).
+        // This is the call that historically flooded contract-details pacing and wedged the engine —
+        // keep it rate-limited and cooled down.
         client.reqContractDetails(reqId, searchContract)
         val details: List<com.ib.client.ContractDetails> =
             withTimeoutOrNull(30000L.milliseconds) { deferred.await() }

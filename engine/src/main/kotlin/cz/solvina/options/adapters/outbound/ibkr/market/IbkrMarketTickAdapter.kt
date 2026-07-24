@@ -65,6 +65,9 @@ class IbkrMarketTickAdapter(
                         if (price != null) trySend(price)
                     },
                 )
+            // TWS_LIMITS: +1 market-data line (EXEC or EXIT, per the collector's MarketDataPriority).
+            // Short-lived: lives only as long as the entry/exit decision reading the underlying price;
+            // retires via cancelMktData in awaitClose when the collector stops. Subscribe→read→cancel.
             client.reqMktData(reqId, contractFactory.stockContract(symbol), "", false, false, null)
             logger.debug { "[$symbol] Started underlying price stream (reqId=$reqId)" }
             awaitClose {
@@ -178,6 +181,12 @@ class IbkrMarketTickAdapter(
                 val soldContract4Mkt = contractForMktData(soldContract)
                 val boughtContract4Mkt = contractForMktData(boughtContract)
 
+                // TWS_LIMITS: +$mktDataLines market-data lines per spread (live = 4: 2 tick-by-tick
+                // bid/ask + 2 continuous Greeks; delayed = 2, tick-by-tick unsupported so Greeks feed
+                // carries bid/ask). Short-lived subscribe→price→unsubscribe around ONE spread
+                // entry/exit pricing pass. All four retire together via cancelTickByTickData /
+                // cancelMktData in awaitClose; a setup throw is caught below and releases whatever
+                // opened. High subscribe/unsubscribe churn lives here — this is the spread hot path.
                 linesAcquired++
                 if (useTickByTick) {
                     client.reqTickByTickData(soldTickReqId, soldContract4Mkt, "BidAsk", 0, true)

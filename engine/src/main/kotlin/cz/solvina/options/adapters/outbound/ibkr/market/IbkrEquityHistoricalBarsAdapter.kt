@@ -105,6 +105,9 @@ class IbkrEquityHistoricalBarsAdapter(
                             onError = { e -> close(e) },
                         )
                     logger.debug { "[${symbol.value}] reqHistoricalData reqId=$reqId endDateTime='$endDateTime' duration='$durationStr'" }
+                    // TWS_LIMITS: no standing market-data line, but counts against historical-data
+                    // pacing (~60 req/10min + identical-request limits → error 162/420). Self-retiring
+                    // on historicalDataEnd / error, bounded by CHUNK_TIMEOUT_MS. Backtest bar-fetch path.
                     client.reqHistoricalData(
                         reqId,
                         contract,

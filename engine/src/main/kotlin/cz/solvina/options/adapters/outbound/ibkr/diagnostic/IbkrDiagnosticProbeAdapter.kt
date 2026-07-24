@@ -269,6 +269,9 @@ class IbkrDiagnosticProbeAdapter(
                 },
             )
 
+        // TWS_LIMITS: +5 market-data lines (1 underlying + 2 tick-by-tick + 2 Greeks) for the manual
+        // diagnostic window only. Self-retiring — every one is cancelled after the delay below. Off the
+        // hot path: fires only when a diagnostic probe is explicitly triggered.
         client.reqMktData(underlyingReqId, contractFactory.stockContract(symbol), "", false, false, null)
         client.reqTickByTickData(soldTickReqId, contractFactory.optionContract(soldContract), "BidAsk", 0, true)
         client.reqTickByTickData(boughtTickReqId, contractFactory.optionContract(boughtContract), "BidAsk", 0, true)

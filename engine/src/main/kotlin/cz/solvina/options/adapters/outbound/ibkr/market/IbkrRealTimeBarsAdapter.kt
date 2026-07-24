@@ -66,6 +66,10 @@ class IbkrRealTimeBarsAdapter(
                 )
 
             logger.info { "[${symbol.value}] Subscribing to 5-sec real-time bars (reqId=$reqId, RTH only)" }
+            // TWS_LIMITS: +1 market-data line (FLAG reserve). PERSISTENT / NEVER SELF-RETIRES — a flag
+            // feed holds its line for the entire time the symbol is watched. It is released only when
+            // this flow is cancelled (strategy teardown / shutdown) → cancelRealTimeBars in awaitClose
+            // below. This is the "flags don't retire" category: steady occupancy, not churn.
             client.reqRealTimeBars(reqId, contract, 5, "TRADES", true, null)
 
             awaitClose {

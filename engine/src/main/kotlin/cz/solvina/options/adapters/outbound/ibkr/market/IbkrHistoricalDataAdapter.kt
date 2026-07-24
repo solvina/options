@@ -64,6 +64,11 @@ class IbkrHistoricalDataAdapter(
                             )
                         val contract = contractFactory.stockContract(symbol)
                         logger.debug { "[$symbol] Requesting $days days of $whatToShow history (reqId=$reqId)" }
+                        // TWS_LIMITS: reqHistoricalData holds NO standing market-data line, but it
+                        // counts against IBKR's historical-data pacing (~60 requests / 10 min, plus
+                        // identical-request and BID_ASK sub-limits → error 162/420). Self-retiring:
+                        // terminates on historicalDataEnd (→ onEnd close()) or error. Pacing is now
+                        // handled REACTIVELY (back off on 162/420), not via a pre-acquired permit pool.
                         client.reqHistoricalData(
                             reqId,
                             contract,

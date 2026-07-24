@@ -66,6 +66,9 @@ class IbkrDividendTickAdapter(
         val reqId = registry.nextReqId()
         val deferred = registry.register(reqId)
         return try {
+            // TWS_LIMITS: +1 market-data line (generic tick 456 = IB_DIVIDENDS) for one fetch.
+            // Self-retiring — cancelMktData in the finally below. Runs on the daily SCANNER-tagged
+            // dividend refresh, so a 15s wait can never displace exec/exit/flag lines.
             client.reqMktData(reqId, contractFactory.stockContract(symbol), "456", false, false, null)
             withTimeout(timeoutMs.milliseconds) { deferred.await() }
         } catch (e: TimeoutCancellationException) {
