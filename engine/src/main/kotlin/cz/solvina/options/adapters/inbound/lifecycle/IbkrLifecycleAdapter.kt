@@ -1,5 +1,6 @@
 package cz.solvina.options.adapters.inbound.lifecycle
 
+import com.ib.client.EClientSocket
 import cz.solvina.options.adapters.outbound.ibkr.IbkrConnectionConfig
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrAccountAdapter
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrContractRegistry
@@ -29,6 +30,7 @@ class IbkrLifecycleAdapter(
     private val orderRegistry: IbkrOrderRegistry,
     private val recoveryService: StartupRecoveryService,
     private val flagRecoveryService: FlagRecoveryService,
+    private val client: EClientSocket,
 ) {
     @EventListener(ApplicationReadyEvent::class)
     fun onApplicationReady() {
@@ -41,6 +43,9 @@ class IbkrLifecycleAdapter(
                             logger.info { "Successfully connected to IBKR" }
                             // Brief pause so IBKR sends back initial openOrder callbacks before we query
                             delay(3_000.milliseconds)
+                            runCatching {
+                                client.reqAutoOpenOrders(true)
+                            }.onFailure { e -> logger.warn(e) { "Failed to request auto-open orders: ${e.message}" } }
                             runCatching { accountAdapter.subscribeToMainAccount() }
                                 .onFailure { e -> logger.warn(e) { "Account adapter failed to subscribe: ${e.message}" } }
                             runCatching { recoveryService.recover() }

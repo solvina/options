@@ -27,7 +27,7 @@ import com.ib.client.TickAttrib
 import com.ib.client.TickAttribBidAsk
 import com.ib.client.TickAttribLast
 import com.ib.client.TickType
-import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOpenOrdersRegistry
+import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOrdersRegistry
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrPositionsRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrAccountRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrContractRegistry
@@ -105,7 +105,7 @@ class IbkrEWrapper(
     private val ibkrIdCounter: IbkrIdCounter,
     private val accountRegistry: IbkrAccountRegistry,
     private val positionsRegistry: IbkrPositionsRegistry,
-    private val openOrdersRegistry: IbkrOpenOrdersRegistry,
+    private val openOrdersRegistry: IbkrOrdersRegistry,
     private val dividendTickRegistry: IbkrDividendTickRegistry,
     private val marketDataHealthTracker: MarketDataHealthTracker,
 ) : EWrapper {
@@ -223,6 +223,19 @@ class IbkrEWrapper(
                 "whyHeld" to whyHeld,
             )
         }
+        openOrdersRegistry.onOrderStatus(
+            orderId,
+            status,
+            filled,
+            remaining,
+            avgFillPrice,
+            permId,
+            parentId,
+            lastFillPrice,
+            clientId,
+            whyHeld,
+            mktCapPrice,
+        )
         orderRegistry.onOrderStatus(orderId, status, avgFillPrice, filled.value(), remaining.value())
     }
 
@@ -256,7 +269,6 @@ class IbkrEWrapper(
 
     override fun openOrderEnd() {
         logger.debug { "openOrderEnd" }
-        openOrdersRegistry.onOpenOrderEnd()
     }
 
     override fun updateAccountValue(
@@ -662,7 +674,6 @@ class IbkrEWrapper(
         contractRegistry.cancelAllPending(cause)
         marketDataRegistry.cancelAllPending(cause)
         orderRegistry.cancelAllPending(cause)
-        openOrdersRegistry.cancelPending()
         accountRegistry.onDisconnect()
     }
 

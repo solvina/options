@@ -11,9 +11,10 @@ private val logger = KotlinLogging.logger {}
 class IbkrPositionsAdapter(
     private val registry: IbkrPositionsRegistry,
 ) : PositionsPort {
-    override suspend fun getPositions(): List<AccountPosition> {
-        val pos = registry.getPositions()
-        logger.info { "Retrieved positions: $pos" }
-        return pos
-    }
+    override suspend fun getPositions(): List<AccountPosition> =
+        registry
+            .getPositions()
+            .also { pos ->
+                logger.info { "Retrieved positions: ${pos.size}" }
+            }
 }
