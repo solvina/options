@@ -13,9 +13,7 @@ private val logger = KotlinLogging.logger {}
 private val TERMINAL_CANCEL_STATUSES = setOf("cancelled", "inactive", "apicancelled", "rejected")
 
 @Component
-class IbkrOrderRegistry(
-    private val ibkrIdCounter: IbkrIdCounter,
-) {
+class IbkrOrderRegistry{
     internal val pendingOrderStatus = ConcurrentHashMap<Int, CompletableDeferred<OrderStatus>>()
     private val fillPrices = ConcurrentHashMap<Int, BigDecimal>()
     private val selfCancelledOrders = ConcurrentHashMap.newKeySet<Int>()
@@ -34,8 +32,6 @@ class IbkrOrderRegistry(
     // This is the authoritative, push-based "no longer working" signal — verification paths consult it
     // instead of polling reqAllOpenOrders, which is expensive (returns the whole book) and laggy.
     private val cancelledOrders = ConcurrentHashMap.newKeySet<Int>()
-
-    fun nextOrderId(): Int = ibkrIdCounter.next()
 
     fun markSelfCancelled(orderId: Int) {
         selfCancelledOrders.add(orderId)

@@ -8,6 +8,7 @@ import cz.solvina.options.adapters.outbound.ibkr.IbkrConnectionConfig
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
 import cz.solvina.options.adapters.outbound.ibkr.cache.OptionContractKey
 import cz.solvina.options.adapters.outbound.ibkr.cache.resolveConIdOrCached
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderIdCounter
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import cz.solvina.options.domain.features.order.LegQuotes
 import cz.solvina.options.domain.features.order.OrderStatus
@@ -46,6 +47,7 @@ private val logger = KotlinLogging.logger {}
 class LegByLegOrderStrategy(
     private val exchangeId: String = "EUREX",
     private val registry: IbkrOrderRegistry,
+    private val ibkrOrderIdCounter: IbkrOrderIdCounter,
     private val client: EClientSocket,
     private val contractCache: IbkrContractCache,
     private val connectionConfig: IbkrConnectionConfig,
@@ -283,7 +285,7 @@ class LegByLegOrderStrategy(
                     if (connectionConfig.account.isNotBlank()) account(connectionConfig.account)
                 }
 
-            val orderId = registry.nextOrderId()
+            val orderId = ibkrOrderIdCounter.nextOrderId()
             if (orderId == 0) {
                 logger.error { "[$exchangeId] nextOrderId returned 0 for $legDescription leg — submission unavailable" }
                 0

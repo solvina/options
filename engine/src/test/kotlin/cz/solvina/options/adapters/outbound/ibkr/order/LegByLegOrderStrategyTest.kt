@@ -4,6 +4,7 @@ import com.ib.client.EClientSocket
 import com.ib.client.Order
 import cz.solvina.options.adapters.outbound.ibkr.IbkrConnectionConfig
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderIdCounter
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import cz.solvina.options.domain.features.order.LegQuotes
 import cz.solvina.options.domain.features.order.OrderStatus
@@ -40,6 +41,7 @@ import kotlin.test.assertTrue
  */
 class LegByLegOrderStrategyTest {
     private val client: EClientSocket = mockk(relaxed = true)
+    private val ibkrOrderIdCounter: IbkrOrderIdCounter= mockk()
     private val registry: IbkrOrderRegistry = mockk()
     private val contractCache: IbkrContractCache = mockk()
     private val connectionConfig = IbkrConnectionConfig(account = "")
@@ -55,7 +57,7 @@ class LegByLegOrderStrategyTest {
 
     @BeforeTest
     fun setup() {
-        every { registry.nextOrderId() } answers { nextId.getAndIncrement() }
+        every { ibkrOrderIdCounter.nextOrderId() } answers { nextId.getAndIncrement() }
         every { registry.pendingOrderStatus } returns pending
         every { registry.markSelfCancelled(any()) } just Runs
         coEvery { contractCache.getOrFetchOptionConId(any()) } returns 123456
@@ -72,6 +74,7 @@ class LegByLegOrderStrategyTest {
         LegByLegOrderStrategy(
             exchangeId = "EUREX",
             registry = registry,
+            ibkrOrderIdCounter = ibkrOrderIdCounter,
             client = client,
             contractCache = contractCache,
             connectionConfig = connectionConfig,
@@ -180,7 +183,7 @@ class LegByLegOrderStrategyTest {
     @Test
     fun `LONG submission unavailable - reports failure with no exposure`() =
         runTest {
-            every { registry.nextOrderId() } returns 0 // submission unavailable
+            every { ibkrOrderIdCounter.nextOrderId() } returns 0 // submission unavailable
 
             val result =
                 buildStrategy().submitSpreadOrder(

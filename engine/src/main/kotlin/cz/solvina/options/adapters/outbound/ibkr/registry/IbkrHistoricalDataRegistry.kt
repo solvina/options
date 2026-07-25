@@ -27,14 +27,14 @@ internal data class PendingRawBarsRequest(
 
 @Component
 class IbkrHistoricalDataRegistry(
-    private val idCounter: IbkrIdCounter,
+    private val idCounter: IbkrOrderIdCounter,
 ) {
     internal val pendingHistoricalBars = ConcurrentHashMap<Int, PendingBarsRequest>()
 
     /** For equity OHLCV requests that need the full raw com.ib.client.Bar. */
     internal val pendingRawBars = ConcurrentHashMap<Int, PendingRawBarsRequest>()
 
-    fun nextReqId(): Int = idCounter.next()
+    fun nextReqId(): Int = idCounter.nextOrderId()
 
     fun onHistoricalBar(
         reqId: Int,

@@ -8,6 +8,7 @@ import cz.solvina.options.adapters.outbound.ibkr.IbkrConnectionConfig
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
 import cz.solvina.options.adapters.outbound.ibkr.cache.OptionContractKey
 import cz.solvina.options.adapters.outbound.ibkr.cache.resolveConIdOrCached
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderIdCounter
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.features.order.floorToOptionTick
@@ -31,6 +32,7 @@ private val logger = KotlinLogging.logger {}
 class NativeComboOrderStrategy(
     private val exchangeId: String = "CBOE",
     private val registry: IbkrOrderRegistry,
+    private val ibkrOrderIdCounter: IbkrOrderIdCounter,
     private val client: EClientSocket,
     private val contractCache: IbkrContractCache,
     private val connectionConfig: IbkrConnectionConfig,
@@ -61,7 +63,7 @@ class NativeComboOrderStrategy(
             // Create BUY order with negative limit (IBKR convention for net credit)
             val order = buildComboOrder(netCredit, qty)
 
-            val orderId = registry.nextOrderId()
+            val orderId = ibkrOrderIdCounter.nextOrderId()
             if (orderId == 0) {
                 // Order-id sequence not yet seeded by IBKR — submitting with id 0 would be invalid (E10).
                 logger.error { "[$exchangeId] nextOrderId returned 0 — order id sequence not ready, cannot submit" }

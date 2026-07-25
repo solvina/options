@@ -31,7 +31,7 @@ internal data class PendingOptionParamsRequest(
 
 @Component
 class IbkrContractRegistry(
-    private val idCounter: IbkrIdCounter,
+    private val idCounter: IbkrOrderIdCounter,
 ) {
     internal val pendingContractDetails = ConcurrentHashMap<Int, PendingContractRequest>()
     internal val pendingOptionParams = ConcurrentHashMap<Int, PendingOptionParamsRequest>()
@@ -58,7 +58,7 @@ class IbkrContractRegistry(
         pendingMarketRules.remove(marketRuleId)?.complete(increments)
     }
 
-    fun nextReqId(): Int = idCounter.next()
+    fun nextReqId(): Int = idCounter.nextOrderId()
 
     fun onContractDetails(
         reqId: Int,

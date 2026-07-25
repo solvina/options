@@ -7,7 +7,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 @Component
-class IbkrIdCounter {
+class IbkrOrderIdCounter {
     private val logger = KotlinLogging.logger {}
     private val counter = AtomicInteger(-1)
 
@@ -25,7 +25,7 @@ class IbkrIdCounter {
     /**
      * Blocks until nextValidId is received from TWS, then provides the next ID.
      */
-    fun next(): Int {
+    fun nextOrderId(): Int {
         check(initializedLatch.await(5, TimeUnit.SECONDS)) {
             "Timed out waiting for IBKR nextValidId initialization"
         }
@@ -33,8 +33,8 @@ class IbkrIdCounter {
     }
 
     companion object {
-        fun testCounter(): IbkrIdCounter {
-            val counter = IbkrIdCounter()
+        fun testCounter(): IbkrOrderIdCounter {
+            val counter = IbkrOrderIdCounter()
             counter.init(0)
             return counter
         }

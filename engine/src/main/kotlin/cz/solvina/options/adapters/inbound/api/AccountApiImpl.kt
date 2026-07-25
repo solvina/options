@@ -12,7 +12,7 @@ import cz.solvina.options.account.dto.ClosePositionRequestDto
 import cz.solvina.options.account.dto.OpenOrderDto
 import cz.solvina.options.account.dto.OpenPositionDto
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOpenOrdersAdapter
-import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderIdCounter
 import cz.solvina.options.domain.features.account.AccountPort
 import cz.solvina.options.domain.features.account.AccountPosition
 import cz.solvina.options.domain.features.account.OrphanPositionDetector
@@ -43,7 +43,7 @@ class AccountApiImpl(
     private val positionsPort: PositionsPort,
     private val openOrdersAdapter: IbkrOpenOrdersAdapter,
     private val client: EClientSocket,
-    private val orderRegistry: IbkrOrderRegistry,
+    private val ibkrOrderIdCounter: IbkrOrderIdCounter,
     private val clock: Clock,
 ) : AccountApi,
     OrdersApi {
@@ -133,7 +133,7 @@ class AccountApiImpl(
                 conid(conId)
                 exchange("SMART")
             }
-        val orderId = orderRegistry.nextOrderId()
+        val orderId = ibkrOrderIdCounter.nextOrderId()
         val ibkrOrder =
             Order().apply {
                 action(action)

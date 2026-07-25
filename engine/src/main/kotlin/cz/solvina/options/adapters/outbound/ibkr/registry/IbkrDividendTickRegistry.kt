@@ -17,13 +17,13 @@ class DividendTickException(
  */
 @Component
 class IbkrDividendTickRegistry(
-    private val idCounter: IbkrIdCounter,
+    private val idCounter: IbkrOrderIdCounter,
 ) {
     private val logger = KotlinLogging.logger {}
 
     private val pending = ConcurrentHashMap<Int, CompletableDeferred<String>>()
 
-    fun nextReqId(): Int = idCounter.next()
+    fun nextReqId(): Int = idCounter.nextOrderId()
 
     fun register(reqId: Int): CompletableDeferred<String> =
         CompletableDeferred<String>().also {

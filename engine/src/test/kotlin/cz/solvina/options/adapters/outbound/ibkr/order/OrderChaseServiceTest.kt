@@ -3,6 +3,7 @@ package cz.solvina.options.adapters.outbound.ibkr.order
 import com.ib.client.Contract
 import com.ib.client.EClientSocket
 import com.ib.client.Order
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderIdCounter
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import cz.solvina.options.domain.features.scanner.ScannerConfig
 import io.mockk.Runs
@@ -28,6 +29,7 @@ import kotlin.test.assertTrue
 class OrderChaseServiceTest {
     private val client: EClientSocket = mockk(relaxed = true)
     private val registry: IbkrOrderRegistry = mockk()
+    private val ibkrOrderIdCounter: IbkrOrderIdCounter = mockk()
 
     private val pending = ConcurrentHashMap<Int, CompletableDeferred<cz.solvina.options.domain.features.order.OrderStatus>>()
     private val nextId = AtomicInteger(101)
@@ -40,11 +42,11 @@ class OrderChaseServiceTest {
             orderChasePriceStep = 0.10,
         )
 
-    private val service = OrderChaseService(registry, client, config)
+    private val service = OrderChaseService(registry, ibkrOrderIdCounter, client, config)
 
     @BeforeTest
     fun setup() {
-        every { registry.nextOrderId() } answers { nextId.getAndIncrement() }
+        every { ibkrOrderIdCounter.nextOrderId() } answers { nextId.getAndIncrement() }
         every { registry.pendingOrderStatus } returns pending
         every { registry.markSelfCancelled(any()) } just Runs
         every { registry.isFilled(any()) } returns false

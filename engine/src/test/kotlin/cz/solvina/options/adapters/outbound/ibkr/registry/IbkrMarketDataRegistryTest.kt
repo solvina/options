@@ -18,7 +18,7 @@ import kotlin.test.assertTrue
  * must now resolve the request as soon as the caller-supplied readiness predicate is satisfied.
  */
 class IbkrMarketDataRegistryTest {
-    private val idCounter = mockk<IbkrIdCounter>().also { every { it.next() } returns 42 }
+    private val idCounter = mockk<IbkrOrderIdCounter>().also { every { it.nextOrderId() } returns 42 }
     private val registry = IbkrMarketDataRegistry(idCounter)
 
     private val optionReady: (MarketDataSnapshot) -> Boolean =

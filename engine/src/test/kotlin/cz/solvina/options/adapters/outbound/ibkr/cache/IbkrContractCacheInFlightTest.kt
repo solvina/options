@@ -7,7 +7,7 @@ import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.IbkrInstrumentsConfig
 import cz.solvina.options.adapters.outbound.ibkr.InstrumentDef
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrContractRegistry
-import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrIdCounter
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderIdCounter
 import cz.solvina.options.domain.models.OptionType
 import cz.solvina.options.domain.models.Symbol
 import io.mockk.every
@@ -25,7 +25,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class IbkrContractCacheInFlightTest {
-    private val idCounter: IbkrIdCounter = mockk(relaxed = true)
+    private val idCounter: IbkrOrderIdCounter = mockk(relaxed = true)
     private val registry: IbkrContractRegistry = IbkrContractRegistry(idCounter)
     private val client: EClientSocket = mockk(relaxed = true)
     private val instrumentsConfig =

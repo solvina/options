@@ -8,6 +8,7 @@ import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
 import cz.solvina.options.adapters.outbound.ibkr.cache.OptionContractKey
 import cz.solvina.options.adapters.outbound.ibkr.cache.resolveConIdOrCached
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderIdCounter
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import cz.solvina.options.domain.features.order.LegAction
 import cz.solvina.options.domain.features.order.LegOrder
@@ -25,6 +26,7 @@ private val logger = KotlinLogging.logger {}
 @Component
 class IbkrOrderAdapter(
     private val registry: IbkrOrderRegistry,
+    private val ibkrOrderIdCounter: IbkrOrderIdCounter,
     private val client: EClientSocket,
     private val contractCache: IbkrContractCache,
     private val chaseService: OrderChaseService,
@@ -44,7 +46,7 @@ class IbkrOrderAdapter(
 
         val ibkrContract = buildIbkrContract(contract, conId)
 
-        val orderId = registry.nextOrderId()
+        val orderId = ibkrOrderIdCounter.nextOrderId()
         val deferred = CompletableDeferred<OrderStatus>()
         registry.pendingOrderStatus[orderId] = deferred
 
@@ -84,7 +86,7 @@ class IbkrOrderAdapter(
         }
 
         val ibkrContract = buildIbkrContract(contract, conId)
-        val orderId = registry.nextOrderId()
+        val orderId = ibkrOrderIdCounter.nextOrderId()
         val deferred = CompletableDeferred<OrderStatus>()
         registry.pendingOrderStatus[orderId] = deferred
 

@@ -7,6 +7,7 @@ import com.ib.client.OrderCancel
 import cz.solvina.options.adapters.outbound.ibkr.IbkrConnectionConfig
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderIdCounter
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import cz.solvina.options.domain.features.flag.BracketOrderIds
 import cz.solvina.options.domain.features.flag.BracketOrderPort
@@ -27,6 +28,7 @@ private val logger = KotlinLogging.logger {}
 @Component
 class IbkrBracketOrderAdapter(
     private val registry: IbkrOrderRegistry,
+    private val ibkrOrderIdCounter: IbkrOrderIdCounter,
     private val client: EClientSocket,
     private val contractFactory: IbkrContractFactory,
     private val connectionConfig: IbkrConnectionConfig,
@@ -50,8 +52,8 @@ class IbkrBracketOrderAdapter(
         // is a stop-LIMIT: trigger at the breakout, limit 0.3% above to fill with bounded slippage.
         val entryLimit = contractCache.roundToTick(symbol, entryPrice.multiply(BigDecimal("1.003")))
 
-        val entryId = registry.nextOrderId()
-        val trailId = registry.nextOrderId()
+        val entryId = ibkrOrderIdCounter.nextOrderId()
+        val trailId = ibkrOrderIdCounter.nextOrderId()
 
         // Parent: Stop-LIMIT BUY at the breakout level (stop-limit so the TRAIL child can attach).
         val parent =
@@ -156,7 +158,7 @@ class IbkrBracketOrderAdapter(
         val contract = contractFactory.stockContract(symbol)
         val stop = contractCache.roundToTick(symbol, initialStop)
         val trail = contractCache.roundToTick(symbol, trailAmount)
-        val orderId = registry.nextOrderId()
+        val orderId = ibkrOrderIdCounter.nextOrderId()
 
         val trailStop =
             Order().apply {
@@ -182,7 +184,7 @@ class IbkrBracketOrderAdapter(
         shares: Int,
     ): OrderFill {
         val contract = contractFactory.stockContract(symbol)
-        val orderId = registry.nextOrderId()
+        val orderId = ibkrOrderIdCounter.nextOrderId()
 
         val order =
             Order().apply {

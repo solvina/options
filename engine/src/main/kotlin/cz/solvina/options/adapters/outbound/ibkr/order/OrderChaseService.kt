@@ -5,6 +5,7 @@ import com.ib.client.Decimal
 import com.ib.client.EClientSocket
 import com.ib.client.Order
 import com.ib.client.OrderCancel
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderIdCounter
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import cz.solvina.options.domain.features.order.LegOrder
 import cz.solvina.options.domain.features.order.OrderStatus
@@ -24,6 +25,7 @@ private val logger = KotlinLogging.logger {}
 @Service
 class OrderChaseService(
     private val registry: IbkrOrderRegistry,
+    private val ibkrOrderIdCounter: IbkrOrderIdCounter,
     private val client: EClientSocket,
     private val config: ScannerConfig,
 ) {
@@ -88,7 +90,7 @@ class OrderChaseService(
                             .multiply(BigDecimal.ONE.subtract(BigDecimal(config.orderChasePriceStep)))
                             .floorToOptionTick()
                     }
-                orderId = registry.nextOrderId()
+                orderId = ibkrOrderIdCounter.nextOrderId()
                 logger.info { "Repricing: new orderId=$orderId price=$price (attempt ${attempt + 1}/${config.orderChaseMaxRetries})" }
 
                 val newDeferred = CompletableDeferred<OrderStatus>()

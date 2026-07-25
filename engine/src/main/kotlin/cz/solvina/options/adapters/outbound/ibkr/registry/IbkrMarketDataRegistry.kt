@@ -66,7 +66,7 @@ internal fun normalizeDelayedOptionComputationField(field: Int): Int = if (field
 
 @Component
 class IbkrMarketDataRegistry(
-    private val idCounter: IbkrIdCounter,
+    private val idCounter: IbkrOrderIdCounter,
 ) {
     internal val pendingMarketData = ConcurrentHashMap<Int, PendingMarketDataRequest>()
     internal val pendingContinuousMarketData = ConcurrentHashMap<Int, PendingContinuousMarketDataRequest>()
@@ -98,7 +98,7 @@ class IbkrMarketDataRegistry(
         pendingRealTimeBars[reqId]?.onBar?.invoke(bar)
     }
 
-    fun nextReqId(): Int = idCounter.next()
+    fun nextReqId(): Int = idCounter.nextOrderId()
 
     /** Resolve a streaming snapshot request the moment its readiness predicate is satisfied. Without
      *  this the deferred only ever completes on timeout (which discards the real ticks), so every
