@@ -41,6 +41,8 @@ class PositionReconciliationServiceTest {
                         optionRight = "P",
                         quantity = BigDecimal("-1"),
                         avgCost = BigDecimal.ZERO,
+                        marketPrice = 0.0,
+                        marketValue = 0.0,
                     ),
                     AccountPosition(
                         account = "DU1",
@@ -52,6 +54,8 @@ class PositionReconciliationServiceTest {
                         optionRight = "P",
                         quantity = BigDecimal("1"),
                         avgCost = BigDecimal.ZERO,
+                        marketPrice = 0.0,
+                        marketValue = 0.0,
                     ),
                 )
             coEvery { positionsPort.getPositions() } returns positions

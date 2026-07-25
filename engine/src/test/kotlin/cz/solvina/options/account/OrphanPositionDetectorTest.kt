@@ -106,6 +106,8 @@ class OrphanPositionDetectorTest {
         strike = strike?.let { BigDecimal(it) },
         optionRight = right,
         quantity = BigDecimal(qty),
+        marketPrice = 0.0,
+        marketValue = 0.0,
         avgCost = BigDecimal("100"),
         conId = conId,
     )

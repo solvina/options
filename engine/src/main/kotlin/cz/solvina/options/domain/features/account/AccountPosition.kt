@@ -12,7 +12,10 @@ data class AccountPosition(
     val strike: BigDecimal?,
     val optionRight: String?,
     val quantity: BigDecimal,
+    val marketPrice: Double,
+    val marketValue: Double,
     val avgCost: BigDecimal,
     val conId: Int = 0,
     val unrealizedPnL: Double? = null,
+    val realizedPnL: Double? = null,
 )

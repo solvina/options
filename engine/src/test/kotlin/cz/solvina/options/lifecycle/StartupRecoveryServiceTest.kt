@@ -84,6 +84,8 @@ class StartupRecoveryServiceTest {
         optionRight = "P",
         quantity = BigDecimal(qty),
         avgCost = BigDecimal("100"),
+        marketPrice = 100.0,
+        marketValue = 100.0,
     )
 
     private fun withPendingSpreadAndNoOpenOrder() {

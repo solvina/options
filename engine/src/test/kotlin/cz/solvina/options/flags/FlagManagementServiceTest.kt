@@ -333,6 +333,8 @@ class FlagManagementServiceTest {
         optionRight = null,
         quantity = BigDecimal(qty),
         avgCost = BigDecimal("150"),
+        marketPrice = 150.0,
+        marketValue = 150.0,
     )
 
     private fun buildService(

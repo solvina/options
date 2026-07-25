@@ -1034,6 +1034,8 @@ class SpreadManagementServiceTest {
                                 optionRight = "P",
                                 quantity = BigDecimal("-1"),
                                 avgCost = BigDecimal.ZERO,
+                                marketPrice = 0.0,
+                                marketValue = 0.0,
                             )
                         }
                 }
@@ -1081,6 +1083,8 @@ class SpreadManagementServiceTest {
                                 optionRight = "P",
                                 quantity = BigDecimal("-1"),
                                 avgCost = BigDecimal.ZERO,
+                                marketPrice = 0.0,
+                                marketValue = 0.0,
                             ),
                         )
                 }

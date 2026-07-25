@@ -14,6 +14,7 @@ import kotlinx.coroutines.runBlocking
 import org.springframework.boot.context.event.ApplicationReadyEvent
 import org.springframework.context.event.EventListener
 import org.springframework.stereotype.Component
+import kotlin.time.Duration.Companion.milliseconds
 
 private val logger = KotlinLogging.logger {}
 
@@ -39,7 +40,9 @@ class IbkrLifecycleAdapter(
                         if (connected) {
                             logger.info { "Successfully connected to IBKR" }
                             // Brief pause so IBKR sends back initial openOrder callbacks before we query
-                            delay(3_000)
+                            delay(3_000.milliseconds)
+                            runCatching { accountAdapter.subscribeToMainAccount() }
+                                .onFailure { e -> logger.warn(e) { "Account adapter failed to subscribe: ${e.message}" } }
                             runCatching { recoveryService.recover() }
                                 .onFailure { e -> logger.warn(e) { "Startup recovery failed: ${e.message}" } }
                             runCatching { flagRecoveryService.recover() }

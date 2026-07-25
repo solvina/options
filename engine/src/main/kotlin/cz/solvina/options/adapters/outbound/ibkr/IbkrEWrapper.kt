@@ -28,7 +28,6 @@ import com.ib.client.TickAttribBidAsk
 import com.ib.client.TickAttribLast
 import com.ib.client.TickType
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOpenOrdersRegistry
-import cz.solvina.options.adapters.outbound.ibkr.account.IbkrPnlRegistry
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrPositionsRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrAccountRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrContractRegistry
@@ -107,7 +106,6 @@ class IbkrEWrapper(
     private val accountRegistry: IbkrAccountRegistry,
     private val positionsRegistry: IbkrPositionsRegistry,
     private val openOrdersRegistry: IbkrOpenOrdersRegistry,
-    private val pnlRegistry: IbkrPnlRegistry,
     private val dividendTickRegistry: IbkrDividendTickRegistry,
     private val marketDataHealthTracker: MarketDataHealthTracker,
 ) : EWrapper {
@@ -298,6 +296,16 @@ class IbkrEWrapper(
                 "realPnl" to realizedPNL,
             )
         }
+        positionsRegistry.onUpdatePortfolio(
+            contract,
+            position,
+            marketPrice,
+            marketValue,
+            averageCost,
+            unrealizedPNL,
+            realizedPNL,
+            accountName,
+        )
     }
 
     override fun updateAccountTime(timeStamp: String) {
@@ -545,12 +553,10 @@ class IbkrEWrapper(
         avgCost: Double,
     ) {
         logger.debug { "position: account=$account, symbol=${contract.symbol()}, pos=$pos" }
-        positionsRegistry.onPosition(account, contract, pos, avgCost)
     }
 
     override fun positionEnd() {
         logger.debug { "positionEnd" }
-        positionsRegistry.onPositionEnd()
     }
 
     override fun accountSummary(
@@ -656,7 +662,6 @@ class IbkrEWrapper(
         contractRegistry.cancelAllPending(cause)
         marketDataRegistry.cancelAllPending(cause)
         orderRegistry.cancelAllPending(cause)
-        positionsRegistry.cancelPending()
         openOrdersRegistry.cancelPending()
         accountRegistry.onDisconnect()
     }
@@ -875,7 +880,7 @@ class IbkrEWrapper(
         realizedPnL: Double,
         value: Double,
     ) {
-        pnlRegistry.onPnlSingle(reqId, unrealizedPnL)
+        logger.debug { "pnlSingle: reqId=$reqId, daily=$dailyPnL" }
     }
 
     override fun historicalTicks(

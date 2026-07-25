@@ -52,6 +52,10 @@ class IbkrAccountAdapter(
             )
             return
         }
+        subscribeToMainAccount()
+    }
+
+    fun subscribeToMainAccount() {
         logger.info { "Subscribing to account updates for ${config.account}" }
         client.reqAccountUpdates(true, config.account)
     }

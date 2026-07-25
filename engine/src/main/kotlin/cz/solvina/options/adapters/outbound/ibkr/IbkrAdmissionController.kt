@@ -148,8 +148,6 @@ class IbkrAdmissionController(
         }
     }
 
-    fun brokerLimitHitCounts(): Map<Int, Long> = brokerLimitHits.mapValues { it.value.get() }
-
     /**
      * Acquire permission to fire ONE historical request, suspending as needed to respect the rate
      * window, minimum spacing, any active pacing penalty, and the in-flight cap. The caller MUST
