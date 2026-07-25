@@ -9,7 +9,9 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import org.springframework.stereotype.Component
@@ -42,17 +44,27 @@ class IbkrPositionsAdapter(
 
     private suspend fun enrichWithPnl(positions: List<AccountPosition>): List<AccountPosition> =
         coroutineScope {
-            positions
-                .map { pos ->
-                    async {
+            // Limit concurrent PnL requests to avoid exceeding IBKR message rate limits
+            val semaphore = Semaphore(permits = 5)
+
+            positions.map { pos ->
+                async {
+                    semaphore.withPermit {
                         val reqId = contractRegistry.nextReqId()
                         val pnlDeferred = pnlRegistry.startRequest(reqId)
-                        client.reqPnLSingle(reqId, pos.account, "", pos.conId)
-                        val pnl = withTimeoutOrNull(3_000L.milliseconds) { pnlDeferred.await() }
-                        client.cancelPnLSingle(reqId)
-                        pnlRegistry.cancel(reqId)
-                        pos.copy(unrealizedPnL = pnl)
+
+                        try {
+                            client.reqPnLSingle(reqId, pos.account, "", pos.conId)
+                            val pnl = withTimeoutOrNull(3_000L.milliseconds) {
+                                pnlDeferred.await()
+                            }
+                            pos.copy(unrealizedPnL = pnl)
+                        } finally {
+                            // ALWAYS ensure cancel is sent, even on timeout or coroutine cancellation
+                            client.cancelPnLSingle(reqId)
+                            pnlRegistry.cancel(reqId)
+                        }
                     }
-                }.awaitAll()
-        }
-}
+                }
+            }.awaitAll()
+        }}
