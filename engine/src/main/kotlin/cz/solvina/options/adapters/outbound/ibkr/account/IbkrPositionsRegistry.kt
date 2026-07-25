@@ -3,30 +3,34 @@ package cz.solvina.options.adapters.outbound.ibkr.account
 import com.ib.client.Contract
 import com.ib.client.Decimal
 import cz.solvina.options.domain.features.account.AccountPosition
-import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CompletableDeferred
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
-import java.util.Collections
+import java.util.concurrent.CopyOnWriteArrayList
 
-private val logger = KotlinLogging.logger {}
 private val IBKR_DATE = DateTimeFormatter.ofPattern("yyyyMMdd")
 
 @Component
 class IbkrPositionsRegistry {
-    @Volatile private var pending: CompletableDeferred<List<AccountPosition>>? = null
-    private val buffer: MutableList<AccountPosition> = Collections.synchronizedList(mutableListOf())
+    private val lock = Any()
 
-    fun startRequest(): CompletableDeferred<List<AccountPosition>> {
-        pending?.cancel()
-        buffer.clear()
-        val deferred = CompletableDeferred<List<AccountPosition>>()
-        pending = deferred
-        return deferred
-    }
+    @Volatile
+    private var pending: CompletableDeferred<List<AccountPosition>>? = null
+    private val buffer = CopyOnWriteArrayList<AccountPosition>()
+    private var activeRequestId: Long = 0L
+
+    fun startRequest(): CompletableDeferred<List<AccountPosition>> =
+        synchronized(lock) {
+            pending?.cancel()
+            buffer.clear()
+            activeRequestId++
+            val deferred = CompletableDeferred<List<AccountPosition>>()
+            pending = deferred
+            deferred
+        }
 
     fun onPosition(
         account: String,
@@ -51,14 +55,14 @@ class IbkrPositionsRegistry {
                 .takeIf { it != 0.0 }
                 ?.let { BigDecimal(it).setScale(2, RoundingMode.HALF_UP) }
 
-        val rightApi = contract.right()?.getApiString()
+        val rightApi = contract.right()?.apiString
         val right = rightApi?.takeIf { it.isNotBlank() && it != "?" && it != "0" }
 
-        buffer.add(
+        val position =
             AccountPosition(
                 account = account,
                 symbol = contract.symbol() ?: "",
-                secType = contract.secType()?.getApiString() ?: "",
+                secType = contract.secType()?.apiString ?: "",
                 currency = contract.currency() ?: "",
                 expiry = expiry,
                 strike = strike,
@@ -66,20 +70,29 @@ class IbkrPositionsRegistry {
                 quantity = quantity,
                 avgCost = BigDecimal(avgCost).setScale(4, RoundingMode.HALF_UP),
                 conId = contract.conid(),
-            ),
-        )
+            )
+
+        synchronized(lock) {
+            // Drop callbacks if no active request is waiting
+            if (pending != null && pending?.isCompleted == false) {
+                buffer.add(position)
+            }
+        }
     }
 
-    fun onPositionEnd() {
-        val snapshot = buffer.toList()
-        logger.debug { "positionEnd: ${snapshot.size} position(s) received" }
-        pending?.complete(snapshot)
-        pending = null
-    }
+    fun onPositionEnd() =
+        synchronized(lock) {
+            val deferred = pending ?: return@synchronized
+            val snapshot = buffer.toList()
+            buffer.clear()
+            pending = null
+            deferred.complete(snapshot)
+        }
 
-    fun cancelPending() {
-        pending?.cancel()
-        pending = null
-        buffer.clear()
-    }
+    fun cancelPending() =
+        synchronized(lock) {
+            pending?.cancel()
+            pending = null
+            buffer.clear()
+        }
 }
