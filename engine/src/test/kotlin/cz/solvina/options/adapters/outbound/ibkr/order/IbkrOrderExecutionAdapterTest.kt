@@ -3,6 +3,7 @@ package cz.solvina.options.adapters.outbound.ibkr.order
 import com.ib.client.EClientSocket
 import cz.solvina.options.adapters.outbound.ibkr.IbkrInstrumentsConfig
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOpenOrdersAdapter
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrIdCounter
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import cz.solvina.options.domain.features.alert.AlertLevel
 import cz.solvina.options.domain.features.alert.AlertPort
@@ -132,7 +133,7 @@ class IbkrOrderExecutionAdapterTest {
             // A missing deferred does not always mean cancelled: the entry may have been consumed
             // while the order actually FILLED (e.g. a fill racing a cancel, or a deferred already
             // handed off elsewhere). The registry's fill record is the authoritative tiebreaker.
-            val realRegistry = IbkrOrderRegistry()
+            val realRegistry = IbkrOrderRegistry(IbkrIdCounter.testCounter())
             val realAdapter =
                 IbkrOrderExecutionAdapter(
                     registry = realRegistry,

@@ -14,6 +14,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.math.BigDecimal
 import java.math.RoundingMode
 import kotlin.coroutines.coroutineContext
+import kotlin.time.Duration.Companion.milliseconds
 
 /** Readiness predicates for streaming [reqMktDataSnapshot] requests. A streaming subscription
  *  (snapshot=false) never emits tickSnapshotEnd, so the request must declare which fields make its
@@ -71,7 +72,7 @@ internal suspend fun reqMktDataSnapshot(
         // finally below always cancelMktData once the snapshot completes, quiesces, or times out.
         // Shortest-lived line in the system (sub-5s typical); every snapshot flows through here.
         client.reqMktData(reqId, contract, genericTickList, false, false, null)
-        withTimeout(timeoutMs) { awaitSnapshot(deferred, pending, priority, quiescenceMs) }
+        withTimeout(timeoutMs.milliseconds) { awaitSnapshot(deferred, pending, priority, quiescenceMs) }
     } catch (_: TimeoutCancellationException) {
         // Streaming mode: never got every field in time. Return whatever real ticks did arrive
         // rather than discarding them — partial bid/ask still beats an all-NaN snapshot, and the

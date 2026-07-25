@@ -1,5 +1,6 @@
 package cz.solvina.options.adapters.outbound.ibkr.registry
 
+import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CompletableDeferred
 import org.springframework.stereotype.Component
 import java.util.concurrent.ConcurrentHashMap
@@ -18,13 +19,20 @@ class DividendTickException(
 class IbkrDividendTickRegistry(
     private val idCounter: IbkrIdCounter,
 ) {
+    private val logger = KotlinLogging.logger {}
+
     private val pending = ConcurrentHashMap<Int, CompletableDeferred<String>>()
 
     fun nextReqId(): Int = idCounter.next()
 
-    fun register(reqId: Int): CompletableDeferred<String> = CompletableDeferred<String>().also { pending[reqId] = it }
+    fun register(reqId: Int): CompletableDeferred<String> =
+        CompletableDeferred<String>().also {
+            logger.debug { "registering dividend tick request $reqId" }
+            pending[reqId] = it
+        }
 
     fun remove(reqId: Int) {
+        logger.debug { "removing dividend tick request $reqId" }
         pending.remove(reqId)
     }
 
@@ -32,6 +40,7 @@ class IbkrDividendTickRegistry(
         reqId: Int,
         value: String,
     ) {
+        logger.debug { "completing dividend tick request $reqId with value $value" }
         pending.remove(reqId)?.complete(value)
     }
 
@@ -41,6 +50,7 @@ class IbkrDividendTickRegistry(
         code: Int,
         msg: String,
     ) {
+        logger.debug { "completing dividend tick request $reqId with error [code=$code]: $msg" }
         pending.remove(reqId)?.completeExceptionally(DividendTickException("IBKR error [code=$code]: $msg"))
     }
 }

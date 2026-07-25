@@ -64,7 +64,7 @@ class FlagExecutionService(
 
     /**
      * Calculates share size, submits bracket order, persists PENDING, then
-     * asynchronously awaits fills and updates status accordingly.
+     * asynchronously awaits fills, and updates status accordingly.
      */
     suspend fun execute(request: ExecutionRequest) {
         val risk =

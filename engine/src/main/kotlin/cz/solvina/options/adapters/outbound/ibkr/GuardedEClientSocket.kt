@@ -39,6 +39,10 @@ class GuardedEClientSocket(
             }
             return
         }
-        super.placeOrder(id, contract, order)
+        try {
+            super.placeOrder(id, contract, order)
+        } catch (e: Exception) {
+            logger.error(e) { "Failed to place order" }
+        }
     }
 }

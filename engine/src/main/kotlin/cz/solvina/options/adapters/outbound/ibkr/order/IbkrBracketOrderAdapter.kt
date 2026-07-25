@@ -20,6 +20,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
+import kotlin.time.Duration.Companion.milliseconds
 
 private val logger = KotlinLogging.logger {}
 
@@ -100,7 +101,7 @@ class IbkrBracketOrderAdapter(
         registry.markSelfCancelled(orderId)
         client.cancelOrder(orderId, OrderCancel())
         // Give IBKR a moment to acknowledge; don't block on confirmation
-        delay(200)
+        delay(200.milliseconds)
     }
 
     // Parent is a DAY order — can't survive past a single trading session
@@ -209,8 +210,8 @@ class IbkrBracketOrderAdapter(
     ): OrderStatus {
         val deferred = registry.pendingOrderStatus[orderId] ?: return OrderStatus.CANCELLED
         return try {
-            withTimeout(timeoutMs) { deferred.await() }
-        } catch (e: TimeoutCancellationException) {
+            withTimeout(timeoutMs.milliseconds) { deferred.await() }
+        } catch (_: TimeoutCancellationException) {
             logger.warn { "awaitFill($orderId) timed out after ${timeoutMs / 3_600_000}h — treating as CANCELLED" }
             OrderStatus.CANCELLED
         } finally {

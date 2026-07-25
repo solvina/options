@@ -34,6 +34,7 @@ import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrAccountRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrContractRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrDividendTickRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrHistoricalDataRegistry
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrIdCounter
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.TickByTickBidAsk
@@ -102,6 +103,7 @@ class IbkrEWrapper(
     private val contractRegistry: IbkrContractRegistry,
     private val marketDataRegistry: IbkrMarketDataRegistry,
     private val orderRegistry: IbkrOrderRegistry,
+    private val ibkrIdCounter: IbkrIdCounter,
     private val accountRegistry: IbkrAccountRegistry,
     private val positionsRegistry: IbkrPositionsRegistry,
     private val openOrdersRegistry: IbkrOpenOrdersRegistry,
@@ -306,9 +308,9 @@ class IbkrEWrapper(
         logger.debug { "accountDownloadEnd: $accountName" }
     }
 
-    override fun nextValidId(orderId: Int) {
-        logger.info { "nextValidId: $orderId" }
-        orderRegistry.seedOrderId(orderId)
+    override fun nextValidId(nextValidId: Int) {
+        logger.info { "nextValidId: $nextValidId" }
+        ibkrIdCounter.init(nextValidId)
     }
 
     override fun contractDetails(

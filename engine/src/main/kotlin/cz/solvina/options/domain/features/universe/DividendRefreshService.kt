@@ -39,7 +39,8 @@ class DividendRefreshService(
             universePort
                 .getAll()
                 .filter { it.enabled }
-                .filter { runCatching { universePort.getMarketSchedule(it.symbol).session == "US" }.getOrDefault(false) }
+                .filter { universePort.getMarketSchedule(it.symbol).session == "US" }
+
         logger.info { "Dividend refresh: ${usInstruments.size} US instruments" }
         var updated = 0
         for (inst in usInstruments) {

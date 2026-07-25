@@ -43,6 +43,7 @@ import java.time.Instant
 import java.time.LocalDate
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
+import kotlin.time.Duration.Companion.milliseconds
 
 private val logger = KotlinLogging.logger {}
 private val tradeLogger = KotlinLogging.logger("TRADES")
@@ -696,7 +697,7 @@ class TradeExecutionService(
     private suspend fun calculateFreshCredit(request: TradeExecutionRequest): Triple<BigDecimal, QuoteFreshnessResult?, SpreadCreditTick?> {
         val startNanos = System.nanoTime()
         logger.info { "[${request.underlyingSymbol}] calculateFreshCredit: waiting 500ms for market data to settle" }
-        delay(500) // Wait for market data to settle
+        delay(500.milliseconds) // Wait for market data to settle
 
         return try {
             val stream =
@@ -709,7 +710,7 @@ class TradeExecutionService(
             // streamSpreadCredit is a hot callbackFlow that never completes. Take the FIRST usable
             // tick and break — do NOT collect-with-timeout (that always hits the 3s timeout and
             // discards the computed credit). The timeout bounds the wait for that first tick only.
-            val tick = withTimeout(3_000L) { stream.first() }
+            val tick = withTimeout(3_000L.milliseconds) { stream.first() }
 
             logger.info {
                 "[${request.underlyingSymbol}] calculateFreshCredit: received tick " +

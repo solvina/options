@@ -22,6 +22,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
 import java.math.BigDecimal
+import kotlin.time.Duration.Companion.milliseconds
 
 private val logger = KotlinLogging.logger {}
 
@@ -81,8 +82,8 @@ class LegByLegOrderStrategy(
         return try {
             logger.info {
                 "[$exchangeId] LEG-BY-LEG entry (LONG-first): " +
-                    "BUY ${boughtContract.strike}${boughtContract.type.ibkrCode} @ \$$longLimit then " +
-                    "SELL ${soldContract.strike}${soldContract.type.ibkrCode} @ \$$shortLimit (net target \$${netCredit.amount})"
+                    "BUY ${boughtContract.strike}${boughtContract.type.ibkrCode} @ $$longLimit then " +
+                    "SELL ${soldContract.strike}${soldContract.type.ibkrCode} @ $$shortLimit (net target $${netCredit.amount})"
             }
 
             // ---- Step 1: protective LONG leg first ----
@@ -161,7 +162,7 @@ class LegByLegOrderStrategy(
             val sellBack = legQuotes?.boughtBid?.floorToOptionTick()?.coerceAtLeast(BigDecimal("0.01")) ?: BigDecimal("0.01")
             logger.error {
                 "[$exchangeId] STRANDED LONG ($reason) — auto-unwind ON: " +
-                    "selling LONG ${boughtContract.strike}${boughtContract.type.ibkrCode} back @ \$$sellBack"
+                    "selling LONG ${boughtContract.strike}${boughtContract.type.ibkrCode} back @ $$sellBack"
             }
             val unwindId = submitSingleLeg(boughtContract, "SELL", qty, sellBack, "UNWIND-LONG")
             return OrderSubmissionResult(
@@ -186,8 +187,8 @@ class LegByLegOrderStrategy(
     private suspend fun awaitLegFill(orderId: Int): OrderStatus {
         val deferred = registry.pendingOrderStatus[orderId] ?: return OrderStatus.CANCELLED
         return try {
-            withTimeout(legFillTimeoutMs) { deferred.await() }
-        } catch (e: TimeoutCancellationException) {
+            withTimeout(legFillTimeoutMs.milliseconds) { deferred.await() }
+        } catch (_: TimeoutCancellationException) {
             logger.warn { "[$exchangeId] Leg $orderId did not fill within ${legFillTimeoutMs}ms" }
             OrderStatus.PENDING
         } catch (e: CancellationException) {
@@ -234,7 +235,7 @@ class LegByLegOrderStrategy(
         }
         val spreadWidth = (soldContract.strike - boughtContract.strike).abs().toDouble()
         if (spreadWidth < 1.0) {
-            return ValidationResult(false, "EUREX may require minimum \$1.00 spread width")
+            return ValidationResult(false, "EUREX may require minimum $1.00 spread width")
         }
         return ValidationResult(true)
     }

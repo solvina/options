@@ -7,14 +7,15 @@ import org.springframework.stereotype.Component
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicInteger
 
 private val logger = KotlinLogging.logger {}
 
 private val TERMINAL_CANCEL_STATUSES = setOf("cancelled", "inactive", "apicancelled", "rejected")
 
 @Component
-class IbkrOrderRegistry {
+class IbkrOrderRegistry(
+    private val ibkrIdCounter: IbkrIdCounter,
+) {
     internal val pendingOrderStatus = ConcurrentHashMap<Int, CompletableDeferred<OrderStatus>>()
     private val fillPrices = ConcurrentHashMap<Int, BigDecimal>()
     private val selfCancelledOrders = ConcurrentHashMap.newKeySet<Int>()
@@ -33,14 +34,8 @@ class IbkrOrderRegistry {
     // This is the authoritative, push-based "no longer working" signal — verification paths consult it
     // instead of polling reqAllOpenOrders, which is expensive (returns the whole book) and laggy.
     private val cancelledOrders = ConcurrentHashMap.newKeySet<Int>()
-    private val orderIdCounter = AtomicInteger(1)
 
-    fun seedOrderId(id: Int) {
-        orderIdCounter.updateAndGet { current -> maxOf(current, id) }
-        logger.info { "Order ID counter advanced to ${orderIdCounter.get()} (received $id)" }
-    }
-
-    fun nextOrderId(): Int = orderIdCounter.getAndIncrement()
+    fun nextOrderId(): Int = ibkrIdCounter.next()
 
     fun markSelfCancelled(orderId: Int) {
         selfCancelledOrders.add(orderId)

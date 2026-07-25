@@ -3,7 +3,6 @@ package cz.solvina.options.adapters.outbound.ibkr.market
 import com.ib.client.EClientSocket
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrDividendTickRegistry
-import cz.solvina.options.domain.features.market.MarketDataPriority
 import cz.solvina.options.domain.features.universe.DividendDataPort
 import cz.solvina.options.domain.features.universe.DividendInfo
 import cz.solvina.options.domain.models.Symbol
@@ -14,7 +13,6 @@ import org.springframework.stereotype.Component
 import java.math.BigDecimal
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
-import kotlin.coroutines.coroutineContext
 import kotlin.time.Duration.Companion.milliseconds
 
 private val logger = KotlinLogging.logger {}
@@ -62,7 +60,6 @@ class IbkrDividendTickAdapter(
         // Holds one market-data line between reqMktData and cancelMktData, like every other
         // subscription — previously this bypassed the line budget. The daily refresh job runs
         // tagged SCANNER, so a 15s dividend wait can never displace exec/exit/flag lines.
-        val priority = coroutineContext[MarketDataPriority] ?: MarketDataPriority.EXEC
         val reqId = registry.nextReqId()
         val deferred = registry.register(reqId)
         return try {
@@ -71,7 +68,7 @@ class IbkrDividendTickAdapter(
             // dividend refresh, so a 15s wait can never displace exec/exit/flag lines.
             client.reqMktData(reqId, contractFactory.stockContract(symbol), "456", false, false, null)
             withTimeout(timeoutMs.milliseconds) { deferred.await() }
-        } catch (e: TimeoutCancellationException) {
+        } catch (_: TimeoutCancellationException) {
             logger.warn { "[$symbol] IB_DIVIDENDS tick timed out after ${timeoutMs}ms" }
             null
         } catch (e: Exception) {
