@@ -3,7 +3,6 @@ package cz.solvina.options.domain.features.spread
 import cz.solvina.options.domain.features.account.AccountPosition
 import cz.solvina.options.domain.features.execution.TradeExecutionPort
 import cz.solvina.options.domain.features.market.MarketDataPort
-import cz.solvina.options.domain.features.market.MarketDataPriority
 import cz.solvina.options.domain.features.market.MarketTickPort
 import cz.solvina.options.domain.features.order.LegAction
 import cz.solvina.options.domain.features.order.OrderPort
@@ -24,7 +23,6 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
@@ -89,14 +87,6 @@ class SpreadManagementService(
     private val forceable = setOf(SpreadStatus.OPEN, SpreadStatus.CLOSING, SpreadStatus.CLOSED_STOP)
 
     private suspend fun manualClose(
-        id: UUID,
-        useMarket: Boolean,
-    ): ManualCloseResult =
-        withContext(MarketDataPriority.EXIT) {
-            doManualClose(id, useMarket)
-        }
-
-    private suspend fun doManualClose(
         id: UUID,
         useMarket: Boolean,
     ): ManualCloseResult {
@@ -293,13 +283,7 @@ class SpreadManagementService(
         return false
     }
 
-    // EXIT priority: TP/SL/DTE monitoring draws from the exit reserve — never waits behind a scan.
-    suspend fun checkExits(): Unit =
-        withContext(MarketDataPriority.EXIT) {
-            runCheckExits()
-        }
-
-    private suspend fun runCheckExits() {
+    suspend fun checkExits() {
         val openSpreads = closers.allOpen()
         val closingSpreads = closers.allClosing()
 

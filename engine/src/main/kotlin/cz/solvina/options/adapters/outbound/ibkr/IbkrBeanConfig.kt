@@ -20,6 +20,5 @@ class IbkrBeanConfig {
         wrapper: EWrapper,
         eReaderSignal: EReaderSignal,
         fatalLockout: FatalLockoutService,
-        admission: IbkrAdmissionController,
     ): EClientSocket = GuardedEClientSocket(wrapper, eReaderSignal, fatalLockout)
 }

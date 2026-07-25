@@ -10,7 +10,6 @@ import cz.solvina.options.adapters.outbound.ibkr.cache.OptionContractKey
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.PendingContinuousMarketDataRequest
 import cz.solvina.options.adapters.outbound.ibkr.registry.PendingTickByTickRequest
-import cz.solvina.options.domain.features.market.MarketDataPriority
 import cz.solvina.options.domain.features.market.MarketTickPort
 import cz.solvina.options.domain.features.market.SpreadCreditTick
 import cz.solvina.options.domain.models.OptionContract
@@ -89,8 +88,6 @@ class IbkrMarketTickAdapter(
     ): Flow<SpreadCreditTick> =
         callbackFlow {
             val streamStartNanos = System.nanoTime()
-            // Collector's priority class pays for the leg lines (EXEC entry pricing vs EXIT monitoring).
-            val priority = coroutineContext[MarketDataPriority] ?: MarketDataPriority.EXEC
             val firstTickLogged = AtomicBoolean(false)
             val soldTickReqId = registry.nextReqId()
             val boughtTickReqId = registry.nextReqId()
@@ -176,8 +173,16 @@ class IbkrMarketTickAdapter(
             val mktDataLines = if (useTickByTick) 4 else 2
             val greeksGenericTicks = if (useTickByTick) "100" else ""
 
+            // Setup below has suspension points (conId resolution, line acquisition) BEFORE awaitClose
+            // exists. If the collector cancels in that window (calculateFreshCredit's 3s budget vs up
+            // to 2×1.5s of conId lookups, or a blocked acquire on exhausted lines), awaitClose never
+            // runs — so registry entries and already-acquired lines must be released on the way out,
+            // or every aborted setup permanently leaks a market-data line until entry pricing starves.
             var linesAcquired = 0
             try {
+                // Resolve leg conIds SEQUENTIALLY (not concurrently): IBKR paces near-simultaneous
+                // reqContractDetails for the same underlying/expiry, delaying the second response by ~5s
+                // (past the lookup's timeout). One request at a time resolves in ~400ms and caches.
                 val soldContract4Mkt = contractForMktData(soldContract)
                 val boughtContract4Mkt = contractForMktData(boughtContract)
 
@@ -187,7 +192,7 @@ class IbkrMarketTickAdapter(
                 // entry/exit pricing pass. All four retire together via cancelTickByTickData /
                 // cancelMktData in awaitClose; a setup throw is caught below and releases whatever
                 // opened. High subscribe/unsubscribe churn lives here — this is the spread hot path.
-                linesAcquired++
+                linesAcquired += mktDataLines
                 if (useTickByTick) {
                     client.reqTickByTickData(soldTickReqId, soldContract4Mkt, "BidAsk", 0, true)
                     client.reqTickByTickData(boughtTickReqId, boughtContract4Mkt, "BidAsk", 0, true)
@@ -222,6 +227,7 @@ class IbkrMarketTickAdapter(
                 client.cancelMktData(soldGreeksReqId)
                 registry.pendingContinuousMarketData.remove(boughtGreeksReqId)
                 client.cancelMktData(boughtGreeksReqId)
+                linesAcquired -= mktDataLines
                 logger.debug {
                     "Cancelled spread credit stream for " +
                         "${soldContract.strike}P/${boughtContract.strike}P"

@@ -2,9 +2,6 @@ package cz.solvina.options.adapters.outbound.ibkr.registry
 
 import cz.solvina.options.adapters.outbound.ibkr.IbkrAdmissionConfig
 import cz.solvina.options.adapters.outbound.ibkr.IbkrAdmissionController
-import cz.solvina.options.adapters.outbound.ibkr.NoopAlertPort
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import org.junit.jupiter.api.Test
 import java.time.Clock
 import java.time.ZoneOffset
@@ -16,8 +13,6 @@ class IbkrHistoricalDataRegistryTest {
         IbkrAdmissionController(
             IbkrAdmissionConfig(),
             Clock.system(ZoneOffset.UTC),
-            NoopAlertPort,
-            CoroutineScope(Dispatchers.Unconfined),
         )
 
     private fun registry(admission: IbkrAdmissionController) = IbkrHistoricalDataRegistry(IbkrIdCounter())

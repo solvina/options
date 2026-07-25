@@ -8,6 +8,7 @@ import kotlinx.coroutines.delay
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
 import java.time.Instant
+import kotlin.time.Duration.Companion.milliseconds
 
 private val logger = KotlinLogging.logger {}
 
@@ -77,11 +78,11 @@ class PositionReconciliationService(
                 }
 
                 // Not ready yet, wait a moment and retry
-                delay(500)
+                delay(500.milliseconds)
             } catch (e: Exception) {
                 logger.warn(e) { "Error querying positions for reconciliation: $matchKey" }
                 // Continue retrying on error
-                delay(500)
+                delay(500.milliseconds)
             }
         }
 

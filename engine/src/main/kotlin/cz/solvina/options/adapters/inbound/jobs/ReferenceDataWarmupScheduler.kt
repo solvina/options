@@ -2,7 +2,6 @@ package cz.solvina.options.adapters.inbound.jobs
 
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrOptionParamsCache
-import cz.solvina.options.domain.features.market.MarketDataPriority
 import cz.solvina.options.domain.features.scanner.BearCallScannerConfig
 import cz.solvina.options.domain.features.scanner.BullPutScannerConfig
 import cz.solvina.options.domain.features.scanner.ScannerConfig
@@ -19,7 +18,6 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.withContext
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.boot.context.event.ApplicationReadyEvent
 import org.springframework.context.event.EventListener
@@ -93,27 +91,26 @@ class ReferenceDataWarmupScheduler(
         }
     }
 
-    private suspend fun warmAll(reason: String) =
-        withContext(MarketDataPriority.SCANNER) {
-            // getWatchlist (all enabled symbols), NOT getActiveSymbols — the latter filters to
-            // currently-open markets, which is exactly wrong for a *pre-open* warmup (US is still
-            // closed at the 14:30 cron). Open-market-first ordering is just a priority, not a filter.
-            val symbols =
-                universePort
-                    .getWatchlist()
-                    .sortedByDescending { universePort.isMarketOpen(it) }
-            if (symbols.isEmpty()) {
-                logger.info { "Reference-data warmup ($reason): empty universe, nothing to warm" }
-                return@withContext
-            }
-            logger.info { "Reference-data warmup ($reason): warming ${symbols.size} symbols" }
-            val batch = scannerConfig.warmupBatchSize.coerceAtLeast(1)
-            symbols.chunked(batch).forEach { chunk ->
-                // coroutineScope (not the IO scope) so children inherit the SCANNER market-data priority.
-                coroutineScope { chunk.map { async { warmOne(it) } }.awaitAll() }
-            }
-            logger.info { "Reference-data warmup ($reason): complete" }
+    private suspend fun warmAll(reason: String) {
+        // getWatchlist (all enabled symbols), NOT getActiveSymbols — the latter filters to
+        // currently open markets, which is exactly wrong for a *pre-open* warmup (US is still
+        // closed at the 14:30 cron). Open-market-first ordering is just a priority, not a filter.
+        val symbols =
+            universePort
+                .getWatchlist()
+                .sortedByDescending { universePort.isMarketOpen(it) }
+        if (symbols.isEmpty()) {
+            logger.info { "Reference-data warmup ($reason): empty universe, nothing to warm" }
+            return
         }
+        logger.info { "Reference-data warmup ($reason): warming ${symbols.size} symbols" }
+        val batch = scannerConfig.warmupBatchSize.coerceAtLeast(1)
+        symbols.chunked(batch).forEach { chunk ->
+            // coroutineScope (not the IO scope) so children inherit the SCANNER market-data priority.
+            coroutineScope { chunk.map { async { warmOne(it) } }.awaitAll() }
+        }
+        logger.info { "Reference-data warmup ($reason): complete" }
+    }
 
     private suspend fun warmOne(symbol: Symbol) {
         // 1. IV rank — self-guarding via its persistent store + TTL/stale-window.
