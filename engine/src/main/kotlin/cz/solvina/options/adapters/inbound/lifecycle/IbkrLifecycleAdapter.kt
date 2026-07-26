@@ -1,8 +1,8 @@
 package cz.solvina.options.adapters.inbound.lifecycle
 
-import com.ib.client.EClientSocket
 import cz.solvina.options.adapters.outbound.ibkr.IbkrConnectionConfig
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrAccountAdapter
+import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOpenOrdersAdapter
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrContractDetailsRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrHistoricalDataRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
@@ -11,12 +11,12 @@ import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOptionParamsRegist
 import cz.solvina.options.domain.features.connection.ConnectionPort
 import io.github.oshai.kotlinlogging.KotlinLogging
 import jakarta.annotation.PreDestroy
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.springframework.boot.context.event.ApplicationReadyEvent
 import org.springframework.context.event.EventListener
 import org.springframework.stereotype.Component
-import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 private val logger = KotlinLogging.logger {}
 
@@ -31,8 +31,8 @@ class IbkrLifecycleAdapter(
     private val marketRuleRegistry: IbkrMarketRuleRegistry,
     private val marketDataRegistry: IbkrMarketDataRegistry,
     private val recoveryService: StartupRecoveryService,
+    private val openOrdersAdapter: IbkrOpenOrdersAdapter,
     private val flagRecoveryService: FlagRecoveryService,
-    private val client: EClientSocket,
 ) {
     @EventListener(ApplicationReadyEvent::class)
     fun onApplicationReady() {
@@ -43,11 +43,8 @@ class IbkrLifecycleAdapter(
                     .onSuccess { connected ->
                         if (connected) {
                             logger.info { "Successfully connected to IBKR" }
-                            // Brief pause so IBKR sends back initial openOrder callbacks before we query
-                            delay(3_000.milliseconds)
                             runCatching {
-                                client.reqAllOpenOrders()
-                                client.reqAutoOpenOrders(true)
+                                withTimeout(10.seconds) { openOrdersAdapter.requestOrderUpdates() }
                             }.onFailure { e -> logger.warn(e) { "Failed to request auto-open orders: ${e.message}" } }
                             runCatching { accountAdapter.subscribeToMainAccount() }
                                 .onFailure { e -> logger.warn(e) { "Account adapter failed to subscribe: ${e.message}" } }

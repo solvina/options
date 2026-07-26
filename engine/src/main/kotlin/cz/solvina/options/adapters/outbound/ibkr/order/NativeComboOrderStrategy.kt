@@ -1,5 +1,6 @@
 package cz.solvina.options.adapters.outbound.ibkr.order
 
+import com.ib.client.ComboLeg
 import com.ib.client.Contract
 import com.ib.client.Decimal
 import com.ib.client.EClientSocket
@@ -227,7 +228,7 @@ class NativeComboOrderStrategy(
         boughtConId: Int,
     ): Contract {
         val soldLeg =
-            com.ib.client.ComboLeg().apply {
+            ComboLeg().apply {
                 conid(soldConId)
                 ratio(1)
                 action("SELL")
@@ -235,7 +236,7 @@ class NativeComboOrderStrategy(
             }
 
         val boughtLeg =
-            com.ib.client.ComboLeg().apply {
+            ComboLeg().apply {
                 conid(boughtConId)
                 ratio(1)
                 action("BUY")

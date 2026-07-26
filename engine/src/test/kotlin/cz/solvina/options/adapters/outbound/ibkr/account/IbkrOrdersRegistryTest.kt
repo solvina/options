@@ -3,6 +3,7 @@ package cz.solvina.options.adapters.outbound.ibkr.account
 import com.ib.client.Decimal
 import cz.solvina.options.domain.features.order.OrderStatus
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import java.math.BigDecimal
@@ -22,15 +23,7 @@ class IbkrOrdersRegistryTest {
         assertTrue(registry.isFilled(10))
         assertEquals(
             OrderStatus.FILLED,
-            registry.current(10)?.let {
-                if (it.status ==
-                    "Filled"
-                ) {
-                    OrderStatus.FILLED
-                } else {
-                    OrderStatus.CANCELLED
-                }
-            },
+            registry.current(10)?.orderStatus,
         )
         assertEquals(BigDecimal("1.2300"), registry.consumeFillPrice(10))
         assertEquals("Filled", registry.getAllOrders().single().status)
@@ -79,6 +72,32 @@ class IbkrOrdersRegistryTest {
             registry.status(orderId = 40, status = "Cancelled")
 
             assertEquals(OrderStatus.CANCELLED, awaited.await())
+        }
+
+    @Test
+    fun `awaitTerminal completes from registry state even without a flow subscriber`() =
+        runTest {
+            val registry = IbkrOrdersRegistry()
+
+            val awaited = async { registry.awaitTerminal(41, 1_000.milliseconds) }
+            delay(1)
+            registry.status(orderId = 41, status = "Rejected")
+
+            assertEquals(OrderStatus.REJECTED, awaited.await())
+        }
+
+    @Test
+    fun `preserves distinct non-filled terminal statuses`() =
+        runTest {
+            val registry = IbkrOrdersRegistry()
+
+            registry.status(orderId = 61, status = "ApiCancelled")
+            registry.status(orderId = 62, status = "Inactive")
+            registry.status(orderId = 63, status = "Rejected")
+
+            assertEquals(OrderStatus.API_CANCELLED, registry.awaitTerminal(61, 1.milliseconds))
+            assertEquals(OrderStatus.INACTIVE, registry.awaitTerminal(62, 1.milliseconds))
+            assertEquals(OrderStatus.REJECTED, registry.awaitTerminal(63, 1.milliseconds))
         }
 
     @Test

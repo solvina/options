@@ -272,6 +272,7 @@ class IbkrEWrapper(
 
     override fun openOrderEnd() {
         logger.debug { "openOrderEnd" }
+        orderRegistry.onOpenOrderEnd()
     }
 
     override fun updateAccountValue(
@@ -650,8 +651,8 @@ class IbkrEWrapper(
             marketDataHealthTracker.recordCompetingSession()
         }
 
-        // 100 = max messages/sec exceeded, 101 = max market-data lines reached. The admission
-        // controller exists to make both impossible — count every occurrence loudly.
+        // 100 = max messages/sec exceeded, 101 = max market-data lines reached. Count every
+        // broker-side limit occurrence loudly.
         if (errorCode == 100 || errorCode == 101) {
             alertService.noteBrokerLimitHit(errorCode)
         }

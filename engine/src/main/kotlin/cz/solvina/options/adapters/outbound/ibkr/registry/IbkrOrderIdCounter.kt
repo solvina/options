@@ -13,8 +13,8 @@ class IbkrOrderIdCounter {
      * Called exclusively by EWrapper.nextValidId() on socket connect/reconnect.
      */
     fun init(startingId: Int) {
-        counter.set(startingId)
-        logger.info { "Order ID counter initialized/synchronized to $startingId" }
+        counter.set(counter.get().coerceAtLeast(startingId))
+        logger.info { "Order ID counter initialized/synchronized to ${counter.get()}, requested $startingId" }
     }
 
     /**

@@ -5,7 +5,6 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.filterIsInstance
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
 import org.springframework.stereotype.Component
 import java.time.Duration
@@ -63,13 +62,9 @@ class IbkrMarketRuleRegistry {
         marketRuleId: Int,
         timeout: KotlinDuration,
     ): List<PriceIncrement> {
-        current(marketRuleId)?.terminalResult { it.increments }?.let { return it }
-        withTimeout(timeout) {
-            updateBus.first {
-                it.id == marketRuleId &&
-                    (it is MarketRuleRegistryUpdate.Received || it is MarketRuleRegistryUpdate.RequestFailed)
-            }
-        }
+        val request = requireState(marketRuleId)
+        request.terminalResult { it.increments }?.let { return it }
+        withTimeout(timeout) { request.terminalSignal.await() }
         return requireState(marketRuleId).terminalResult { it.increments }
             ?: error("Market rule request $marketRuleId did not reach a terminal state")
     }
@@ -85,6 +80,7 @@ class IbkrMarketRuleRegistry {
                     status = ContractRequestStatus.COMPLETED
                     terminalAt = Instant.now()
                     error = null
+                    terminalSignal.complete(Unit)
                 }
             }
         updateBus.tryEmit(MarketRuleRegistryUpdate.Received(marketRuleId, request?.increments ?: increments))
@@ -115,6 +111,7 @@ class IbkrMarketRuleRegistry {
         status = ContractRequestStatus.FAILED
         error = cause
         terminalAt = Instant.now()
+        terminalSignal.complete(Unit)
     }
 
     private fun evictTerminalStates(now: Instant = Instant.now()) {

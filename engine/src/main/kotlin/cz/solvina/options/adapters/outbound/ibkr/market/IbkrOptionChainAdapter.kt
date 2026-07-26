@@ -155,10 +155,9 @@ class IbkrOptionChainAdapter(
         }
 
         // Bounded-parallel greeks fetch: candidates fan out as async snapshots, but actual
-        // concurrency is bounded by the SCANNER admission gate (line sub-cap + message-token
-        // floor) inside reqMktDataSnapshot — safe by construction, no separate semaphore. This
-        // is the scan-time win: ~candidateCount × snapshot-timeout serial worst case collapses
-        // to ~ceil(count / scanner-line-concurrency).
+        // concurrency is bounded by the scanner request gate inside reqMktDataSnapshot. This is the
+        // scan-time win: ~candidateCount x snapshot-timeout serial worst case collapses to
+        // ~ceil(count / scanner-line-concurrency).
         return coroutineScope {
             candidateStrikes
                 .map { strike -> async { fetchQuote(symbol, expiry, strike, optionType, params) } }

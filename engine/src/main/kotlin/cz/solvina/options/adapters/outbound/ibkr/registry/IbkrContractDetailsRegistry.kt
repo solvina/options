@@ -5,7 +5,6 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.filterIsInstance
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
 import org.springframework.stereotype.Component
 import java.time.Duration
@@ -60,13 +59,9 @@ class IbkrContractDetailsRegistry {
         reqId: Int,
         timeout: KotlinDuration,
     ): List<ContractDetails> {
-        current(reqId)?.terminalResult { it.details.toList() }?.let { return it }
-        withTimeout(timeout) {
-            updateBus.first {
-                it.id == reqId &&
-                    (it is ContractDetailsRegistryUpdate.End || it is ContractDetailsRegistryUpdate.RequestFailed)
-            }
-        }
+        val request = requireState(reqId)
+        request.terminalResult { it.details.toList() }?.let { return it }
+        withTimeout(timeout) { request.terminalSignal.await() }
         return requireState(reqId).terminalResult { it.details.toList() }
             ?: error("Contract details request $reqId did not reach a terminal state")
     }
@@ -86,6 +81,7 @@ class IbkrContractDetailsRegistry {
         if (request.terminal) return
         request.status = ContractRequestStatus.COMPLETED
         request.terminalAt = Instant.now()
+        request.terminalSignal.complete(Unit)
         updateBus.tryEmit(ContractDetailsRegistryUpdate.End(reqId, request.details.toList()))
     }
 
@@ -125,6 +121,7 @@ class IbkrContractDetailsRegistry {
         status = ContractRequestStatus.FAILED
         error = cause
         terminalAt = Instant.now()
+        terminalSignal.complete(Unit)
     }
 
     private fun evictTerminalStates(now: Instant = Instant.now()) {

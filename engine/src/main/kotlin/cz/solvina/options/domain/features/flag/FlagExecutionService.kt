@@ -23,6 +23,7 @@ import java.time.Clock
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 import java.util.concurrent.ConcurrentHashMap
+import java.util.UUID
 
 private val logger = KotlinLogging.logger {}
 private val tradeLogger = KotlinLogging.logger("FLAG_TRADES")
@@ -43,7 +44,7 @@ class FlagExecutionService(
     @param:Value("\${flag.max-position-pct-of-capital:0.25}")
     private val maxPositionPctOfCapital: BigDecimal = BigDecimal("0.25"),
 ) {
-    private val trackedOrders = ConcurrentHashMap<Int, FlagPosition>()
+    private val trackedOrders = ConcurrentHashMap<Int, UUID>()
 
     init {
         scope.launch(start = CoroutineStart.UNDISPATCHED) { orderLifecyclePort.updates.collect(::onBrokerUpdate) }
@@ -204,6 +205,11 @@ class FlagExecutionService(
 
     /** Register a persisted position before submitting it, or when rebuilding after restart. */
     fun register(position: FlagPosition) {
+        val positionId = position.id
+        if (positionId == null) {
+            logger.warn { "[${position.symbol}] Cannot register broker lifecycle without a persisted flag position id" }
+            return
+        }
         (
             setOf(
                 position.entryOrderId,
@@ -211,7 +217,7 @@ class FlagExecutionService(
                 position.profitTargetOrderId,
             ) + listOfNotNull(position.closeOrderId)
         ).forEach { orderId ->
-            trackedOrders[orderId] = position
+            trackedOrders[orderId] = positionId
             orderLifecyclePort.current(orderId)?.let { update -> scope.launch { onBrokerUpdate(update) } }
         }
     }
@@ -231,11 +237,16 @@ class FlagExecutionService(
     }
 
     private suspend fun onBrokerUpdate(update: BrokerOrderUpdate) {
-        val position = trackedOrders[update.orderId] ?: return
+        val positionId = trackedOrders[update.orderId] ?: return
+        val position = flagPort.findById(positionId)
+        if (position == null || position.status.isTerminal) {
+            untrack(positionId)
+            return
+        }
         when {
             update.orderId == position.closeOrderId && update.isFilled && position.status == FlagStatus.CLOSING ->
                 bookRequestedCloseFill(position, update.averageFillPrice, update.receivedAt)
-            update.orderId == position.closeOrderId && update.isCancelled && position.status == FlagStatus.CLOSING ->
+            update.orderId == position.closeOrderId && update.isNonFilledTerminal && position.status == FlagStatus.CLOSING ->
                 reopenAfterRejectedClose(position, update.rejectionReason ?: "close_not_filled")
             update.orderId == position.entryOrderId && update.isFilled && position.status == FlagStatus.PENDING -> {
                 val slippage = update.averageFillPrice?.subtract(position.entryPrice)
@@ -246,7 +257,7 @@ class FlagExecutionService(
                 replaceTracked(position, open)
                 tradeLogger.info { "ENTRY_FILLED ${position.symbol} entryOrder=${update.orderId} actualFill=${update.averageFillPrice}" }
             }
-            update.orderId == position.entryOrderId && update.isCancelled && position.status == FlagStatus.PENDING -> {
+            update.orderId == position.entryOrderId && update.isNonFilledTerminal && position.status == FlagStatus.PENDING -> {
                 val closed =
                     flagPort.update(
                         position.copy(
@@ -256,7 +267,7 @@ class FlagExecutionService(
                             closedAt = update.receivedAt,
                         ),
                     )
-                untrack(closed)
+                untrack(closed.id)
             }
             update.orderId in setOf(position.stopLossOrderId, position.profitTargetOrderId) &&
                 update.isFilled &&
@@ -304,9 +315,9 @@ class FlagExecutionService(
                     closedAt,
                 ),
             )
-        untrack(closed)
+        untrack(closed.id)
         tradeLogger.info {
-            "${status.name} ${position.symbol} closeOrder=${position.closeOrderId} fill=$closePrice reason=$reason pnl=\$$pnl"
+            "${status.name} ${latest.symbol} closeOrder=${latest.closeOrderId} fill=$closePrice reason=$reason pnl=\$$pnl"
         }
     }
 
@@ -374,8 +385,8 @@ class FlagExecutionService(
                     closedAt,
                 ),
             )
-        untrack(closed)
-        tradeLogger.info { "${status.name} ${position.symbol} fill=$closePrice reason=$reason pnl=\$$pnl" }
+        untrack(closed.id)
+        tradeLogger.info { "${status.name} ${latest.symbol} fill=$closePrice reason=$reason pnl=\$$pnl" }
     }
 
     /**
@@ -415,12 +426,13 @@ class FlagExecutionService(
         old: FlagPosition,
         updated: FlagPosition,
     ) {
-        trackedOrders.entries.removeIf { it.value.id == old.id }
+        untrack(old.id)
         register(updated)
     }
 
-    private fun untrack(position: FlagPosition) {
-        trackedOrders.entries.removeIf { it.value.id == position.id }
+    private fun untrack(positionId: UUID?) {
+        if (positionId == null) return
+        trackedOrders.entries.removeIf { it.value == positionId }
     }
 
     private fun withCloseMetrics(

@@ -247,6 +247,36 @@ class FlagExecutionServiceTest {
         assertEquals(1, flagPort.saved.count { it.status == FlagStatus.CLOSED_PROFIT || it.status == FlagStatus.CLOSED_STOP })
     }
 
+    @Test
+    fun `close fill uses latest persisted CLOSING position instead of stale tracked OPEN snapshot`() {
+        val flagPort = CapturingFlagPort()
+        val lifecycle = TestOrderLifecyclePort()
+        val service = buildService(flagPort = flagPort, orderLifecyclePort = lifecycle)
+        val open = openTrailPosition(flagPort)
+        service.register(open)
+        val closing =
+            kotlinx.coroutines.runBlocking {
+                flagPort.update(
+                    open.copy(
+                        status = FlagStatus.CLOSING,
+                        closeOrderId = open.stopLossOrderId,
+                        closeOrderShares = open.shares,
+                        closeReason = "manual",
+                    ),
+                )
+            }
+
+        kotlinx.coroutines.runBlocking {
+            lifecycle.emit(closing.closeOrderId!!, "Filled", avgPrice = BigDecimal("11.25"))
+        }
+        Thread.sleep(500)
+
+        val closed = flagPort.saved.last()
+        assertEquals(FlagStatus.CLOSED_MANUAL, closed.status)
+        assertEquals(0, BigDecimal("11.25").compareTo(closed.closePriceActual))
+        assertEquals(0, BigDecimal("125.00").compareTo(closed.realizedPnl))
+    }
+
     /** OPEN trail-era position: entry $10, stop $9, trail $2, 100 shares, one exit order id (42). */
     private fun openTrailPosition(
         flagPort: CapturingFlagPort,
@@ -371,7 +401,11 @@ class FlagExecutionServiceTest {
     private class CapturingFlagPort : FlagPort {
         val saved = mutableListOf<FlagPosition>()
 
-        override suspend fun save(position: FlagPosition) = position.also { saved.add(it) }
+        override suspend fun save(position: FlagPosition): FlagPosition {
+            val savedPosition = if (position.id == null) position.copy(id = UUID.randomUUID()) else position
+            saved.add(savedPosition)
+            return savedPosition
+        }
 
         override suspend fun update(position: FlagPosition) = position.also { saved.add(it) }
 

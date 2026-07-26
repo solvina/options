@@ -7,30 +7,26 @@ import com.ib.client.OrderState
 import cz.solvina.options.domain.features.order.BrokerOrderUpdate
 import cz.solvina.options.domain.features.order.OrderStatus
 import io.github.oshai.kotlinlogging.KotlinLogging
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
-import kotlinx.coroutines.flow.filter
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
-import kotlin.collections.set
 import kotlin.time.Duration
 
 private val logger = KotlinLogging.logger {}
-
-private val TERMINAL_STATUSES = setOf("cancelled", "filled", "apicancelled", "inactive", "rejected")
-private val TERMINAL_CANCEL_STATUSES = setOf("cancelled", "inactive", "apicancelled", "rejected")
 
 /**
  * Updated from TWS on every order status update, the preferred way to track orders.
  */
 @Component
 class IbkrOrdersRegistry {
+    private var openOrdersSynchronized = CompletableDeferred<Boolean>()
     private val openOrders = ConcurrentHashMap<Int, OpenOrder>()
     private val fillPrices = ConcurrentHashMap<Int, BigDecimal>()
     private val selfCancelledOrders = ConcurrentHashMap.newKeySet<Int>()
@@ -38,12 +34,14 @@ class IbkrOrdersRegistry {
     private val filledOrders = ConcurrentHashMap.newKeySet<Int>()
     private val cancelledOrders = ConcurrentHashMap.newKeySet<Int>()
     private val latestUpdates = ConcurrentHashMap<Int, BrokerOrderUpdate>()
+    private val terminalWaiters = ConcurrentHashMap<Int, CompletableDeferred<OrderStatus>>()
     private val _updates = MutableSharedFlow<BrokerOrderUpdate>(extraBufferCapacity = 1_024)
     val updates = _updates.asSharedFlow()
 
     fun getAllOrders(): List<OpenOrder> = openOrders.values.toList()
 
-    fun getOpenOrders(): List<OpenOrder> = openOrders.values.filter { it.status.lowercase() !in TERMINAL_STATUSES }
+    fun getOpenOrders(): List<OpenOrder> =
+        openOrders.values.filter { !OrderStatus.fromBrokerStatus(it.status).isTerminal }
 
     fun current(orderId: Int): BrokerOrderUpdate? = latestUpdates[orderId]
 
@@ -76,6 +74,12 @@ class IbkrOrdersRegistry {
                 mktCapPrice = previous?.mktCapPrice ?: 0.0,
             )
     }
+
+    fun onOpenOrderEnd() {
+        openOrdersSynchronized.complete(true)
+    }
+
+    suspend fun awaitOpenOrders() = openOrdersSynchronized.await()
 
     fun onOrderStatus(
         orderId: Int,
@@ -160,11 +164,7 @@ class IbkrOrdersRegistry {
     ): OrderStatus {
         terminalStatus(orderId)?.let { return it }
         return try {
-            withTimeout(timeout) {
-                updates
-                    .first { it.orderId == orderId && it.status.lowercase() in TERMINAL_STATUSES }
-                    .toOrderStatus()
-            }
+            withTimeout(timeout) { waiterFor(orderId).await() }
         } catch (_: TimeoutCancellationException) {
             OrderStatus.PENDING
         }
@@ -172,9 +172,7 @@ class IbkrOrdersRegistry {
 
     suspend fun awaitTerminal(orderId: Int): OrderStatus {
         terminalStatus(orderId)?.let { return it }
-        return updates
-            .first { it.orderId == orderId && it.status.lowercase() in TERMINAL_STATUSES }
-            .toOrderStatus()
+        return waiterFor(orderId).await()
     }
 
     fun consumeFillPrice(orderId: Int): BigDecimal? = fillPrices.remove(orderId)
@@ -183,7 +181,9 @@ class IbkrOrdersRegistry {
 
     fun isFilled(orderId: Int): Boolean = filledOrders.contains(orderId)
 
-    fun isCancelled(orderId: Int): Boolean = cancelledOrders.contains(orderId)
+    fun isCancelled(orderId: Int): Boolean = isNonFilledTerminal(orderId)
+
+    fun isNonFilledTerminal(orderId: Int): Boolean = cancelledOrders.contains(orderId)
 
     fun wasSelfCancelled(orderId: Int): Boolean = selfCancelledOrders.contains(orderId)
 
@@ -197,7 +197,7 @@ class IbkrOrdersRegistry {
         remaining: BigDecimal,
         rejectionReason: String?,
     ) {
-        val lower = status.lowercase()
+        val orderStatus = OrderStatus.fromBrokerStatus(status)
         val update =
             BrokerOrderUpdate(
                 orderId = orderId,
@@ -210,14 +210,17 @@ class IbkrOrdersRegistry {
             )
         latestUpdates[orderId] = update
         _updates.tryEmit(update)
-        if (lower == "filled") {
+        if (orderStatus == OrderStatus.FILLED) {
             filledOrders.add(orderId)
             if (avgFillPrice > 0.0) fillPrices[orderId] = BigDecimal(avgFillPrice).setScale(4, RoundingMode.HALF_UP)
         }
-        if (lower in TERMINAL_CANCEL_STATUSES) {
+        if (orderStatus.isNonFilledTerminal) {
             cancelledOrders.add(orderId)
         }
-        if (filled > BigDecimal.ZERO && remaining > BigDecimal.ZERO && lower in TERMINAL_STATUSES) {
+        if (orderStatus.isTerminal) {
+            terminalWaiters.remove(orderId)?.complete(orderStatus)
+        }
+        if (filled > BigDecimal.ZERO && remaining > BigDecimal.ZERO && orderStatus.isTerminal) {
             logger.warn {
                 "Order $orderId reported terminal status '$status' with a PARTIAL quantity " +
                     "(filled=$filled remaining=$remaining) — partial fills are not modeled; treating per the terminal status"
@@ -245,11 +248,14 @@ class IbkrOrdersRegistry {
 
     private fun terminalStatus(orderId: Int): OrderStatus? {
         if (isFilled(orderId)) return OrderStatus.FILLED
-        if (isCancelled(orderId)) return OrderStatus.CANCELLED
+        if (isNonFilledTerminal(orderId)) return latestUpdates[orderId]?.orderStatus ?: OrderStatus.CANCELLED
         val update = latestUpdates[orderId] ?: return null
-        return update.takeIf { it.status.lowercase() in TERMINAL_STATUSES }?.toOrderStatus()
+        return update.orderStatus.takeIf { it.isTerminal }
     }
 
-    private fun BrokerOrderUpdate.toOrderStatus(): OrderStatus =
-        if (status.equals("Filled", ignoreCase = true)) OrderStatus.FILLED else OrderStatus.CANCELLED
+    private fun waiterFor(orderId: Int): CompletableDeferred<OrderStatus> =
+        terminalWaiters.compute(orderId) { _, existing ->
+            terminalStatus(orderId)?.let { return@compute CompletableDeferred(it) }
+            existing?.takeUnless { it.isCompleted } ?: CompletableDeferred()
+        } ?: CompletableDeferred(OrderStatus.PENDING)
 }

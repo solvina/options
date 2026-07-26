@@ -4,6 +4,7 @@ import com.ib.client.Contract
 import com.ib.client.Decimal
 import com.ib.client.EClientSocket
 import com.ib.client.Order
+import com.ib.client.OrderCancel
 import cz.solvina.options.adapters.outbound.ibkr.IbkrConnectionConfig
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOrdersRegistry
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
@@ -195,7 +196,7 @@ class LegByLegOrderStrategy(
         // Our own abort cancel, not a broker rejection — mark it so the code-202 callback is
         // logged at DEBUG and no reject reason is stashed.
         registry.markSelfCancelled(orderId)
-        runCatching { client.cancelOrder(orderId, com.ib.client.OrderCancel()) }
+        runCatching { client.cancelOrder(orderId, OrderCancel()) }
             .onFailure { e -> logger.warn(e) { "[$exchangeId] Failed to cancel order $orderId" } }
     }
 

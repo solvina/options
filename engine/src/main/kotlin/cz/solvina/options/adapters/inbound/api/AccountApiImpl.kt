@@ -1,9 +1,5 @@
 package cz.solvina.options.adapters.inbound.api
 
-import com.ib.client.Decimal
-import com.ib.client.EClientSocket
-import com.ib.client.Order
-import com.ib.client.OrderCancel
 import cz.solvina.options.account.api.AccountApi
 import cz.solvina.options.account.api.OrdersApi
 import cz.solvina.options.account.dto.AccountOverviewDto
@@ -11,10 +7,9 @@ import cz.solvina.options.account.dto.AccountPositionDto
 import cz.solvina.options.account.dto.ClosePositionRequestDto
 import cz.solvina.options.account.dto.OpenOrderDto
 import cz.solvina.options.account.dto.OpenPositionDto
-import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOpenOrdersAdapter
-import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderIdCounter
 import cz.solvina.options.domain.features.account.AccountPort
 import cz.solvina.options.domain.features.account.AccountPosition
+import cz.solvina.options.domain.features.account.AccountTradingPort
 import cz.solvina.options.domain.features.account.OrphanPositionDetector
 import cz.solvina.options.domain.features.account.PositionsPort
 import cz.solvina.options.domain.features.flag.FlagPort
@@ -41,9 +36,7 @@ class AccountApiImpl(
     private val flagPort: FlagPort,
     private val orphanDetector: OrphanPositionDetector,
     private val positionsPort: PositionsPort,
-    private val openOrdersAdapter: IbkrOpenOrdersAdapter,
-    private val client: EClientSocket,
-    private val ibkrOrderIdCounter: IbkrOrderIdCounter,
+    private val accountTradingPort: AccountTradingPort,
     private val clock: Clock,
 ) : AccountApi,
     OrdersApi {
@@ -67,7 +60,7 @@ class AccountApiImpl(
                 .getOrDefault(emptyList())
 
         val openOrders =
-            runCatching { openOrdersAdapter.getOpenOrders() }
+            runCatching { accountTradingPort.getOpenOrders() }
                 .onFailure { e -> logger.warn(e) { "Failed to fetch open orders: ${e.message}" } }
                 .getOrDefault(emptyList())
 
@@ -110,7 +103,7 @@ class AccountApiImpl(
                             it.action,
                             it.orderType,
                             it.status,
-                            it.limitPrice?.toBigDecimal(),
+                            it.limitPrice,
                         )
                     },
             )
@@ -118,32 +111,14 @@ class AccountApiImpl(
     }
 
     override suspend fun cancelOrder(orderId: Int): ResponseEntity<Unit> {
-        client.cancelOrder(orderId, OrderCancel())
+        accountTradingPort.cancelOrder(orderId)
         return ResponseEntity.noContent().build()
     }
 
     override suspend fun closePosition(closePositionRequestDto: ClosePositionRequestDto): ResponseEntity<Unit> {
         val conId = closePositionRequestDto.conId
         val quantity = closePositionRequestDto.quantity
-        val action = if (quantity < BigDecimal.ZERO) "BUY" else "SELL"
-        val qty = quantity.abs().toLong()
-
-        val contract =
-            com.ib.client.Contract().apply {
-                conid(conId)
-                exchange("SMART")
-            }
-        val orderId = ibkrOrderIdCounter.nextOrderId()
-        val ibkrOrder =
-            Order().apply {
-                action(action)
-                orderType("MKT")
-                totalQuantity(Decimal.get(qty))
-                tif("DAY")
-            }
-
-        logger.info { "Closing position conId=$conId qty=$quantity → $action $qty orderId=$orderId" }
-        client.placeOrder(orderId, contract, ibkrOrder)
+        accountTradingPort.closePosition(conId, quantity)
         return ResponseEntity.noContent().build()
     }
 

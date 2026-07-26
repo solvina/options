@@ -2,6 +2,7 @@ package cz.solvina.options.adapters.outbound.ibkr.registry
 
 import com.ib.client.ContractDetails
 import com.ib.client.PriceIncrement
+import kotlinx.coroutines.CompletableDeferred
 import java.math.BigDecimal
 import java.time.Instant
 import java.time.LocalDate
@@ -23,6 +24,7 @@ data class ContractDetailsRequestState(
     @Volatile var status: ContractRequestStatus = ContractRequestStatus.ACTIVE,
     @Volatile var error: RuntimeException? = null,
     @Volatile var terminalAt: Instant? = null,
+    val terminalSignal: CompletableDeferred<Unit> = CompletableDeferred(),
 ) {
     val terminal: Boolean get() = status != ContractRequestStatus.ACTIVE
 }
@@ -38,6 +40,7 @@ data class OptionParamsRequestState(
     @Volatile var status: ContractRequestStatus = ContractRequestStatus.ACTIVE,
     @Volatile var error: RuntimeException? = null,
     @Volatile var terminalAt: Instant? = null,
+    val terminalSignal: CompletableDeferred<Unit> = CompletableDeferred(),
 ) {
     val terminal: Boolean get() = status != ContractRequestStatus.ACTIVE
 }
@@ -49,6 +52,7 @@ data class MarketRuleState(
     @Volatile var status: ContractRequestStatus = ContractRequestStatus.ACTIVE,
     @Volatile var error: RuntimeException? = null,
     @Volatile var terminalAt: Instant? = null,
+    val terminalSignal: CompletableDeferred<Unit> = CompletableDeferred(),
 ) {
     val terminal: Boolean get() = status != ContractRequestStatus.ACTIVE
 }

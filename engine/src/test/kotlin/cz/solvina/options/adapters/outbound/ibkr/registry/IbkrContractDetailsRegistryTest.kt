@@ -69,6 +69,18 @@ class IbkrContractDetailsRegistryTest {
         }
 
     @Test
+    fun `contractDetailsEnd is observed even when diagnostic flow buffer is full`() =
+        runTest {
+            registry.startRequest(18, "busy contract")
+            val details = contractDetails(conId = 900)
+
+            repeat(9_000) { registry.onContractDetails(18, details) }
+            registry.onContractDetailsEnd(18)
+
+            assertEquals(9_000, registry.awaitEnd(18, 10.milliseconds).size)
+        }
+
+    @Test
     fun `error 200 marks only matching request failed`() =
         runTest {
             registry.startRequest(14, "missing contract")

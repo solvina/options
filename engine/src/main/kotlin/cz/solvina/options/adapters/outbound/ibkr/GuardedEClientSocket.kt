@@ -10,6 +10,8 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 
 private val logger = KotlinLogging.logger {}
 
+class FatalLockoutOrderRejectedException(message: String) : RuntimeException(message)
+
 /**
  * The one choke point every outbound call takes to the broker.
  *
@@ -29,16 +31,19 @@ class GuardedEClientSocket(
         order: Order,
     ) {
         if (fatalLockout.isFatal) {
-            logger.error {
-                "BLOCKED placeOrder(id=$id, ${contract.symbol()} ${order.action()} ${order.totalQuantity()} ${contract.secType()}) — " +
+            val message =
+                "Blocked placeOrder(id=$id, ${contract.symbol()} ${order.action()} ${order.totalQuantity()} ${contract.secType()}): " +
                     "engine is in FATAL lockout: ${fatalLockout.reasons.joinToString { it.title }}"
+            logger.error {
+                message
             }
-            return
+            throw FatalLockoutOrderRejectedException(message)
         }
         try {
             super.placeOrder(id, contract, order)
         } catch (e: Exception) {
             logger.error(e) { "Failed to place order" }
+            throw e
         }
     }
 }

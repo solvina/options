@@ -5,7 +5,6 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.filterIsInstance
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
@@ -67,13 +66,9 @@ class IbkrOptionParamsRegistry {
         reqId: Int,
         timeout: KotlinDuration,
     ): OptionParams {
-        current(reqId)?.terminalResult { it.toOptionParams() }?.let { return it }
-        withTimeout(timeout) {
-            updateBus.first {
-                it.id == reqId &&
-                    (it is OptionParamsRegistryUpdate.End || it is OptionParamsRegistryUpdate.RequestFailed)
-            }
-        }
+        val request = requireState(reqId)
+        request.terminalResult { it.toOptionParams() }?.let { return it }
+        withTimeout(timeout) { request.terminalSignal.await() }
         return requireState(reqId).terminalResult { it.toOptionParams() }
             ?: error("Option params request $reqId did not reach a terminal state")
     }
@@ -110,6 +105,7 @@ class IbkrOptionParamsRegistry {
         if (request.terminal) return
         request.status = ContractRequestStatus.COMPLETED
         request.terminalAt = Instant.now()
+        request.terminalSignal.complete(Unit)
         updateBus.tryEmit(OptionParamsRegistryUpdate.End(reqId, request.toOptionParams()))
     }
 
@@ -162,6 +158,7 @@ class IbkrOptionParamsRegistry {
         status = ContractRequestStatus.FAILED
         error = cause
         terminalAt = Instant.now()
+        terminalSignal.complete(Unit)
     }
 
     private fun evictTerminalStates(now: Instant = Instant.now()) {

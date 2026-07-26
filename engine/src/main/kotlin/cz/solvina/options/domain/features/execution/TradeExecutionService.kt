@@ -438,7 +438,11 @@ class TradeExecutionService(
                                     outcome = ExecutionOutcome.FILLED
                                     break
                                 }
-                                OrderStatus.CANCELLED -> {
+                                OrderStatus.CANCELLED,
+                                OrderStatus.REJECTED,
+                                OrderStatus.INACTIVE,
+                                OrderStatus.API_CANCELLED,
+                                -> {
                                     if (orderExecutionPort.wasSelfCancelled(currentOrderId)) {
                                         // Our OWN reprice/abort cancel finally landed on the order we
                                         // were riding (e.g. a frozen ladder after an unverifiable

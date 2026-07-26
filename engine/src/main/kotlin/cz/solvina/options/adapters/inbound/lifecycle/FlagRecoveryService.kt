@@ -1,7 +1,7 @@
 package cz.solvina.options.adapters.inbound.lifecycle
 
-import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOpenOrdersAdapter
 import cz.solvina.options.domain.features.account.AccountPosition
+import cz.solvina.options.domain.features.account.AccountTradingPort
 import cz.solvina.options.domain.features.account.PositionsPort
 import cz.solvina.options.domain.features.alert.AlertLevel
 import cz.solvina.options.domain.features.alert.AlertPort
@@ -23,6 +23,7 @@ import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 import java.time.Clock
 import java.time.Instant
+import kotlin.time.Duration.Companion.milliseconds
 
 private val logger = KotlinLogging.logger {}
 
@@ -52,7 +53,7 @@ class FlagRecoveryService(
     private val flagPort: FlagPort,
     private val bracketOrderPort: BracketOrderPort,
     private val flagExecutionService: FlagExecutionService,
-    private val openOrdersAdapter: IbkrOpenOrdersAdapter,
+    private val accountTradingPort: AccountTradingPort,
     private val positionsPort: PositionsPort,
     private val alertPort: AlertPort,
     private val connectionStatusPort: ConnectionStatusPort,
@@ -83,7 +84,7 @@ class FlagRecoveryService(
 
             logger.info { "Flag recovery: reconciling ${unwatched.size} PENDING/OPEN/CLOSING row(s)" }
             val openOrderIds =
-                runCatching { openOrdersAdapter.getOpenOrders() }
+                runCatching { accountTradingPort.getOpenOrders() }
                     .onFailure { e -> logger.warn(e) { "Flag recovery: cannot fetch open orders — skipping this run" } }
                     .getOrNull()
                     ?.map { it.orderId }
@@ -220,20 +221,23 @@ class FlagRecoveryService(
     }
 
     /**
-     * Broker position snapshot trustworthy enough to base a close/adopt decision on. An empty
-     * snapshot from a feed still warming up is indistinguishable from a flat account, so only a
-     * non-empty snapshot (or exhausted retries ending in one) is returned; null means "do not
-     * decide anything this run".
+     * Broker position snapshot trustworthy enough to base a close/adopt decision on. Null means
+     * every broker fetch failed and recovery must not decide anything this run. Empty means at least
+     * one successful broker fetch reported a flat account.
      */
     private suspend fun fetchPositionsSnapshot(): List<AccountPosition>? {
+        var lastSuccessfulSnapshot: List<AccountPosition>? = null
         repeat(RECOVERY_POSITION_POLLS) { attempt ->
             val snapshot =
                 runCatching { positionsPort.getPositions() }
                     .onFailure { e -> logger.warn { "Flag recovery: position fetch failed (attempt $attempt): ${e.message}" } }
                     .getOrNull()
-            if (!snapshot.isNullOrEmpty()) return snapshot
-            if (attempt < RECOVERY_POSITION_POLLS - 1) delay(RECOVERY_POSITION_POLL_DELAY_MS)
+            if (snapshot != null) {
+                lastSuccessfulSnapshot = snapshot
+                if (snapshot.isNotEmpty()) return snapshot
+            }
+            if (attempt < RECOVERY_POSITION_POLLS - 1) delay(RECOVERY_POSITION_POLL_DELAY_MS.milliseconds)
         }
-        return null
+        return lastSuccessfulSnapshot
     }
 }

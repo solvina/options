@@ -24,7 +24,7 @@ data class BrokerOrderUpdate(
     val rejectionReason: String? = null,
     val receivedAt: Instant,
 ) {
-    val isFilled: Boolean get() = status.equals("filled", ignoreCase = true)
-    val isCancelled: Boolean
-        get() = status.lowercase() in setOf("cancelled", "inactive", "apicancelled", "rejected")
+    val orderStatus: OrderStatus get() = OrderStatus.fromBrokerStatus(status)
+    val isFilled: Boolean get() = orderStatus == OrderStatus.FILLED
+    val isNonFilledTerminal: Boolean get() = orderStatus.isNonFilledTerminal
 }
