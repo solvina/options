@@ -74,7 +74,7 @@ class IbkrAccountTradingAdapter(
 
     private fun cancelBlockedReason(order: OpenOrder): String? =
         when {
-            order.orderId <= 0 ->
+            order.orderId == 0 ->
                 "IBKR has not assigned this order an API order id yet; bind it with clientId=0 or cancel it in TWS"
             order.clientId == null ->
                 "IBKR has not reported the owning client id for this order yet"

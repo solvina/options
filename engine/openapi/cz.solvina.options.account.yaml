@@ -51,7 +51,7 @@ paths:
         '204':
           description: Cancel request sent
         '400':
-          description: Invalid order id
+          description: Invalid order id (IBKR order id 0 is not cancellable)
         '403':
           description: Order belongs to another API client or is not cancellable by this client
         '404':

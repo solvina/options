@@ -117,7 +117,7 @@ class AccountApiImpl(
     }
 
     override suspend fun cancelOrder(orderId: Int): ResponseEntity<Unit> {
-        if (orderId <= 0) {
+        if (orderId == 0) {
             logger.warn { "Rejecting cancel for non-cancellable IBKR orderId=$orderId" }
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).build()
         }

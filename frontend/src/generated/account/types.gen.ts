@@ -242,7 +242,7 @@ export type CancelOrderData = {
 
 export type CancelOrderErrors = {
     /**
-     * Invalid order id
+     * Invalid order id (IBKR order id 0 is not cancellable)
      */
     400: unknown;
     /**

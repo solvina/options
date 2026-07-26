@@ -35,15 +35,19 @@ class IbkrAccountTradingAdapterTest {
         }
 
     @Test
-    fun `cancelOrder marks self-cancelled and sends positive ids to IBKR`() =
+    fun `cancelOrder marks self-cancelled and sends owned ids to IBKR`() =
         runTest {
             registry.status(orderId = 42, clientId = 1)
-            every { client.cancelOrder(42, any<OrderCancel>()) } just runs
+            registry.status(orderId = -2, clientId = 1)
+            every { client.cancelOrder(any(), any<OrderCancel>()) } just runs
 
             adapter.cancelOrder(42)
+            adapter.cancelOrder(-2)
 
             assertTrue(registry.wasSelfCancelled(42))
+            assertTrue(registry.wasSelfCancelled(-2))
             verify { client.cancelOrder(42, any<OrderCancel>()) }
+            verify { client.cancelOrder(-2, any<OrderCancel>()) }
         }
 
     @Test

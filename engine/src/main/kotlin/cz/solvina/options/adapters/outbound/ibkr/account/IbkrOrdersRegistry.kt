@@ -83,7 +83,7 @@ class IbkrOrdersRegistry {
         apiClientId: Int,
         apiOrderId: Int,
     ) {
-        if (apiOrderId <= 0) return
+        if (apiOrderId == 0) return
         val matched =
             openOrders.entries
                 .filter { (_, order) -> order.permId.toLong() == permId && order.orderId != apiOrderId }

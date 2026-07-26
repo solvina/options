@@ -105,10 +105,10 @@ class IbkrOrdersRegistryTest {
         val registry = IbkrOrdersRegistry()
 
         registry.status(orderId = 0, status = "PreSubmitted", remaining = 1, permId = 12345)
-        registry.onOrderBound(permId = 12345, apiClientId = 0, apiOrderId = 77)
+        registry.onOrderBound(permId = 12345, apiClientId = 0, apiOrderId = -2)
 
-        assertEquals(listOf(77), registry.getAllOrders().map { it.orderId })
-        assertEquals(77, registry.current(77)?.orderId)
+        assertEquals(listOf(-2), registry.getAllOrders().map { it.orderId })
+        assertEquals(-2, registry.current(-2)?.orderId)
         assertNull(registry.current(0))
     }
 
