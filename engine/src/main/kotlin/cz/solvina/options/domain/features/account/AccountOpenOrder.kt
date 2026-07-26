@@ -9,4 +9,7 @@ data class AccountOpenOrder(
     val orderType: String,
     val status: String,
     val limitPrice: BigDecimal?,
+    val clientId: Int?,
+    val cancellable: Boolean,
+    val cancelBlockedReason: String?,
 )

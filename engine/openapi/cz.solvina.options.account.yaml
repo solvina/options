@@ -50,6 +50,10 @@ paths:
       responses:
         '204':
           description: Cancel request sent
+        '400':
+          description: Invalid order id
+        '403':
+          description: Order belongs to another API client or is not cancellable by this client
         '404':
           description: Order not found
 
@@ -265,6 +269,7 @@ components:
         - action
         - orderType
         - status
+        - cancellable
       properties:
         orderId:
           type: integer
@@ -282,3 +287,14 @@ components:
         status:
           type: string
           description: PreSubmitted, Submitted, PendingSubmit, etc.
+        clientId:
+          type: integer
+          nullable: true
+          description: IBKR API client id that owns this order, when reported by TWS
+        cancellable:
+          type: boolean
+          description: True when this engine client can send cancelOrder for this row
+        cancelBlockedReason:
+          type: string
+          nullable: true
+          description: Why cancel is disabled for this row

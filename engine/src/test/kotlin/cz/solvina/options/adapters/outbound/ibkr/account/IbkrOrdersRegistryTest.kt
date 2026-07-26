@@ -101,6 +101,18 @@ class IbkrOrdersRegistryTest {
         }
 
     @Test
+    fun `orderBound remaps orderId zero row to cancellable api order id by permId`() {
+        val registry = IbkrOrdersRegistry()
+
+        registry.status(orderId = 0, status = "PreSubmitted", remaining = 1, permId = 12345)
+        registry.onOrderBound(permId = 12345, apiClientId = 0, apiOrderId = 77)
+
+        assertEquals(listOf(77), registry.getAllOrders().map { it.orderId })
+        assertEquals(77, registry.current(77)?.orderId)
+        assertNull(registry.current(0))
+    }
+
+    @Test
     fun `awaitTerminal returns pending on timeout without inventing a cancellation`() =
         runTest {
             val registry = IbkrOrdersRegistry()
@@ -115,6 +127,7 @@ class IbkrOrdersRegistryTest {
         avgFillPrice: Double = 0.0,
         filled: Long = 0,
         remaining: Long = 0,
+        permId: Int = 0,
     ) {
         onOrderStatus(
             orderId = orderId,
@@ -122,7 +135,7 @@ class IbkrOrdersRegistryTest {
             filled = Decimal.get(filled),
             remaining = Decimal.get(remaining),
             avgFillPrice = avgFillPrice,
-            permId = 0,
+            permId = permId,
             parentId = 0,
             lastFillPrice = avgFillPrice,
             clientId = 0,

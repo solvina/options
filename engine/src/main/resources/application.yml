@@ -53,7 +53,7 @@ ibkr:
   connection:
     host: 100.65.216.36
     port: 7497
-    client-id: 1
+    client-id: 0
     account: "DU7875979"           # set to your IBKR account code, e.g. U1234567
     use-ssl: false
     enabled: true

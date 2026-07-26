@@ -13,6 +13,7 @@ data class OpenOrder(
     val remaining: Decimal = Decimal.ZERO,
     val avgFillPrice: Double = 0.0,
     val permId: Int = 0,
+    val clientId: Int? = null,
     val parentId: Int = 0,
     val lastFillPrice: Double = 0.0,
     val whyHeld: String? = null,

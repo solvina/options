@@ -974,7 +974,8 @@ class IbkrEWrapper(
         apiClientId: Int,
         apiOrderId: Int,
     ) {
-        logger.debug { "orderBound: orderId=$orderId" }
+        logger.debug { "orderBound: permId=$orderId apiClientId=$apiClientId apiOrderId=$apiOrderId" }
+        orderRegistry.onOrderBound(orderId, apiClientId, apiOrderId)
     }
 
     override fun completedOrder(

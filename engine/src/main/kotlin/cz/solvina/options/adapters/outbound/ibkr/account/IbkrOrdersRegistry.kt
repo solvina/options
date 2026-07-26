@@ -56,6 +56,8 @@ class IbkrOrdersRegistry {
         orderState: OrderState,
     ) {
         val previous = openOrders[orderId]
+        val permId = order.permId().takeIf { it > 0 } ?: previous?.permId ?: 0
+        val clientId = order.clientId().takeIf { it >= 0 } ?: previous?.clientId
         openOrders[orderId] =
             OpenOrder(
                 orderId = orderId,
@@ -67,12 +69,34 @@ class IbkrOrdersRegistry {
                 filled = previous?.filled ?: Decimal.ZERO,
                 remaining = previous?.remaining ?: Decimal.ZERO,
                 avgFillPrice = previous?.avgFillPrice ?: 0.0,
-                permId = previous?.permId ?: 0,
+                permId = permId,
+                clientId = clientId,
                 parentId = previous?.parentId ?: 0,
                 lastFillPrice = previous?.lastFillPrice ?: 0.0,
                 whyHeld = previous?.whyHeld,
                 mktCapPrice = previous?.mktCapPrice ?: 0.0,
             )
+    }
+
+    fun onOrderBound(
+        permId: Long,
+        apiClientId: Int,
+        apiOrderId: Int,
+    ) {
+        if (apiOrderId <= 0) return
+        val matched =
+            openOrders.entries
+                .filter { (_, order) -> order.permId.toLong() == permId && order.orderId != apiOrderId }
+                .toList()
+        matched.forEach { (oldOrderId, order) ->
+            if (openOrders.remove(oldOrderId, order)) {
+                openOrders[apiOrderId] = order.copy(orderId = apiOrderId, clientId = apiClientId)
+                latestUpdates.remove(oldOrderId)?.let { latestUpdates[apiOrderId] = it.copy(orderId = apiOrderId) }
+                logger.info {
+                    "Bound IBKR order permId=$permId from orderId=$oldOrderId to apiOrderId=$apiOrderId (apiClientId=$apiClientId)"
+                }
+            }
+        }
     }
 
     fun onOpenOrderEnd() {
@@ -111,6 +135,7 @@ class IbkrOrdersRegistry {
                 remaining = remaining,
                 avgFillPrice = avgFillPrice,
                 permId = permId,
+                clientId = clientId.takeIf { it >= 0 } ?: order.clientId,
                 parentId = parentId,
                 lastFillPrice = lastFillPrice,
                 whyHeld = whyHeld,

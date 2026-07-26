@@ -112,7 +112,15 @@ function EnginePositionsTable({ positions }: { positions: OpenPositionDto[] }) {
   )
 }
 
-function OpenOrdersTable({ orders, onCancel }: { orders: OpenOrderDto[]; onCancel: (orderId: number) => void }) {
+function OpenOrdersTable({
+  orders,
+  onCancel,
+  cancellingOrderId,
+}: {
+  orders: OpenOrderDto[]
+  onCancel: (orderId: number) => void
+  cancellingOrderId: number | null
+}) {
   const { sort, toggle } = usePersistentSortable('account-orders', 'orderId', 'asc')
 
   if (orders.length === 0) return <p className="text-muted-foreground text-sm">No open orders.</p>
@@ -134,29 +142,37 @@ function OpenOrdersTable({ orders, onCancel }: { orders: OpenOrderDto[]; onCance
             <th className={thClass}>Action</th>
             <th className={thClass}>Type</th>
             <SortTh label="Limit Price" col="limitPrice" sort={sort} onSort={toggle} className={thClass} />
+            <SortTh label="Client" col="clientId" sort={sort} onSort={toggle} className={thClass} />
             <th className={thClass}>Status</th>
             <th className={thClass}></th>
           </tr>
         </thead>
         <tbody>
-          {sortedOrders.map((o) => (
-            <tr key={o.orderId} className="border-b border-border hover:bg-muted/40 transition-colors">
-              <td className="px-3 py-2 tabular-nums text-muted-foreground">{o.orderId}</td>
-              <td className="px-3 py-2 font-medium">{o.symbol}</td>
-              <td className="px-3 py-2">{o.action}</td>
-              <td className="px-3 py-2 text-muted-foreground">{o.orderType}</td>
-              <td className="px-3 py-2 tabular-nums">{o.limitPrice != null ? fmt(Number(o.limitPrice)) : '—'}</td>
-              <td className="px-3 py-2">{o.status}</td>
-              <td className="px-3 py-2">
-                <button
-                  onClick={() => onCancel(o.orderId)}
-                  className="text-xs px-2 py-1 rounded border border-destructive text-destructive hover:bg-destructive hover:text-destructive-foreground transition-colors"
-                >
-                  Cancel
-                </button>
-              </td>
-            </tr>
-          ))}
+          {sortedOrders.map((o) => {
+            const canCancel = o.cancellable
+            const isCancelling = cancellingOrderId === o.orderId
+            return (
+              <tr key={o.orderId} className="border-b border-border hover:bg-muted/40 transition-colors">
+                <td className="px-3 py-2 tabular-nums text-muted-foreground">{o.orderId}</td>
+                <td className="px-3 py-2 font-medium">{o.symbol}</td>
+                <td className="px-3 py-2">{o.action}</td>
+                <td className="px-3 py-2 text-muted-foreground">{o.orderType}</td>
+                <td className="px-3 py-2 tabular-nums">{o.limitPrice != null ? fmt(Number(o.limitPrice)) : '—'}</td>
+                <td className="px-3 py-2 tabular-nums text-muted-foreground">{o.clientId ?? '—'}</td>
+                <td className="px-3 py-2">{o.status}</td>
+                <td className="px-3 py-2">
+                  <button
+                    onClick={() => canCancel && onCancel(o.orderId)}
+                    disabled={!canCancel || isCancelling}
+                    title={canCancel ? 'Cancel this IBKR order' : (o.cancelBlockedReason ?? 'This order cannot be cancelled by this engine client')}
+                    className="text-xs px-2 py-1 rounded border border-destructive text-destructive hover:bg-destructive hover:text-destructive-foreground transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-destructive"
+                  >
+                    {isCancelling ? '…' : 'Cancel'}
+                  </button>
+                </td>
+              </tr>
+            )
+          })}
         </tbody>
       </table>
     </div>
@@ -330,14 +346,22 @@ function TrackedSpreadGroups({ positions }: { positions: AccountPositionDto[] })
 }
 
 export function AccountPage() {
+  const [cancelError, setCancelError] = useState<string | null>(null)
+  const [cancellingOrderId, setCancellingOrderId] = useState<number | null>(null)
   const { data, isLoading, isError, refetch } = useQuery({
     ...getAccountOverviewOptions(),
     refetchInterval: 30_000,
   })
 
   const { mutate: doCancel } = useMutation({
-    mutationFn: (orderId: number) => cancelOrder({ path: { orderId } }),
-    onSuccess: () => { refetch() },
+    mutationFn: (orderId: number) => cancelOrder({ path: { orderId }, throwOnError: true }),
+    onMutate: (orderId) => {
+      setCancelError(null)
+      setCancellingOrderId(orderId)
+    },
+    onSuccess: () => { setTimeout(() => refetch(), 1000) },
+    onError: (error) => { setCancelError(error instanceof Error ? error.message : 'Cancel request failed') },
+    onSettled: () => { setCancellingOrderId(null) },
   })
 
   const { mutate: doKill } = useMutation({
@@ -450,7 +474,8 @@ export function AccountPage() {
                 ({data.openOrderCount ?? 0})
               </span>
             </h2>
-            <OpenOrdersTable orders={data.openOrders ?? []} onCancel={doCancel} />
+            {cancelError && <p className="text-xs text-destructive mb-2">{cancelError}</p>}
+            <OpenOrdersTable orders={data.openOrders ?? []} onCancel={doCancel} cancellingOrderId={cancellingOrderId} />
           </section>
         </>
       )}

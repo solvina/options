@@ -7,6 +7,8 @@ import cz.solvina.options.account.dto.AccountPositionDto
 import cz.solvina.options.account.dto.ClosePositionRequestDto
 import cz.solvina.options.account.dto.OpenOrderDto
 import cz.solvina.options.account.dto.OpenPositionDto
+import cz.solvina.options.domain.features.account.AccountOrderNotCancellableException
+import cz.solvina.options.domain.features.account.AccountOrderNotFoundException
 import cz.solvina.options.domain.features.account.AccountPort
 import cz.solvina.options.domain.features.account.AccountPosition
 import cz.solvina.options.domain.features.account.AccountTradingPort
@@ -17,6 +19,7 @@ import cz.solvina.options.domain.features.spread.SpreadCloserRegistry
 import cz.solvina.options.domain.features.spread.model.Spread
 import cz.solvina.options.domain.models.OptionType
 import io.github.oshai.kotlinlogging.KotlinLogging
+import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
@@ -98,12 +101,15 @@ class AccountApiImpl(
                 openOrders =
                     openOrders.map {
                         OpenOrderDto(
-                            it.orderId,
-                            it.symbol,
-                            it.action,
-                            it.orderType,
-                            it.status,
-                            it.limitPrice,
+                            orderId = it.orderId,
+                            symbol = it.symbol,
+                            action = it.action,
+                            orderType = it.orderType,
+                            status = it.status,
+                            cancellable = it.cancellable,
+                            limitPrice = it.limitPrice,
+                            clientId = it.clientId,
+                            cancelBlockedReason = it.cancelBlockedReason,
                         )
                     },
             )
@@ -111,8 +117,23 @@ class AccountApiImpl(
     }
 
     override suspend fun cancelOrder(orderId: Int): ResponseEntity<Unit> {
-        accountTradingPort.cancelOrder(orderId)
-        return ResponseEntity.noContent().build()
+        if (orderId <= 0) {
+            logger.warn { "Rejecting cancel for non-cancellable IBKR orderId=$orderId" }
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).build()
+        }
+        return runCatching {
+            accountTradingPort.cancelOrder(orderId)
+            ResponseEntity.noContent().build<Unit>()
+        }.getOrElse { e ->
+            when (e) {
+                is AccountOrderNotFoundException -> ResponseEntity.notFound().build()
+                is AccountOrderNotCancellableException -> {
+                    logger.warn { "Rejecting cancel for orderId=$orderId: ${e.message}" }
+                    ResponseEntity.status(HttpStatus.FORBIDDEN).build()
+                }
+                else -> throw e
+            }
+        }
     }
 
     override suspend fun closePosition(closePositionRequestDto: ClosePositionRequestDto): ResponseEntity<Unit> {

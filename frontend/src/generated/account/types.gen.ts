@@ -185,6 +185,18 @@ export type OpenOrderDto = {
      * PreSubmitted, Submitted, PendingSubmit, etc.
      */
     status: string;
+    /**
+     * IBKR API client id that owns this order, when reported by TWS
+     */
+    clientId?: number | null;
+    /**
+     * True when this engine client can send cancelOrder for this row
+     */
+    cancellable: boolean;
+    /**
+     * Why cancel is disabled for this row
+     */
+    cancelBlockedReason?: string | null;
 };
 
 export type GetAccountOverviewData = {
@@ -229,6 +241,14 @@ export type CancelOrderData = {
 };
 
 export type CancelOrderErrors = {
+    /**
+     * Invalid order id
+     */
+    400: unknown;
+    /**
+     * Order belongs to another API client or is not cancellable by this client
+     */
+    403: unknown;
     /**
      * Order not found
      */
