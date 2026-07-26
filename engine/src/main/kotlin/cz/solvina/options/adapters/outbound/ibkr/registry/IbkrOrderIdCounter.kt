@@ -2,8 +2,6 @@ package cz.solvina.options.adapters.outbound.ibkr.registry
 
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.stereotype.Component
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 @Component
@@ -11,25 +9,24 @@ class IbkrOrderIdCounter {
     private val logger = KotlinLogging.logger {}
     private val counter = AtomicInteger(-1)
 
-    private val initializedLatch = CountDownLatch(1)
-
     /**
      * Called exclusively by EWrapper.nextValidId() on socket connect/reconnect.
      */
     fun init(startingId: Int) {
         counter.set(startingId)
-        initializedLatch.countDown()
         logger.info { "Order ID counter initialized/synchronized to $startingId" }
     }
 
     /**
-     * Blocks until nextValidId is received from TWS, then provides the next ID.
+     * Returns the next broker id only after TWS has supplied nextValidId. Order submission must not
+     * block a coroutine waiting for a socket callback: callers reserve nothing until this succeeds.
      */
     fun nextOrderId(): Int {
-        check(initializedLatch.await(5, TimeUnit.SECONDS)) {
-            "Timed out waiting for IBKR nextValidId initialization"
+        while (true) {
+            val current = counter.get()
+            check(current >= 0) { "IBKR nextValidId is not available yet" }
+            if (counter.compareAndSet(current, current + 1)) return current
         }
-        return counter.getAndIncrement()
     }
 
     companion object {

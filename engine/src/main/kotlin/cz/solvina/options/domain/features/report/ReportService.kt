@@ -114,7 +114,7 @@ class ReportService(
             openedAt = openedAt,
             closedAt = closedAt,
             filled = status != FlagStatus.PENDING && status != FlagStatus.ENTRY_TIMEOUT,
-            openNow = status == FlagStatus.OPEN,
+            openNow = status == FlagStatus.OPEN || status == FlagStatus.CLOSING,
             cleanlyClosed = status in FLAG_CLOSED_STATUSES,
             realizedPnl = realizedPnl,
         )

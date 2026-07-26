@@ -5,10 +5,15 @@ import cz.solvina.options.domain.features.flag.config.FlagTradingConfig
 import cz.solvina.options.domain.features.flag.model.FlagPosition
 import cz.solvina.options.domain.features.flag.model.FlagStatus
 import cz.solvina.options.domain.features.flag.model.isTerminal
+import cz.solvina.options.domain.features.order.BrokerOrderUpdate
+import cz.solvina.options.domain.features.order.OrderLifecyclePort
 import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
@@ -17,6 +22,7 @@ import java.math.RoundingMode
 import java.time.Clock
 import java.time.Instant
 import java.time.temporal.ChronoUnit
+import java.util.concurrent.ConcurrentHashMap
 
 private val logger = KotlinLogging.logger {}
 private val tradeLogger = KotlinLogging.logger("FLAG_TRADES")
@@ -24,6 +30,7 @@ private val tradeLogger = KotlinLogging.logger("FLAG_TRADES")
 @Service
 class FlagExecutionService(
     private val bracketOrderPort: BracketOrderPort,
+    private val orderLifecyclePort: OrderLifecyclePort = NoopOrderLifecyclePort,
     private val flagPort: FlagPort,
     private val clock: Clock,
     private val scope: CoroutineScope,
@@ -36,6 +43,12 @@ class FlagExecutionService(
     @param:Value("\${flag.max-position-pct-of-capital:0.25}")
     private val maxPositionPctOfCapital: BigDecimal = BigDecimal("0.25"),
 ) {
+    private val trackedOrders = ConcurrentHashMap<Int, FlagPosition>()
+
+    init {
+        scope.launch(start = CoroutineStart.UNDISPATCHED) { orderLifecyclePort.updates.collect(::onBrokerUpdate) }
+    }
+
     data class ExecutionRequest(
         val symbol: Symbol,
         val entryPrice: BigDecimal,
@@ -124,15 +137,9 @@ class FlagExecutionService(
 
         val ids =
             runCatching {
-                bracketOrderPort.submitBracketOrder(
-                    symbol = request.symbol,
-                    shares = shares,
-                    entryPrice = request.entryPrice,
-                    stopLossPrice = request.stopLossPrice,
-                    trailAmount = trailAmount,
-                )
+                bracketOrderPort.reserveBracketOrderIds()
             }.getOrElse { e ->
-                logger.error(e) { "[${request.symbol}] Bracket order submission failed: ${e.message}" }
+                logger.error(e) { "[${request.symbol}] Could not reserve broker order ids: ${e.message}" }
                 return
             }
 
@@ -173,76 +180,157 @@ class FlagExecutionService(
                 ),
             )
 
+        // The durable row and in-memory routing exist before placeOrder. A send failure is
+        // intentionally ambiguous: TWS may have accepted it, so never auto-resubmit.
+        register(position)
+        runCatching {
+            bracketOrderPort.submitBracketOrder(
+                ids = ids,
+                symbol = request.symbol,
+                shares = shares,
+                entryPrice = request.entryPrice,
+                stopLossPrice = request.stopLossPrice,
+                trailAmount = trailAmount,
+            )
+        }.onFailure { e ->
+            logger.error(e) { "[${request.symbol}] Bracket send uncertain; keeping PENDING for TWS reconciliation: ${e.message}" }
+        }
+
         tradeLogger.info {
             "ENTRY_PENDING ${request.symbol} entry=${request.entryPrice} stop=${request.stopLossPrice} " +
                 "pt=$profitTarget shares=$shares entryOrder=${ids.entryOrderId}"
         }
-
-        // Await parent fill in background
-        launchEntryWatch(position)
     }
 
-    /**
-     * Watches the parent entry order in the background; on fill promotes the position to OPEN and
-     * starts the exit watches. [rewatch] means the orders were placed by a previous engine run
-     * (startup/periodic recovery): the fill watch is re-armed instead of expecting the deferred
-     * registered at order placement.
-     */
-    fun launchEntryWatch(
-        position: FlagPosition,
-        rewatch: Boolean = false,
-    ) {
-        val entryOrderId = position.entryOrderId
-        scope.launch {
-            val entryFill =
-                runCatching {
-                    if (rewatch) bracketOrderPort.rewatchParentFill(entryOrderId) else bracketOrderPort.awaitParentFill(entryOrderId)
-                }.getOrElse { e ->
-                    logger.warn(e) { "[${position.symbol}] Parent fill await failed: ${e.message}" }
-                    OrderFill(OrderStatus.CANCELLED)
-                }
-
-            if (entryFill.status != OrderStatus.FILLED) {
-                logger.info { "[${position.symbol}] Entry order not filled (status=${entryFill.status}) — marking cancelled" }
-                flagPort.update(
-                    position.copy(status = FlagStatus.ENTRY_TIMEOUT, closeReason = "entry_not_filled", closedAt = Instant.now(clock)),
-                )
-                return@launch
-            }
-
-            val entrySlippage = entryFill.avgPrice?.subtract(position.entryPrice)
-            val open =
-                flagPort.update(
-                    position.copy(status = FlagStatus.OPEN, actualEntryPrice = entryFill.avgPrice, entrySlippage = entrySlippage),
-                )
-            tradeLogger.info {
-                "ENTRY_FILLED ${position.symbol} entryOrder=$entryOrderId shares=${position.shares} " +
-                    "entry=${position.entryPrice} actualFill=${entryFill.avgPrice} slippage=$entrySlippage"
-            }
-
-            // Entry is live — arm the protective-exit watch
-            launchExitWatch(open, rewatch)
+    /** Register a persisted position before submitting it, or when rebuilding after restart. */
+    fun register(position: FlagPosition) {
+        (
+            setOf(
+                position.entryOrderId,
+                position.stopLossOrderId,
+                position.profitTargetOrderId,
+            ) + listOfNotNull(position.closeOrderId)
+        ).forEach { orderId ->
+            trackedOrders[orderId] = position
+            orderLifecyclePort.current(orderId)?.let { update -> scope.launch { onBrokerUpdate(update) } }
         }
     }
 
-    /**
-     * Watches the protective child orders of an OPEN position and books the close when one fills.
-     * Public so recovery can re-attach watches to positions restored from persistence ([rewatch]).
-     *
-     * The protective exit is a single TRAIL order (its id stored as both stopLossOrderId and
-     * profitTargetOrderId); legacy rows may still carry two distinct child ids. Exactly one watcher
-     * is armed per distinct id — two watchers on the same id raced each other, and whichever won
-     * booked its own theoretical price (stop or target) instead of the actual fill.
-     */
+    /** Test/backtest compatibility only; live flag management is driven by [OrderLifecyclePort]. */
+    @Deprecated("Use register and broker callbacks")
     fun launchExitWatch(
         position: FlagPosition,
         rewatch: Boolean = false,
     ) {
-        for (orderId in setOf(position.stopLossOrderId, position.profitTargetOrderId)) {
+        setOf(position.stopLossOrderId, position.profitTargetOrderId).forEach { orderId ->
             scope.launch {
-                val exit = runCatching { childFill(orderId, rewatch) }.getOrNull() ?: return@launch
-                if (exit.status == OrderStatus.FILLED) bookExitFill(position, exit.avgPrice)
+                val fill = if (rewatch) bracketOrderPort.rewatchChildFill(orderId) else bracketOrderPort.awaitChildFill(orderId)
+                if (fill.status == OrderStatus.FILLED) bookExitFill(position, fill.avgPrice, Instant.now(clock))
             }
+        }
+    }
+
+    private suspend fun onBrokerUpdate(update: BrokerOrderUpdate) {
+        val position = trackedOrders[update.orderId] ?: return
+        when {
+            update.orderId == position.closeOrderId && update.isFilled && position.status == FlagStatus.CLOSING ->
+                bookRequestedCloseFill(position, update.averageFillPrice, update.receivedAt)
+            update.orderId == position.closeOrderId && update.isCancelled && position.status == FlagStatus.CLOSING ->
+                reopenAfterRejectedClose(position, update.rejectionReason ?: "close_not_filled")
+            update.orderId == position.entryOrderId && update.isFilled && position.status == FlagStatus.PENDING -> {
+                val slippage = update.averageFillPrice?.subtract(position.entryPrice)
+                val open =
+                    flagPort.update(
+                        position.copy(status = FlagStatus.OPEN, actualEntryPrice = update.averageFillPrice, entrySlippage = slippage),
+                    )
+                replaceTracked(position, open)
+                tradeLogger.info { "ENTRY_FILLED ${position.symbol} entryOrder=${update.orderId} actualFill=${update.averageFillPrice}" }
+            }
+            update.orderId == position.entryOrderId && update.isCancelled && position.status == FlagStatus.PENDING -> {
+                val closed =
+                    flagPort.update(
+                        position.copy(
+                            status = FlagStatus.ENTRY_TIMEOUT,
+                            closeReason =
+                                update.rejectionReason ?: "entry_not_filled",
+                            closedAt = update.receivedAt,
+                        ),
+                    )
+                untrack(closed)
+            }
+            update.orderId in setOf(position.stopLossOrderId, position.profitTargetOrderId) &&
+                update.isFilled &&
+                position.status in setOf(FlagStatus.OPEN, FlagStatus.CLOSING) ->
+                bookExitFill(position, update.averageFillPrice, update.receivedAt)
+        }
+    }
+
+    private suspend fun bookRequestedCloseFill(
+        position: FlagPosition,
+        fillPrice: BigDecimal?,
+        closedAt: Instant,
+    ) {
+        val latest = position.id?.let { flagPort.findById(it) } ?: position
+        if (latest.status.isTerminal) {
+            logger.debug { "[${position.symbol}] Close fill ignored — position already ${latest.status}" }
+            return
+        }
+        val closePrice = fillPrice ?: latest.actualEntryPrice ?: latest.entryPrice
+        val soldShares = latest.closeOrderShares ?: latest.shares
+        val effectiveEntry = latest.actualEntryPrice ?: latest.entryPrice
+        val pnl =
+            closePrice
+                .subtract(effectiveEntry)
+                .multiply(BigDecimal(soldShares))
+                .setScale(2, RoundingMode.HALF_UP)
+        val status =
+            if (latest.closeReason == "eod_liquidation") {
+                FlagStatus.CLOSED_EOD
+            } else {
+                FlagStatus.CLOSED_MANUAL
+            }
+        val reason = latest.closeReason ?: "manual"
+        val closed =
+            flagPort.update(
+                withCloseMetrics(
+                    latest.copy(
+                        status = status,
+                        closedAt = closedAt,
+                        closeReason = reason,
+                        closePriceActual = closePrice,
+                        realizedPnl = pnl,
+                    ),
+                    pnl,
+                    closedAt,
+                ),
+            )
+        untrack(closed)
+        tradeLogger.info {
+            "${status.name} ${position.symbol} closeOrder=${position.closeOrderId} fill=$closePrice reason=$reason pnl=\$$pnl"
+        }
+    }
+
+    private suspend fun reopenAfterRejectedClose(
+        position: FlagPosition,
+        rejectionReason: String,
+    ) {
+        val latest = position.id?.let { flagPort.findById(it) } ?: position
+        if (latest.status.isTerminal) return
+        val heldShares = latest.closeOrderShares ?: latest.shares
+        val reprotected = reprotectAfterRejectedClose(latest, heldShares)
+        val open =
+            flagPort.update(
+                reprotected.copy(
+                    status = FlagStatus.OPEN,
+                    closeOrderId = null,
+                    closeOrderShares = null,
+                    closeReason = "close_rejected($rejectionReason)",
+                ),
+            )
+        replaceTracked(latest, open)
+        logger.error {
+            "[${position.symbol}] Close order ${position.closeOrderId} did not fill ($rejectionReason); " +
+                "position reopened and protective order ids refreshed"
         }
     }
 
@@ -255,8 +343,8 @@ class FlagExecutionService(
     private suspend fun bookExitFill(
         position: FlagPosition,
         fillPrice: BigDecimal?,
+        closedAt: Instant,
     ) {
-        val closedAt = Instant.now(clock)
         val latest = position.id?.let { flagPort.findById(it) } ?: position
         if (latest.status.isTerminal) {
             logger.debug { "[${position.symbol}] Exit fill ignored — position already ${latest.status}" }
@@ -272,19 +360,21 @@ class FlagExecutionService(
         val profitable = pnl.signum() >= 0
         val status = if (profitable) FlagStatus.CLOSED_PROFIT else FlagStatus.CLOSED_STOP
         val reason = (if (profitable) "trail_exit_profit" else "trail_exit_loss") + if (fillPrice == null) "_estimated" else ""
-        flagPort.update(
-            withCloseMetrics(
-                latest.copy(
-                    status = status,
-                    closedAt = closedAt,
-                    closeReason = reason,
-                    closePriceActual = closePrice,
-                    realizedPnl = pnl,
+        val closed =
+            flagPort.update(
+                withCloseMetrics(
+                    latest.copy(
+                        status = status,
+                        closedAt = closedAt,
+                        closeReason = reason,
+                        closePriceActual = closePrice,
+                        realizedPnl = pnl,
+                    ),
+                    pnl,
+                    closedAt,
                 ),
-                pnl,
-                closedAt,
-            ),
-        )
+            )
+        untrack(closed)
         tradeLogger.info { "${status.name} ${position.symbol} fill=$closePrice reason=$reason pnl=\$$pnl" }
     }
 
@@ -299,10 +389,39 @@ class FlagExecutionService(
         return if (ratcheted != null && ratcheted > position.stopLossPrice) ratcheted else position.stopLossPrice
     }
 
-    private suspend fun childFill(
-        orderId: Int,
-        rewatch: Boolean,
-    ): OrderFill = if (rewatch) bracketOrderPort.rewatchChildFill(orderId) else bracketOrderPort.awaitChildFill(orderId)
+    private suspend fun reprotectAfterRejectedClose(
+        position: FlagPosition,
+        heldShares: Int,
+    ): FlagPosition {
+        val trail = position.trailAmount ?: position.entryPrice.subtract(position.stopLossPrice)
+        val ratcheted = position.highestPriceSeen?.subtract(trail)
+        val initialStop = if (ratcheted != null && ratcheted > position.stopLossPrice) ratcheted else position.stopLossPrice
+        return runCatching { bracketOrderPort.submitTrailingStopSell(position.symbol, heldShares, initialStop, trail) }
+            .map { newId ->
+                logger.warn {
+                    "[${position.symbol}] Re-armed trailing stop (order $newId, stop~$initialStop trail=$trail) " +
+                        "after rejected close"
+                }
+                position.copy(stopLossOrderId = newId, profitTargetOrderId = newId)
+            }.getOrElse { e ->
+                logger.error(e) {
+                    "[${position.symbol}] FAILED to re-arm protection after rejected close; $heldShares shares may be unprotected: ${e.message}"
+                }
+                position
+            }
+    }
+
+    private fun replaceTracked(
+        old: FlagPosition,
+        updated: FlagPosition,
+    ) {
+        trackedOrders.entries.removeIf { it.value.id == old.id }
+        register(updated)
+    }
+
+    private fun untrack(position: FlagPosition) {
+        trackedOrders.entries.removeIf { it.value.id == position.id }
+    }
 
     private fun withCloseMetrics(
         position: FlagPosition,
@@ -348,4 +467,10 @@ class FlagExecutionService(
             timeInTradeSeconds = ChronoUnit.SECONDS.between(position.openedAt, closedAt).toInt(),
         )
     }
+}
+
+private object NoopOrderLifecyclePort : OrderLifecyclePort {
+    override val updates = emptyFlow<BrokerOrderUpdate>()
+
+    override fun current(orderId: Int): BrokerOrderUpdate? = null
 }

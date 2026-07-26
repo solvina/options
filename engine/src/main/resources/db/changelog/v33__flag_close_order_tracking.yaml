@@ -1,0 +1,20 @@
+databaseChangeLog:
+  - changeSet:
+      id: v33__flag_close_order_tracking
+      author: codex
+      changes:
+        - addColumn:
+            tableName: flag_positions
+            columns:
+              - column:
+                  name: close_order_id
+                  type: int
+              - column:
+                  name: close_order_shares
+                  type: int
+        - createIndex:
+            tableName: flag_positions
+            indexName: idx_flag_positions_close_order_id
+            columns:
+              - column:
+                  name: close_order_id

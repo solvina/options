@@ -1,8 +1,12 @@
 package cz.solvina.options.flags
 
+import cz.solvina.options.domain.features.account.AccountDetail
+import cz.solvina.options.domain.features.account.AccountPort
 import cz.solvina.options.domain.features.account.AccountPosition
+import cz.solvina.options.domain.features.account.EffectiveAccountService
 import cz.solvina.options.domain.features.account.PositionsPort
 import cz.solvina.options.domain.features.flag.BracketOrderPort
+import cz.solvina.options.domain.features.flag.FlagExecutionService
 import cz.solvina.options.domain.features.flag.FlagManagementService
 import cz.solvina.options.domain.features.flag.FlagPage
 import cz.solvina.options.domain.features.flag.FlagPort
@@ -13,10 +17,18 @@ import cz.solvina.options.domain.features.flag.model.FlagPosition
 import cz.solvina.options.domain.features.flag.model.FlagStatus
 import cz.solvina.options.domain.features.flag.model.isTerminal
 import cz.solvina.options.domain.features.market.MarketDataPort
+import cz.solvina.options.domain.features.order.BrokerOrderUpdate
+import cz.solvina.options.domain.features.order.OrderLifecyclePort
 import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
 import cz.solvina.options.domain.models.Symbol
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import java.math.BigDecimal
@@ -141,9 +153,18 @@ class FlagManagementServiceTest {
                     lowestPriceSeen = BigDecimal("148.00"),
                 )
             val flagPort = InMemoryFlagPort(listOf(position))
-            val service = buildService(flagPort = flagPort, currentPrice = BigDecimal("154.00"))
+            val lifecycle = TestOrderLifecyclePort()
+            val service =
+                buildService(
+                    flagPort = flagPort,
+                    currentPrice = BigDecimal("154.00"),
+                    orderLifecyclePort = lifecycle,
+                    scope = CoroutineScope(Dispatchers.Unconfined),
+                )
 
             service.manualClose(position.id!!)
+            lifecycle.emit(900, "Filled", BigDecimal("154.00"))
+            advanceUntilIdle()
 
             val closed = flagPort.saved.last()
             assertEquals(
@@ -166,9 +187,18 @@ class FlagManagementServiceTest {
                     lowestPriceSeen = BigDecimal("148.00"),
                 )
             val flagPort = InMemoryFlagPort(listOf(position))
-            val service = buildService(flagPort = flagPort, currentPrice = BigDecimal("151.00"))
+            val lifecycle = TestOrderLifecyclePort()
+            val service =
+                buildService(
+                    flagPort = flagPort,
+                    currentPrice = BigDecimal("151.00"),
+                    orderLifecyclePort = lifecycle,
+                    scope = CoroutineScope(Dispatchers.Unconfined),
+                )
 
             service.manualClose(position.id!!)
+            lifecycle.emit(900, "Filled", BigDecimal("151.00"))
+            advanceUntilIdle()
 
             val closed = flagPort.saved.last()
             assertEquals(
@@ -216,7 +246,9 @@ class FlagManagementServiceTest {
             service.checkEodLiquidation()
 
             val closed = flagPort.saved.last()
-            assertEquals(FlagStatus.CLOSED_EOD, closed.status)
+            assertEquals(FlagStatus.CLOSING, closed.status)
+            assertEquals(900, closed.closeOrderId)
+            assertEquals("eod_liquidation", closed.closeReason)
         }
 
     @Test
@@ -229,8 +261,8 @@ class FlagManagementServiceTest {
 
             service.checkEodLiquidation(session = "EU")
 
-            // Only the EU position should be closed
-            val closedIds = flagPort.saved.filter { it.status == FlagStatus.CLOSED_EOD }.map { it.id }
+            // Only the EU position should enter an in-flight close.
+            val closedIds = flagPort.saved.filter { it.status == FlagStatus.CLOSING }.map { it.id }
             assertTrue(euPosition.id in closedIds, "EU position must be closed")
             assertTrue(usPosition.id !in closedIds, "US position must remain open")
         }
@@ -279,9 +311,19 @@ class FlagManagementServiceTest {
             val position = openPosition(shares = 10)
             val flagPort = InMemoryFlagPort(listOf(position))
             val bracketPort = RecordingBracketOrderPort()
-            val service = buildService(flagPort = flagPort, bracketPort = bracketPort, brokerHoldings = listOf(stkHolding("AAPL", 4)))
+            val lifecycle = TestOrderLifecyclePort()
+            val service =
+                buildService(
+                    flagPort = flagPort,
+                    bracketPort = bracketPort,
+                    brokerHoldings = listOf(stkHolding("AAPL", 4)),
+                    orderLifecyclePort = lifecycle,
+                    scope = CoroutineScope(Dispatchers.Unconfined),
+                )
 
             service.manualClose(position.id!!)
+            lifecycle.emit(900, "Filled", BigDecimal("150.00"))
+            advanceUntilIdle()
 
             assertEquals(listOf(symbol to 4), bracketPort.marketSells, "Sell must be capped at the held quantity")
             assertEquals(FlagStatus.CLOSED_MANUAL, flagPort.findById(position.id!!)!!.status)
@@ -292,20 +334,25 @@ class FlagManagementServiceTest {
         runTest {
             val position = openPosition()
             val flagPort = InMemoryFlagPort(listOf(position))
-            // Simulate IBKR rejecting the market SELL outside RTH (error 399 → CANCELLED, queued for
-            // next open): the broker still holds the shares, but nothing was sold now.
-            val bracketPort =
-                RecordingBracketOrderPort().apply { marketSellFill = OrderFill(status = OrderStatus.CANCELLED) }
+            val bracketPort = RecordingBracketOrderPort()
+            val lifecycle = TestOrderLifecyclePort()
             val service =
                 buildService(
                     flagPort = flagPort,
                     bracketPort = bracketPort,
                     brokerHoldings = listOf(stkHolding(symbol.value, position.shares)),
+                    orderLifecyclePort = lifecycle,
+                    scope = CoroutineScope(Dispatchers.Unconfined),
                 )
 
             val result = service.manualClose(position.id!!)
+            lifecycle.emit(900, "Cancelled", rejectionReason = "code=399: market closed")
+            advanceUntilIdle()
 
-            assertTrue(result is FlagManagementService.ManualCloseResult.Failed, "A non-filling close must NOT report success, got $result")
+            assertTrue(
+                result is FlagManagementService.ManualCloseResult.Closed,
+                "Close request should be accepted as in-flight, got $result",
+            )
             val after = flagPort.findById(position.id!!)!!
             assertEquals(FlagStatus.OPEN, after.status, "Position must stay OPEN when nothing was sold")
             assertNull(after.realizedPnl, "No realized P&L may be booked when the sell did not fill")
@@ -343,30 +390,53 @@ class FlagManagementServiceTest {
         currentPrice: BigDecimal = BigDecimal("151.00"),
         // Default: the broker holds plenty of the test symbol, so closes behave as before.
         brokerHoldings: List<AccountPosition> = listOf(stkHolding("AAPL", 100)),
+        orderLifecyclePort: TestOrderLifecyclePort = TestOrderLifecyclePort(),
+        scope: CoroutineScope = kotlinx.coroutines.GlobalScope,
         positionsPort: PositionsPort =
             object : PositionsPort {
                 override suspend fun getPositions() = brokerHoldings
             },
-    ) = FlagManagementService(
-        flagPort = flagPort,
-        bracketOrderPort = bracketPort,
-        flagTradingConfigPort =
+    ): FlagManagementService {
+        val marketDataPort =
+            object : MarketDataPort {
+                override suspend fun getUnderlyingPrice(symbol: Symbol) = Money(currentPrice)
+
+                override suspend fun getOptionMid(contract: OptionContract) = Money(BigDecimal.ZERO)
+            }
+        val configPort =
             object : FlagTradingConfigPort {
                 private var config = FlagTradingConfig()
 
                 override suspend fun get() = config
 
                 override suspend fun update(config: FlagTradingConfig) = config.also { this.config = it }
-            },
-        marketDataPort =
-            object : MarketDataPort {
-                override suspend fun getUnderlyingPrice(symbol: Symbol) = Money(currentPrice)
-
-                override suspend fun getOptionMid(contract: OptionContract) = Money(BigDecimal.ZERO)
-            },
-        positionsPort = positionsPort,
-        clock = fixedClock,
-    )
+            }
+        val accountPort =
+            object : AccountPort {
+                override val accountDetail =
+                    MutableStateFlow(
+                        AccountDetail(totalCapital = Money(BigDecimal("1000000")), availableFunds = Money(BigDecimal("1000000"))),
+                    )
+            }
+        val executionService =
+            FlagExecutionService(
+                bracketOrderPort = bracketPort,
+                orderLifecyclePort = orderLifecyclePort,
+                flagPort = flagPort,
+                clock = fixedClock,
+                scope = scope,
+                effectiveAccount = EffectiveAccountService(accountPort, null),
+            )
+        return FlagManagementService(
+            flagPort = flagPort,
+            bracketOrderPort = bracketPort,
+            flagExecutionService = executionService,
+            flagTradingConfigPort = configPort,
+            marketDataPort = marketDataPort,
+            positionsPort = positionsPort,
+            clock = fixedClock,
+        )
+    }
 
     /**
      * In-memory [FlagPort] backed by a mutable map so that [update] calls are visible to [findOpen].
@@ -415,8 +485,7 @@ class FlagManagementServiceTest {
         val marketSells = mutableListOf<Pair<Symbol, Int>>()
         val trailingStopReprotects = mutableListOf<Pair<Symbol, Int>>()
 
-        // Overridable so a test can simulate an after-hours reject (IBKR 399 → CANCELLED, nothing sold).
-        var marketSellFill: OrderFill = OrderFill(status = OrderStatus.FILLED, avgPrice = BigDecimal("150.00"))
+        override fun reserveOrderId() = 900
 
         override suspend fun submitBracketOrder(
             symbol: Symbol,
@@ -451,11 +520,40 @@ class FlagManagementServiceTest {
         }
 
         override suspend fun submitMarketSell(
+            orderId: Int,
             symbol: Symbol,
             shares: Int,
-        ): OrderFill {
+        ): Int {
             marketSells.add(symbol to shares)
-            return marketSellFill
+            return orderId
+        }
+    }
+
+    private class TestOrderLifecyclePort : OrderLifecyclePort {
+        private val latest = mutableMapOf<Int, BrokerOrderUpdate>()
+        private val events = MutableSharedFlow<BrokerOrderUpdate>(extraBufferCapacity = 16)
+        override val updates = events.asSharedFlow()
+
+        override fun current(orderId: Int): BrokerOrderUpdate? = latest[orderId]
+
+        suspend fun emit(
+            orderId: Int,
+            status: String,
+            avgPrice: BigDecimal? = null,
+            rejectionReason: String? = null,
+        ) {
+            val update =
+                BrokerOrderUpdate(
+                    orderId = orderId,
+                    status = status,
+                    filled = if (status.equals("Filled", ignoreCase = true)) BigDecimal.ONE else BigDecimal.ZERO,
+                    remaining = BigDecimal.ZERO,
+                    averageFillPrice = avgPrice,
+                    rejectionReason = rejectionReason,
+                    receivedAt = Instant.parse("2025-06-05T14:00:01Z"),
+                )
+            latest[orderId] = update
+            events.emit(update)
         }
     }
 }

@@ -52,6 +52,10 @@ class FlagPositionEntity(
     var closedAt: Instant? = null,
     @Column(name = "close_reason", columnDefinition = "TEXT")
     var closeReason: String? = null,
+    @Column(name = "close_order_id")
+    var closeOrderId: Int? = null,
+    @Column(name = "close_order_shares")
+    var closeOrderShares: Int? = null,
     @Column(name = "close_price_actual", precision = 10, scale = 4)
     var closePriceActual: BigDecimal? = null,
     @Column(name = "realized_pnl", precision = 10, scale = 2)

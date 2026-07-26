@@ -6,13 +6,11 @@ import cz.solvina.options.domain.features.flag.model.FlagPosition
 import cz.solvina.options.domain.features.flag.model.FlagStatus
 import cz.solvina.options.domain.features.flag.model.isTerminal
 import cz.solvina.options.domain.features.market.MarketDataPort
-import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.delay
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
-import java.math.RoundingMode
 import java.time.Clock
 import java.time.Instant
 import java.time.temporal.ChronoUnit
@@ -29,6 +27,7 @@ private const val CLOSE_POSITION_POLL_DELAY_MS = 300L
 class FlagManagementService(
     private val flagPort: FlagPort,
     private val bracketOrderPort: BracketOrderPort,
+    private val flagExecutionService: FlagExecutionService,
     private val flagTradingConfigPort: FlagTradingConfigPort,
     private val marketDataPort: MarketDataPort,
     private val positionsPort: PositionsPort,
@@ -183,8 +182,6 @@ class FlagManagementService(
         runCatching { bracketOrderPort.cancelOrder(position.profitTargetOrderId) }
             .onFailure { e -> logger.warn { "[${position.symbol}] PT cancel failed (may already be inactive): ${e.message}" } }
 
-        var closePriceActual: BigDecimal? = null
-        var realizedPnl: BigDecimal? = null
         var effectiveStatus = closeStatus
         var effectiveReason = reason
 
@@ -208,75 +205,34 @@ class FlagManagementService(
                             "selling the held quantity only"
                     }
                 }
-                // Await the sell's terminal state. A market SELL placed outside RTH is rejected by
-                // IBKR (error 399 → CANCELLED) and queued for the next open — i.e. NOTHING is sold
-                // now. Never fabricate a close (and a mark-price "win") for shares we still hold: that
-                // misreports P&L and, since the protective children were cancelled above, leaves the
-                // position naked. On any non-fill, re-arm protection and abort — the row stays OPEN.
-                val fill =
-                    runCatching { bracketOrderPort.submitMarketSell(position.symbol, sellQty) }
-                        .onFailure { e -> logger.error(e) { "[${position.symbol}] Market sell failed: ${e.message}" } }
+                val closeOrderId =
+                    runCatching { bracketOrderPort.reserveOrderId() }
+                        .onFailure { e -> logger.error(e) { "[${position.symbol}] Close order id reservation failed: ${e.message}" } }
                         .getOrNull()
-
-                if (fill?.status != OrderStatus.FILLED) {
-                    logger.error {
-                        "[${position.symbol}] Close ($reason) did NOT fill (status=${fill?.status ?: "submit_error"}) — " +
-                            "market likely closed (IBKR 399) or order rejected. Re-protecting the $sellQty still-held " +
-                            "shares and leaving the position OPEN; nothing sold, no realized P&L recorded."
+                        ?: return null
+                val closing =
+                    flagPort.update(
+                        position.copy(
+                            status = FlagStatus.CLOSING,
+                            closeReason = reason,
+                            closeOrderId = closeOrderId,
+                            closeOrderShares = sellQty,
+                        ),
+                    )
+                flagExecutionService.register(closing)
+                runCatching { bracketOrderPort.submitMarketSell(closeOrderId, position.symbol, sellQty) }
+                    .onFailure { e ->
+                        logger.error(e) {
+                            "[${position.symbol}] Market sell send uncertain for closeOrderId=$closeOrderId; " +
+                                "keeping CLOSING for TWS reconciliation: ${e.message}"
+                        }
                     }
-                    reprotectAfterAbortedClose(position, sellQty)
-                    return null
-                }
-
-                // Realized P&L from the ACTUAL broker fill, not a theoretical mark. Fall back to the
-                // live underlying only when the status callback carried no avg price.
-                closePriceActual =
-                    fill.avgPrice
-                        ?: runCatching { marketDataPort.getUnderlyingPrice(position.symbol).amount }.getOrNull()
-
-                val effectiveEntry = position.actualEntryPrice ?: position.entryPrice
-                if (closePriceActual != null) {
-                    realizedPnl =
-                        closePriceActual
-                            .subtract(effectiveEntry)
-                            .multiply(BigDecimal(sellQty))
-                            .setScale(2, RoundingMode.HALF_UP)
-                }
+                tradeLogger.info { "CLOSING ${position.symbol} reason=$reason closeOrder=$closeOrderId shares=$sellQty" }
+                return closing
             }
         }
 
-        val shares = BigDecimal(position.shares)
-        val effectiveEntry = position.actualEntryPrice ?: position.entryPrice
-        val mfe =
-            position.highestPriceSeen
-                ?.subtract(effectiveEntry)
-                ?.multiply(shares)
-                ?.setScale(2, RoundingMode.HALF_UP)
-        val mae =
-            position.lowestPriceSeen
-                ?.let { effectiveEntry.subtract(it) }
-                ?.multiply(shares)
-                ?.setScale(2, RoundingMode.HALF_UP)
-
         val closedAt = Instant.now(clock)
-        val rMultiple =
-            if (realizedPnl != null && position.riskAmount > BigDecimal.ZERO) {
-                realizedPnl.divide(position.riskAmount, 2, RoundingMode.HALF_UP)
-            } else {
-                null
-            }
-        val mfeR =
-            if (mfe != null && position.riskAmount > BigDecimal.ZERO) {
-                mfe.divide(position.riskAmount, 2, RoundingMode.HALF_UP)
-            } else {
-                null
-            }
-        val maeR =
-            if (mae != null && position.riskAmount > BigDecimal.ZERO) {
-                mae.divide(position.riskAmount, 2, RoundingMode.HALF_UP)
-            } else {
-                null
-            }
         val timeInTrade = ChronoUnit.SECONDS.between(position.openedAt, closedAt).toInt()
 
         val closed =
@@ -284,17 +240,10 @@ class FlagManagementService(
                 status = effectiveStatus,
                 closedAt = closedAt,
                 closeReason = effectiveReason,
-                closePriceActual = closePriceActual,
-                realizedPnl = realizedPnl,
-                maxFavorableExcursion = mfe,
-                maxAdverseExcursion = mae,
-                rMultiple = rMultiple,
-                mfeR = mfeR,
-                maeR = maeR,
                 timeInTradeSeconds = timeInTrade,
             )
         flagPort.update(closed)
-        tradeLogger.info { "${effectiveStatus.name} ${position.symbol} reason=$effectiveReason pnl=${realizedPnl ?: "n/a"} R=$rMultiple" }
+        tradeLogger.info { "${effectiveStatus.name} ${position.symbol} reason=$effectiveReason pnl=n/a R=n/a" }
         return closed
     }
 

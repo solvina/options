@@ -1,6 +1,5 @@
 package cz.solvina.options.adapters.inbound.lifecycle
 
-import com.ib.client.EClientSocket
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOpenOrdersAdapter
 import cz.solvina.options.adapters.outbound.ibkr.account.OpenOrder
 import cz.solvina.options.adapters.outbound.ibkr.order.OrderCancellationService
@@ -49,7 +48,6 @@ class StartupRecoveryService(
     private val bearCallPort: BearCallSpreadPort,
     private val orderRegistry: IbkrOrderRegistry,
     private val openOrdersAdapter: IbkrOpenOrdersAdapter,
-    private val client: EClientSocket,
     private val orderCancellationService: OrderCancellationService,
     private val positionsPort: PositionsPort,
     private val connectionStatusPort: ConnectionStatusPort,

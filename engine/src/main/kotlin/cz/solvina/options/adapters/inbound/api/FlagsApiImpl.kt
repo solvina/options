@@ -159,7 +159,7 @@ class FlagsApiImpl(
 
     private suspend fun FlagPosition.toDto(): FlagPositionDto {
         val livePrice =
-            if (status == FlagStatus.OPEN || status == FlagStatus.PENDING) {
+            if (status == FlagStatus.OPEN || status == FlagStatus.PENDING || status == FlagStatus.CLOSING) {
                 runCatching { marketDataPort.getUnderlyingPrice(symbol).amount }.getOrNull()
             } else {
                 null

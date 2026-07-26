@@ -7,6 +7,9 @@ enum class FlagStatus {
     /** Parent (entry) order filled — position is live. */
     OPEN,
 
+    /** Close order submitted — waiting for broker terminal status. */
+    CLOSING,
+
     /** Profit target child order filled. */
     CLOSED_PROFIT,
 

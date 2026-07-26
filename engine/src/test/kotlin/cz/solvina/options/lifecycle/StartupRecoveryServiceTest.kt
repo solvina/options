@@ -45,7 +45,6 @@ class StartupRecoveryServiceTest {
             bearCallPort = bearCallPort,
             orderRegistry = orderRegistry,
             openOrdersAdapter = openOrdersAdapter,
-            client = client,
             orderCancellationService = orderCancellationService,
             positionsPort = positionsPort,
             connectionStatusPort = mockk(relaxed = true),

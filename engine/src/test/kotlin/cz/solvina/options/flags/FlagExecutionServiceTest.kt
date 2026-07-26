@@ -12,11 +12,15 @@ import cz.solvina.options.domain.features.flag.OrderFill
 import cz.solvina.options.domain.features.flag.config.FlagTradingConfig
 import cz.solvina.options.domain.features.flag.model.FlagPosition
 import cz.solvina.options.domain.features.flag.model.FlagStatus
+import cz.solvina.options.domain.features.order.BrokerOrderUpdate
+import cz.solvina.options.domain.features.order.OrderLifecyclePort
 import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.Symbol
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import java.math.BigDecimal
@@ -146,7 +150,8 @@ class FlagExecutionServiceTest {
         val actualFill = BigDecimal("10.03")
         val flagPort = CapturingFlagPort()
         val bracketPort = ImmediateFillBracketPort(entryFillPrice = actualFill)
-        val service = buildService(flagPort = flagPort, bracketPort = bracketPort)
+        val lifecycle = TestOrderLifecyclePort()
+        val service = buildService(flagPort = flagPort, bracketPort = bracketPort, orderLifecyclePort = lifecycle)
 
         kotlinx.coroutines.runBlocking {
             service.execute(
@@ -155,6 +160,7 @@ class FlagExecutionServiceTest {
                     stopLossPrice = BigDecimal("9.00"),
                 ),
             )
+            lifecycle.emit(1, "Filled", avgPrice = actualFill)
         }
 
         Thread.sleep(500)
@@ -287,6 +293,10 @@ class FlagExecutionServiceTest {
             trailAmount: BigDecimal,
         ) = BracketOrderIds(entryOrderId = 41, stopLossOrderId = 42, profitTargetOrderId = 42)
 
+        override fun reserveBracketOrderIds() = BracketOrderIds(entryOrderId = 41, stopLossOrderId = 42, profitTargetOrderId = 42)
+
+        override fun reserveOrderId() = 150
+
         override suspend fun cancelOrder(orderId: Int) {}
 
         override suspend fun awaitParentFill(orderId: Int) = OrderFill(OrderStatus.FILLED)
@@ -310,9 +320,10 @@ class FlagExecutionServiceTest {
         ) = 98
 
         override suspend fun submitMarketSell(
+            orderId: Int,
             symbol: Symbol,
             shares: Int,
-        ) = OrderFill(OrderStatus.FILLED, BigDecimal("150.00"))
+        ) = orderId
     }
 
     // -------------------------------------------------------------------------
@@ -345,10 +356,12 @@ class FlagExecutionServiceTest {
     private fun buildService(
         flagPort: FlagPort = CapturingFlagPort(),
         bracketPort: BracketOrderPort = ImmediateFillBracketPort(),
+        orderLifecyclePort: OrderLifecyclePort = TestOrderLifecyclePort(),
         scope: kotlinx.coroutines.CoroutineScope = kotlinx.coroutines.GlobalScope,
         accountPort: AccountPort = stubAccountPort(),
     ) = FlagExecutionService(
         bracketOrderPort = bracketPort,
+        orderLifecyclePort = orderLifecyclePort,
         flagPort = flagPort,
         clock = fixedClock,
         scope = scope,
@@ -395,6 +408,10 @@ class FlagExecutionServiceTest {
             trailAmount: BigDecimal,
         ) = BracketOrderIds(entryOrderId = 1, stopLossOrderId = 2, profitTargetOrderId = 3)
 
+        override fun reserveBracketOrderIds() = BracketOrderIds(entryOrderId = 1, stopLossOrderId = 2, profitTargetOrderId = 3)
+
+        override fun reserveOrderId() = 150
+
         override suspend fun cancelOrder(orderId: Int) {}
 
         override suspend fun awaitParentFill(orderId: Int) = OrderFill(status = OrderStatus.FILLED, avgPrice = entryFillPrice)
@@ -417,8 +434,35 @@ class FlagExecutionServiceTest {
             kotlinx.coroutines.delay(Long.MAX_VALUE).let { OrderFill(OrderStatus.CANCELLED) }
 
         override suspend fun submitMarketSell(
+            orderId: Int,
             symbol: Symbol,
             shares: Int,
-        ) = OrderFill(OrderStatus.FILLED, BigDecimal("150.00"))
+        ) = orderId
+    }
+
+    private class TestOrderLifecyclePort : OrderLifecyclePort {
+        private val latest = mutableMapOf<Int, BrokerOrderUpdate>()
+        private val events = MutableSharedFlow<BrokerOrderUpdate>(extraBufferCapacity = 16)
+        override val updates = events.asSharedFlow()
+
+        override fun current(orderId: Int): BrokerOrderUpdate? = latest[orderId]
+
+        suspend fun emit(
+            orderId: Int,
+            status: String,
+            avgPrice: BigDecimal? = null,
+        ) {
+            val update =
+                BrokerOrderUpdate(
+                    orderId = orderId,
+                    status = status,
+                    filled = BigDecimal.ONE,
+                    remaining = BigDecimal.ZERO,
+                    averageFillPrice = avgPrice,
+                    receivedAt = Instant.parse("2025-06-05T14:00:01Z"),
+                )
+            latest[orderId] = update
+            events.emit(update)
+        }
     }
 }

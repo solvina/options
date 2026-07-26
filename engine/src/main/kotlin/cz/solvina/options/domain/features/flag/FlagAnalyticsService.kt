@@ -66,7 +66,7 @@ class FlagAnalyticsService(
     suspend fun compute(): Analytics {
         val all = flagPort.findAll()
         val closed = all.filter { it.status in closedStatuses && it.realizedPnl != null && it.closedAt != null }
-        val open = all.filter { it.status == FlagStatus.OPEN || it.status == FlagStatus.PENDING }
+        val open = all.filter { it.status == FlagStatus.OPEN || it.status == FlagStatus.PENDING || it.status == FlagStatus.CLOSING }
 
         val wins = closed.filter { it.realizedPnl != null && it.realizedPnl > BigDecimal.ZERO }
         val losses = closed.filter { it.realizedPnl != null && it.realizedPnl <= BigDecimal.ZERO }

@@ -1,11 +1,15 @@
 package cz.solvina.options.adapters.outbound.ibkr.registry
 
+import cz.solvina.options.domain.features.order.BrokerOrderUpdate
 import cz.solvina.options.domain.features.order.OrderStatus
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
 import java.math.RoundingMode
+import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 
 private val logger = KotlinLogging.logger {}
@@ -13,7 +17,7 @@ private val logger = KotlinLogging.logger {}
 private val TERMINAL_CANCEL_STATUSES = setOf("cancelled", "inactive", "apicancelled", "rejected")
 
 @Component
-class IbkrOrderRegistry{
+class IbkrOrderRegistry {
     internal val pendingOrderStatus = ConcurrentHashMap<Int, CompletableDeferred<OrderStatus>>()
     private val fillPrices = ConcurrentHashMap<Int, BigDecimal>()
     private val selfCancelledOrders = ConcurrentHashMap.newKeySet<Int>()
@@ -32,6 +36,11 @@ class IbkrOrderRegistry{
     // This is the authoritative, push-based "no longer working" signal — verification paths consult it
     // instead of polling reqAllOpenOrders, which is expensive (returns the whole book) and laggy.
     private val cancelledOrders = ConcurrentHashMap.newKeySet<Int>()
+    private val latestUpdates = ConcurrentHashMap<Int, BrokerOrderUpdate>()
+    private val _updates = MutableSharedFlow<BrokerOrderUpdate>(extraBufferCapacity = 1_024)
+    val updates = _updates.asSharedFlow()
+
+    fun current(orderId: Int): BrokerOrderUpdate? = latestUpdates[orderId]
 
     fun markSelfCancelled(orderId: Int) {
         selfCancelledOrders.add(orderId)
@@ -49,6 +58,17 @@ class IbkrOrderRegistry{
         // visible via isFilled/isCancelled/consumeFillPrice — that is what lets cancel paths tell
         // "cancelled" from "filled" without polling the broker's open-orders list.
         val lower = status.lowercase()
+        val update =
+            BrokerOrderUpdate(
+                orderId = orderId,
+                status = status,
+                filled = filled,
+                remaining = remaining,
+                averageFillPrice = avgFillPrice.takeIf { it > 0.0 }?.let { BigDecimal(it).setScale(4, RoundingMode.HALF_UP) },
+                receivedAt = Instant.now(),
+            )
+        latestUpdates[orderId] = update
+        _updates.tryEmit(update)
         if (lower == "filled") {
             filledOrders.add(orderId)
             if (avgFillPrice > 0.0) fillPrices[orderId] = BigDecimal(avgFillPrice).setScale(4, RoundingMode.HALF_UP)
@@ -121,6 +141,7 @@ class IbkrOrderRegistry{
             logger.warn { "Order $id queued for after-hours [code=399] — failing fast to avoid stale overnight fill" }
             rejectReasons[id] = "code=$code: $msg"
             cancelledOrders.add(id)
+            publishError(id, "Cancelled", "code=$code: $msg")
             pendingOrderStatus.remove(id)?.complete(OrderStatus.CANCELLED)
             return
         }
@@ -149,11 +170,33 @@ class IbkrOrderRegistry{
             // Self-cancel is our own reprice, not a broker rejection — don't surface it as a reason.
             if (!isSelfCancelled) rejectReasons[id] = "code=$code: $msg"
             cancelledOrders.add(id)
+            publishError(id, "Cancelled", if (isSelfCancelled) null else "code=$code: $msg")
             pendingOrderStatus.remove(id)?.complete(OrderStatus.CANCELLED)
             return
         }
         rejectReasons[id] = "code=$code: $msg"
+        publishError(id, "Rejected", "code=$code: $msg")
         pendingOrderStatus.remove(id)?.completeExceptionally(RuntimeException("IBKR error [code=$code]: $msg"))
+    }
+
+    private fun publishError(
+        orderId: Int,
+        status: String,
+        reason: String?,
+    ) {
+        val previous = latestUpdates[orderId]
+        val update =
+            BrokerOrderUpdate(
+                orderId = orderId,
+                status = status,
+                filled = previous?.filled ?: BigDecimal.ZERO,
+                remaining = previous?.remaining ?: BigDecimal.ZERO,
+                averageFillPrice = previous?.averageFillPrice,
+                rejectionReason = reason,
+                receivedAt = Instant.now(),
+            )
+        latestUpdates[orderId] = update
+        _updates.tryEmit(update)
     }
 
     fun cancelAllPending(cause: Exception) {

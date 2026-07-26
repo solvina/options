@@ -41,7 +41,7 @@ import kotlin.test.assertTrue
  */
 class LegByLegOrderStrategyTest {
     private val client: EClientSocket = mockk(relaxed = true)
-    private val ibkrOrderIdCounter: IbkrOrderIdCounter= mockk()
+    private val ibkrOrderIdCounter: IbkrOrderIdCounter = mockk()
     private val registry: IbkrOrderRegistry = mockk()
     private val contractCache: IbkrContractCache = mockk()
     private val connectionConfig = IbkrConnectionConfig(account = "")

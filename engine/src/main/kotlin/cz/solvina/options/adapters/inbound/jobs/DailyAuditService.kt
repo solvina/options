@@ -39,7 +39,7 @@ private val PENDING_ZOMBIE_AGE: Duration = Duration.ofHours(12)
  * through pages:
  *
  *  - pre-open (default 08:45 Prague, weekdays): connection, broker-vs-DB reconciliation
- *    (orphans + missing legs), PENDING zombies, flag positions without an armed fill watcher.
+ *    (orphans + missing legs) and PENDING zombies.
  *  - post-close (default 22:15 Prague, weekdays): today's opens/closes and realized P&L per
  *    strategy (same numbers as the Reports page), plus every close that must be treated as an
  *    incident — unknown P&L or an estimated (non-fill) price — and the same reconciliation checks.
@@ -94,27 +94,11 @@ class DailyAuditService(
         lines += "IBKR connected ✓"
 
         val openSpreads = spreadClosers.allOpen() + spreadClosers.allClosing()
-        val openFlags = flagPort.findOpen()
+        val openFlags = flagPort.findOpen() + flagPort.findByStatus(FlagStatus.CLOSING)
         lines += "Open: ${openSpreads.size} spread(s), ${openFlags.size} flag(s)"
 
         issues += reconciliationIssues()
         issues += pendingZombieIssues()
-
-        // Every PENDING/OPEN flag must have an armed fill watcher, or its exit fires unobserved.
-        // FlagRecoveryService re-arms these itself — the audit surfaces the gap if it hasn't.
-        val unwatched =
-            (flagPort.findByStatus(FlagStatus.PENDING) + openFlags).filter { row ->
-                val ids =
-                    when (row.status) {
-                        FlagStatus.PENDING -> setOf(row.entryOrderId, row.stopLossOrderId, row.profitTargetOrderId)
-                        else -> setOf(row.stopLossOrderId, row.profitTargetOrderId)
-                    }
-                ids.none { bracketOrderPort.hasActiveWatch(it) }
-            }
-        if (unwatched.isNotEmpty()) {
-            issues += "${unwatched.size} flag(s) without an armed fill watcher: " +
-                unwatched.joinToString(", ") { it.symbol.value }
-        }
 
         send("Pre-open audit", lines, issues)
     }

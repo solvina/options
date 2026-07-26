@@ -38,6 +38,8 @@ data class FlagPosition(
     val openedAt: Instant,
     val closedAt: Instant? = null,
     val closeReason: String? = null,
+    val closeOrderId: Int? = null,
+    val closeOrderShares: Int? = null,
     val closePriceActual: BigDecimal? = null,
     val realizedPnl: BigDecimal? = null,
     // ---- Trade journaling ----

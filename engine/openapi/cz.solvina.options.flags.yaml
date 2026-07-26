@@ -17,7 +17,16 @@ paths:
           required: false
           schema:
             type: string
-            enum: [PENDING, OPEN, CLOSED_PROFIT, CLOSED_STOP, CLOSED_EOD, CLOSED_MANUAL, ENTRY_TIMEOUT, CLOSED_EXTERNAL]
+            enum:
+              - PENDING
+              - OPEN
+              - CLOSING
+              - CLOSED_PROFIT
+              - CLOSED_STOP
+              - CLOSED_EOD
+              - CLOSED_MANUAL
+              - ENTRY_TIMEOUT
+              - CLOSED_EXTERNAL
         - name: page
           in: query
           required: false
@@ -211,7 +220,7 @@ components:
           type: string
         status:
           type: string
-          enum: [PENDING, OPEN, CLOSED_PROFIT, CLOSED_STOP, CLOSED_EOD, CLOSED_MANUAL, ENTRY_TIMEOUT, CLOSED_EXTERNAL]
+          enum: [PENDING, OPEN, CLOSING, CLOSED_PROFIT, CLOSED_STOP, CLOSED_EOD, CLOSED_MANUAL, ENTRY_TIMEOUT, CLOSED_EXTERNAL]
         entryOrderId:
           type: integer
         stopLossOrderId:

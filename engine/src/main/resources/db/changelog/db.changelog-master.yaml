@@ -53,3 +53,5 @@ databaseChangeLog:
       file: db/changelog/v31__next_earnings_date.yaml
   - include:
       file: db/changelog/v32__fresh_db_missing_tables.yaml
+  - include:
+      file: db/changelog/v33__flag_close_order_tracking.yaml

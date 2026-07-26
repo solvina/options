@@ -33,8 +33,8 @@ import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrAccountRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrContractRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrDividendTickRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrHistoricalDataRegistry
-import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderIdCounter
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderIdCounter
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.TickByTickBidAsk
 import cz.solvina.options.domain.features.market.MarketDataHealthTracker

@@ -31,35 +31,49 @@ interface BracketOrderPort {
      * Returns order IDs immediately. The single trailing protective order's id is returned as both
      * stopLossOrderId and profitTargetOrderId (so existing close logic cancels it).
      */
+    /** Reserves consecutive broker ids without sending anything to TWS. */
+    fun reserveBracketOrderIds(): BracketOrderIds = error("Broker order-id reservation is not implemented")
+
+    /** Reserves one broker id without sending anything to TWS. */
+    fun reserveOrderId(): Int = error("Broker order-id reservation is not implemented")
+
+    /** Sends a bracket whose ids have already been persisted by the caller. */
+    suspend fun submitBracketOrder(
+        ids: BracketOrderIds,
+        symbol: Symbol,
+        shares: Int,
+        entryPrice: BigDecimal,
+        stopLossPrice: BigDecimal,
+        trailAmount: BigDecimal,
+    ): BracketOrderIds = submitBracketOrder(symbol, shares, entryPrice, stopLossPrice, trailAmount)
+
+    /** Compatibility seam for backtests; live implementations override the id-aware overload. */
+    @Deprecated("Use reserveBracketOrderIds plus the id-aware submitBracketOrder")
     suspend fun submitBracketOrder(
         symbol: Symbol,
         shares: Int,
         entryPrice: BigDecimal,
         stopLossPrice: BigDecimal,
         trailAmount: BigDecimal,
-    ): BracketOrderIds
+    ): BracketOrderIds = error("Bracket submission is not implemented")
 
     /** Cancels the given order. Safe to call on already-cancelled orders (no-throw). */
     suspend fun cancelOrder(orderId: Int)
 
-    /** Suspends until the parent entry order reaches a terminal state. Returns fill status + actual avg price. */
-    suspend fun awaitParentFill(orderId: Int): OrderFill
+    @Deprecated("Order lifecycle is delivered through OrderLifecyclePort")
+    suspend fun awaitParentFill(orderId: Int): OrderFill = error("Use OrderLifecyclePort")
 
-    /** Suspends until a protective child order reaches a terminal state. Returns fill status + actual avg price. */
-    suspend fun awaitChildFill(orderId: Int): OrderFill
+    @Deprecated("Order lifecycle is delivered through OrderLifecyclePort")
+    suspend fun awaitChildFill(orderId: Int): OrderFill = error("Use OrderLifecyclePort")
 
-    /**
-     * Like [awaitParentFill] but for an entry order restored from persistence (placed by a previous
-     * engine run and confirmed still working at the broker): re-arms the fill watch first instead of
-     * expecting one registered at placement.
-     */
-    suspend fun rewatchParentFill(orderId: Int): OrderFill
+    @Deprecated("Order lifecycle is delivered through OrderLifecyclePort")
+    suspend fun rewatchParentFill(orderId: Int): OrderFill = awaitParentFill(orderId)
 
-    /** Like [awaitChildFill] but for a protective order restored from persistence — re-arms the watch first. */
-    suspend fun rewatchChildFill(orderId: Int): OrderFill
+    @Deprecated("Order lifecycle is delivered through OrderLifecyclePort")
+    suspend fun rewatchChildFill(orderId: Int): OrderFill = awaitChildFill(orderId)
 
-    /** True while a fill watcher is armed for [orderId]. Lets recovery skip positions already being watched. */
-    fun hasActiveWatch(orderId: Int): Boolean
+    @Deprecated("Order lifecycle is delivered through OrderLifecyclePort")
+    fun hasActiveWatch(orderId: Int): Boolean = false
 
     /**
      * Places a standalone GTC trailing-stop SELL to re-protect shares whose original protective
@@ -73,17 +87,21 @@ interface BracketOrderPort {
     ): Int
 
     /**
-     * Places an immediate market SELL for [shares] of [symbol] and suspends until it reaches a
-     * terminal state. Returns the fill status + broker avg price. Used for EOD liquidation and
-     * manual closes of OPEN positions.
-     *
-     * Callers MUST check the status: a market order placed outside regular trading hours is rejected
-     * by IBKR (error 399 → CANCELLED) and parked for the next open — nothing is sold now. Recording
-     * such a position as closed fabricates a realized P&L for shares still held and, because the
-     * protective children were cancelled first, leaves the position naked overnight.
+     * Places an immediate market SELL for [shares] of [symbol] using a broker id that the caller has
+     * already persisted. Returns immediately; terminal status and fill price must be consumed from
+     * OrderLifecyclePort.
      */
+    suspend fun submitMarketSell(
+        orderId: Int,
+        symbol: Symbol,
+        shares: Int,
+    ): Int
+
     suspend fun submitMarketSell(
         symbol: Symbol,
         shares: Int,
-    ): OrderFill
+    ): Int {
+        val orderId = reserveOrderId()
+        return submitMarketSell(orderId, symbol, shares)
+    }
 }

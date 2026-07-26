@@ -78,11 +78,13 @@ class FlagRecoveryService(
 
     suspend fun recover() =
         mutex.withLock {
-            val rows = flagPort.findByStatus(FlagStatus.PENDING) + flagPort.findByStatus(FlagStatus.OPEN)
-            val unwatched = rows.filter { row -> watchedIds(row).none { bracketOrderPort.hasActiveWatch(it) } }
+            val unwatched =
+                flagPort.findByStatus(FlagStatus.PENDING) +
+                    flagPort.findByStatus(FlagStatus.OPEN) +
+                    flagPort.findByStatus(FlagStatus.CLOSING)
             if (unwatched.isEmpty()) return@withLock
 
-            logger.info { "Flag recovery: ${unwatched.size} PENDING/OPEN row(s) without an armed fill watcher" }
+            logger.info { "Flag recovery: reconciling ${unwatched.size} PENDING/OPEN/CLOSING row(s)" }
             val openOrderIds =
                 runCatching { openOrdersAdapter.getOpenOrders() }
                     .onFailure { e -> logger.warn(e) { "Flag recovery: cannot fetch open orders — skipping this run" } }
@@ -98,11 +100,17 @@ class FlagRecoveryService(
             for (row in unwatched) {
                 val exitIds = setOf(row.stopLossOrderId, row.profitTargetOrderId)
                 when {
+                    row.status == FlagStatus.CLOSING && row.closeOrderId in openOrderIds -> {
+                        logger.info {
+                            "Flag recovery: [${row.symbol}] close order ${row.closeOrderId} still working — registering lifecycle tracking"
+                        }
+                        flagExecutionService.register(row)
+                    }
                     row.status == FlagStatus.PENDING && row.entryOrderId in openOrderIds -> {
                         logger.info {
-                            "Flag recovery: [${row.symbol}] entry order ${row.entryOrderId} still working — re-arming entry watch"
+                            "Flag recovery: [${row.symbol}] entry order ${row.entryOrderId} still working — registering lifecycle tracking"
                         }
-                        flagExecutionService.launchEntryWatch(row, rewatch = true)
+                        flagExecutionService.register(row)
                     }
                     exitIds.any { it in openOrderIds } -> {
                         // A protective child only activates once the parent fills — the entry filled.
@@ -116,8 +124,8 @@ class FlagRecoveryService(
                                 row
                             }
                         claimed.merge(row.symbol.value, row.shares, Int::plus)
-                        logger.info { "Flag recovery: [${row.symbol}] protective order still working — re-arming exit watch" }
-                        flagExecutionService.launchExitWatch(open, rewatch = true)
+                        logger.info { "Flag recovery: [${row.symbol}] protective order still working — registering lifecycle tracking" }
+                        flagExecutionService.register(open)
                     }
                     else -> noOrders += row
                 }
@@ -211,15 +219,8 @@ class FlagRecoveryService(
             "${row.shares} shares of ${row.symbol} were held without a working protective order (it vanished while the " +
                 "engine was not watching). A new trailing stop was placed (orderId=$newOrderId) and the position is managed again.",
         )
-        flagExecutionService.launchExitWatch(updated, rewatch = true)
+        flagExecutionService.register(updated)
     }
-
-    /** Order ids whose armed watcher marks this row as actively managed in-memory. */
-    private fun watchedIds(row: FlagPosition) =
-        when (row.status) {
-            FlagStatus.PENDING -> setOf(row.entryOrderId, row.stopLossOrderId, row.profitTargetOrderId)
-            else -> setOf(row.stopLossOrderId, row.profitTargetOrderId)
-        }
 
     /**
      * Broker position snapshot trustworthy enough to base a close/adopt decision on. An empty

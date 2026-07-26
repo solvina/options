@@ -3,6 +3,7 @@ package cz.solvina.options.adapters.outbound.ibkr.order
 import com.ib.client.EClientSocket
 import cz.solvina.options.adapters.outbound.ibkr.IbkrConnectionConfig
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderIdCounter
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import cz.solvina.options.domain.features.order.LegQuotes
 import cz.solvina.options.domain.models.Money
@@ -23,6 +24,7 @@ private val logger = KotlinLogging.logger {}
 @Component
 class ExchangeStrategyRouter(
     private val registry: IbkrOrderRegistry,
+    private val ibkrOrderIdCounter: IbkrOrderIdCounter,
     private val client: EClientSocket,
     private val contractCache: IbkrContractCache,
     private val connectionConfig: IbkrConnectionConfig,
@@ -31,10 +33,46 @@ class ExchangeStrategyRouter(
 
     init {
         // Register native combo strategies (US exchanges)
-        registerStrategy(NativeComboOrderStrategy("CBOE", registry, client, contractCache, connectionConfig))
-        registerStrategy(NativeComboOrderStrategy("ISE", registry, client, contractCache, connectionConfig))
-        registerStrategy(NativeComboOrderStrategy("AMEX", registry, client, contractCache, connectionConfig))
-        registerStrategy(NativeComboOrderStrategy("SMART", registry, client, contractCache, connectionConfig)) // SMART routes to best
+        registerStrategy(
+            NativeComboOrderStrategy(
+                "CBOE",
+                registry,
+                ibkrOrderIdCounter,
+                client,
+                contractCache,
+                connectionConfig,
+            ),
+        )
+        registerStrategy(
+            NativeComboOrderStrategy(
+                "ISE",
+                registry,
+                ibkrOrderIdCounter,
+                client,
+                contractCache,
+                connectionConfig,
+            ),
+        )
+        registerStrategy(
+            NativeComboOrderStrategy(
+                "AMEX",
+                registry,
+                ibkrOrderIdCounter,
+                client,
+                contractCache,
+                connectionConfig,
+            ),
+        )
+        registerStrategy(
+            NativeComboOrderStrategy(
+                "SMART",
+                registry,
+                ibkrOrderIdCounter,
+                client,
+                contractCache,
+                connectionConfig,
+            ),
+        ) // SMART routes to best
 
         // Register leg-by-leg strategies (EU exchanges without native combo support)
         for (eu in listOf("DTB", "EUREX", "FTA", "EBS")) {
@@ -42,6 +80,7 @@ class ExchangeStrategyRouter(
                 LegByLegOrderStrategy(
                     exchangeId = eu,
                     registry = registry,
+                    ibkrOrderIdCounter = ibkrOrderIdCounter,
                     client = client,
                     contractCache = contractCache,
                     connectionConfig = connectionConfig,
