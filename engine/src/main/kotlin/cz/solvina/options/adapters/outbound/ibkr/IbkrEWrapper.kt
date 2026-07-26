@@ -30,10 +30,12 @@ import com.ib.client.TickType
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOrdersRegistry
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrPositionsRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrAccountRegistry
-import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrContractRegistry
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrContractDetailsRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrDividendTickRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrHistoricalDataRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketRuleRegistry
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOptionParamsRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderIdCounter
 import cz.solvina.options.adapters.outbound.ibkr.registry.TickByTickBidAsk
 import cz.solvina.options.domain.features.market.MarketDataHealthTracker
@@ -98,7 +100,9 @@ private fun optFieldName(field: Int) =
 @Component
 class IbkrEWrapper(
     private val historicalRegistry: IbkrHistoricalDataRegistry,
-    private val contractRegistry: IbkrContractRegistry,
+    private val contractDetailsRegistry: IbkrContractDetailsRegistry,
+    private val optionParamsRegistry: IbkrOptionParamsRegistry,
+    private val marketRuleRegistry: IbkrMarketRuleRegistry,
     private val marketDataRegistry: IbkrMarketDataRegistry,
     private val orderRegistry: IbkrOrdersRegistry,
     private val ibkrOrderIdCounter: IbkrOrderIdCounter,
@@ -357,7 +361,7 @@ class IbkrEWrapper(
                 "orderTypes" to contractDetails.orderTypes(),
             )
         }
-        contractRegistry.onContractDetails(reqId, contractDetails)
+        contractDetailsRegistry.onContractDetails(reqId, contractDetails)
     }
 
     override fun bondContractDetails(
@@ -369,7 +373,7 @@ class IbkrEWrapper(
 
     override fun contractDetailsEnd(reqId: Int) {
         logger.debug { "contractDetailsEnd: reqId=$reqId" }
-        contractRegistry.onContractDetailsEnd(reqId)
+        contractDetailsRegistry.onContractDetailsEnd(reqId)
     }
 
     override fun execDetails(
@@ -656,7 +660,8 @@ class IbkrEWrapper(
             logger.error { "IBKR error [id=$id, code=$errorCode]: $errorMsg" }
             if (id > 0) {
                 historicalRegistry.onError(id, errorCode, errorMsg)
-                contractRegistry.onError(id, errorCode, errorMsg)
+                contractDetailsRegistry.onError(id, errorCode, errorMsg)
+                optionParamsRegistry.onError(id, errorCode, errorMsg)
                 marketDataRegistry.onError(id, errorCode, errorMsg)
                 orderRegistry.onError(id, errorCode, errorMsg)
                 dividendTickRegistry.onError(id, errorCode, errorMsg)
@@ -668,7 +673,9 @@ class IbkrEWrapper(
         logger.warn { "IBKR connection closed" }
         val cause = RuntimeException("IBKR disconnected")
         historicalRegistry.cancelAllPending(cause)
-        contractRegistry.cancelAllPending(cause)
+        contractDetailsRegistry.cancelAllPending(cause)
+        optionParamsRegistry.cancelAllPending(cause)
+        marketRuleRegistry.cancelAllPending(cause)
         marketDataRegistry.cancelAllPending(cause)
         accountRegistry.onDisconnect()
     }
@@ -730,12 +737,12 @@ class IbkrEWrapper(
                 "strikes" to strikes.sorted(),
             )
         }
-        contractRegistry.onSecurityDefinitionOptionalParameter(reqId, exchange, tradingClass, multiplier, expirations, strikes)
+        optionParamsRegistry.onSecurityDefinitionOptionalParameter(reqId, exchange, tradingClass, multiplier, expirations, strikes)
     }
 
     override fun securityDefinitionOptionalParameterEnd(reqId: Int) {
         logger.debug { "securityDefinitionOptionalParameterEnd: reqId=$reqId" }
-        contractRegistry.onSecurityDefinitionOptionalParameterEnd(reqId)
+        optionParamsRegistry.onSecurityDefinitionOptionalParameterEnd(reqId)
     }
 
     override fun softDollarTiers(
@@ -867,7 +874,7 @@ class IbkrEWrapper(
         priceIncrements: Array<out PriceIncrement>,
     ) {
         logger.debug { "marketRule: marketRuleId=$marketRuleId increments=${priceIncrements.size}" }
-        contractRegistry.onMarketRule(marketRuleId, priceIncrements.toList())
+        marketRuleRegistry.onMarketRule(marketRuleId, priceIncrements.toList())
     }
 
     override fun pnl(

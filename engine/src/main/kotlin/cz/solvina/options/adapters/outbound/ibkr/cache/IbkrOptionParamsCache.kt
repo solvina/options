@@ -1,31 +1,34 @@
 package cz.solvina.options.adapters.outbound.ibkr.cache
 
 import com.ib.client.EClientSocket
-import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrContractRegistry
-import cz.solvina.options.adapters.outbound.ibkr.registry.PendingOptionParamsRequest
+import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOptionParamsRegistry
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderIdCounter
 import cz.solvina.options.domain.features.scanner.ScannerConfig
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
-import kotlinx.coroutines.CompletableDeferred
 import org.springframework.boot.context.event.ApplicationReadyEvent
 import org.springframework.context.event.EventListener
 import org.springframework.stereotype.Component
 import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.time.Duration.Companion.seconds
 
 private val logger = KotlinLogging.logger {}
 
 @Component
 class IbkrOptionParamsCache(
-    private val registry: IbkrContractRegistry,
+    private val idCounter: IbkrOrderIdCounter,
+    private val registry: IbkrOptionParamsRegistry,
     private val client: EClientSocket,
     private val contractCache: IbkrContractCache,
-    private val contractFactory: cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory,
+    private val contractFactory: IbkrContractFactory,
     private val scannerConfig: ScannerConfig,
     private val store: OptionParamsStorePort,
 ) {
     private val cache = ConcurrentHashMap<Symbol, OptionParams>()
+    private val optionParamsReqIds = ConcurrentHashMap<Symbol, Int>()
 
     /** Warm the in-memory cache from the persistent store so a restart near the open does not
      *  re-issue reqSecDefOptParams for every symbol. Mirrors the IV-rank warm-load. */
@@ -50,17 +53,25 @@ class IbkrOptionParamsCache(
 
         val configuredExchange = contractFactory.defFor(symbol).optionExchange
 
-        val reqId = registry.nextReqId()
-        val deferred = CompletableDeferred<OptionParams>()
-        registry.pendingOptionParams[reqId] =
-            PendingOptionParamsRequest(
-                deferred = deferred,
-                exchange = configuredExchange,
-            )
+        val reqId =
+            optionParamsReqIds[symbol]
+                ?: run {
+                    val newReqId = idCounter.nextOrderId()
+                    val existing = optionParamsReqIds.putIfAbsent(symbol, newReqId)
+                    existing ?: newReqId.also {
+                        registry.startRequest(it, symbol.value, configuredExchange)
+                        client.reqSecDefOptParams(it, symbol.value, "", "STK", underlyingConId)
+                    }
+                }
 
-        client.reqSecDefOptParams(reqId, symbol.value, "", "STK", underlyingConId)
-
-        val params = deferred.await()
+        val params =
+            runCatching { registry.awaitEnd(reqId, 30.seconds) }
+                .getOrElse { e ->
+                    if (e !is kotlinx.coroutines.TimeoutCancellationException && e !is kotlinx.coroutines.CancellationException) {
+                        optionParamsReqIds.remove(symbol, reqId)
+                    }
+                    throw e
+                }
         cache[symbol] = params
         if (params.expirations.isNotEmpty()) {
             runCatching { store.save(symbol, params) }

@@ -3,9 +3,11 @@ package cz.solvina.options.adapters.inbound.lifecycle
 import com.ib.client.EClientSocket
 import cz.solvina.options.adapters.outbound.ibkr.IbkrConnectionConfig
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrAccountAdapter
-import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrContractRegistry
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrContractDetailsRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrHistoricalDataRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketRuleRegistry
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOptionParamsRegistry
 import cz.solvina.options.domain.features.connection.ConnectionPort
 import io.github.oshai.kotlinlogging.KotlinLogging
 import jakarta.annotation.PreDestroy
@@ -24,7 +26,9 @@ class IbkrLifecycleAdapter(
     private val connectionPort: ConnectionPort,
     private val accountAdapter: IbkrAccountAdapter,
     private val historicalRegistry: IbkrHistoricalDataRegistry,
-    private val contractRegistry: IbkrContractRegistry,
+    private val contractDetailsRegistry: IbkrContractDetailsRegistry,
+    private val optionParamsRegistry: IbkrOptionParamsRegistry,
+    private val marketRuleRegistry: IbkrMarketRuleRegistry,
     private val marketDataRegistry: IbkrMarketDataRegistry,
     private val recoveryService: StartupRecoveryService,
     private val flagRecoveryService: FlagRecoveryService,
@@ -68,7 +72,9 @@ class IbkrLifecycleAdapter(
         logger.info { "Disconnecting from IBKR..." }
         val cause = RuntimeException("Application shutting down")
         historicalRegistry.cancelAllPending(cause)
-        contractRegistry.cancelAllPending(cause)
+        contractDetailsRegistry.cancelAllPending(cause)
+        optionParamsRegistry.cancelAllPending(cause)
+        marketRuleRegistry.cancelAllPending(cause)
         marketDataRegistry.cancelAllPending(cause)
         accountAdapter.onDisconnect()
         connectionPort.disconnect()

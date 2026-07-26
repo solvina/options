@@ -6,7 +6,9 @@ import com.ib.client.EClientSocket
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.IbkrInstrumentsConfig
 import cz.solvina.options.adapters.outbound.ibkr.InstrumentDef
-import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrContractRegistry
+import cz.solvina.options.adapters.outbound.ibkr.registry.ContractRequestStatus
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrContractDetailsRegistry
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketRuleRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderIdCounter
 import cz.solvina.options.domain.models.OptionType
 import cz.solvina.options.domain.models.Symbol
@@ -26,7 +28,8 @@ import kotlin.test.assertTrue
 
 class IbkrContractCacheInFlightTest {
     private val idCounter: IbkrOrderIdCounter = mockk(relaxed = true)
-    private val registry: IbkrContractRegistry = IbkrContractRegistry(idCounter)
+    private val contractDetailsRegistry = IbkrContractDetailsRegistry()
+    private val marketRuleRegistry = IbkrMarketRuleRegistry()
     private val client: EClientSocket = mockk(relaxed = true)
     private val instrumentsConfig =
         IbkrInstrumentsConfig(
@@ -38,7 +41,9 @@ class IbkrContractCacheInFlightTest {
 
     private val cache =
         IbkrContractCache(
-            registry = registry,
+            idCounter = idCounter,
+            contractDetailsRegistry = contractDetailsRegistry,
+            marketRuleRegistry = marketRuleRegistry,
             client = client,
             contractFactory = contractFactory,
             tradingHoursCache =
@@ -64,7 +69,6 @@ class IbkrContractCacheInFlightTest {
             // Simulate IBKR responding to the first reqContractDetails
             every { client.reqContractDetails(any(), any()) } answers {
                 val reqId = firstArg<Int>()
-                val pending = registry.pendingContractDetails[reqId] ?: return@answers
                 val contractDetails = mockk<ContractDetails>()
                 val contract = mockk<Contract>()
                 every { contract.strike() } returns 1360.0
@@ -72,8 +76,8 @@ class IbkrContractCacheInFlightTest {
                 every { contract.tradingClass() } returns "OES"
                 every { contract.conid() } returns 999_001
                 every { contractDetails.contract() } returns contract
-                pending.details.add(contractDetails)
-                pending.deferred.complete(pending.details.toList())
+                contractDetailsRegistry.onContractDetails(reqId, contractDetails)
+                contractDetailsRegistry.onContractDetailsEnd(reqId)
             }
 
             // Launch two coroutines requesting the same key simultaneously
@@ -96,7 +100,6 @@ class IbkrContractCacheInFlightTest {
 
             every { client.reqContractDetails(any(), any()) } answers {
                 val reqId = firstArg<Int>()
-                val pending = registry.pendingContractDetails[reqId] ?: return@answers
                 val contractDetails = mockk<ContractDetails>()
                 val contract = mockk<Contract>()
                 every { contract.strike() } returns 1360.0
@@ -104,8 +107,8 @@ class IbkrContractCacheInFlightTest {
                 every { contract.tradingClass() } returns "OES"
                 every { contract.conid() } returns 888_001
                 every { contractDetails.contract() } returns contract
-                pending.details.add(contractDetails)
-                pending.deferred.complete(pending.details.toList())
+                contractDetailsRegistry.onContractDetails(reqId, contractDetails)
+                contractDetailsRegistry.onContractDetailsEnd(reqId)
             }
 
             // First fetch populates cache
@@ -135,7 +138,6 @@ class IbkrContractCacheInFlightTest {
             // deferred — otherwise this call would await it forever. It must re-fetch and succeed.
             every { client.reqContractDetails(any(), any()) } answers {
                 val reqId = firstArg<Int>()
-                val pending = registry.pendingContractDetails[reqId] ?: return@answers
                 val contractDetails = mockk<ContractDetails>()
                 val contract = mockk<Contract>()
                 every { contract.strike() } returns 1360.0
@@ -143,8 +145,8 @@ class IbkrContractCacheInFlightTest {
                 every { contract.tradingClass() } returns "OES"
                 every { contract.conid() } returns 777_001
                 every { contractDetails.contract() } returns contract
-                pending.details.add(contractDetails)
-                pending.deferred.complete(pending.details.toList())
+                contractDetailsRegistry.onContractDetails(reqId, contractDetails)
+                contractDetailsRegistry.onContractDetailsEnd(reqId)
             }
 
             val conId = cache.getOrFetchOptionConId(key)
@@ -152,17 +154,17 @@ class IbkrContractCacheInFlightTest {
         }
 
     @Test
-    fun `own 5s timeout (no IBKR response) marks the reqId timed-out and fails`() =
+    fun `own 5s timeout stops waiting but leaves registry request active`() =
         runTest {
             every { optionParamsCache.getCached(symbol) } returns null
             // client.reqContractDetails is a relaxed mock → IBKR never responds, deferred never completes.
-            // The lookup's OWN withTimeoutOrNull(5s) must elapse and run the teardown path.
+            // The lookup's OWN registry await timeout must elapse without deleting the TWS-owned request state.
             val result = runCatching { cache.getOrFetchOptionConId(key) }
 
             assertTrue(result.isFailure, "a genuine 5s timeout must fail the lookup")
             assertTrue(
-                registry.timedOutReqIds.isNotEmpty(),
-                "its own 5s timeout must record the reqId as timed-out so late responses are discarded",
+                contractDetailsRegistry.current(0)?.status == ContractRequestStatus.ACTIVE,
+                "its own 5s timeout must leave registry state active so late responses can still be stored",
             )
         }
 
@@ -173,14 +175,14 @@ class IbkrContractCacheInFlightTest {
 
             // An aggressive caller-side wait cancels the lookup before IBKR responds. This external
             // cancellation must NOT be mislabeled as our own "5s timeout — IBKR not responding" and
-            // must NOT add the reqId to timedOutReqIds (which would discard IBKR's slightly-late
+            // must NOT tombstone or remove the reqId (which would discard IBKR's slightly-late
             // response and leave the conId permanently unresolved — the original no-fills root cause).
             val result = runCatching { withTimeout(50) { cache.getOrFetchOptionConId(key) } }
 
             assertTrue(result.isFailure, "the external wait should cancel the lookup")
             assertTrue(
-                registry.timedOutReqIds.isEmpty(),
-                "an external cancellation must not poison the reqId as a 5s timeout",
+                contractDetailsRegistry.current(0)?.status == ContractRequestStatus.ACTIVE,
+                "an external cancellation must not poison or remove the reqId",
             )
         }
 }

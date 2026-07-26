@@ -1,19 +1,23 @@
 package cz.solvina.options.adapters.outbound.ibkr.cache
 
+import com.ib.client.Contract
+import com.ib.client.ContractDetails
 import com.ib.client.EClientSocket
 import com.ib.client.PriceIncrement
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
-import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrContractRegistry
-import cz.solvina.options.adapters.outbound.ibkr.registry.PendingContractRequest
+import cz.solvina.options.adapters.outbound.ibkr.TradingHoursCache
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrContractDetailsRegistry
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketRuleRegistry
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderIdCounter
 import cz.solvina.options.domain.models.OptionType
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.job
-import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.context.annotation.Lazy
@@ -26,22 +30,26 @@ import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.TreeSet
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.math.abs
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration as KotlinDuration
 
 private val logger = KotlinLogging.logger {}
 
 @Component
 class IbkrContractCache(
-    private val registry: IbkrContractRegistry,
+    private val idCounter: IbkrOrderIdCounter,
+    private val contractDetailsRegistry: IbkrContractDetailsRegistry,
+    private val marketRuleRegistry: IbkrMarketRuleRegistry,
     private val client: EClientSocket,
     private val contractFactory: IbkrContractFactory,
-    private val tradingHoursCache: cz.solvina.options.adapters.outbound.ibkr.TradingHoursCache,
+    private val tradingHoursCache: TradingHoursCache,
 ) {
     @Lazy @Autowired
     private lateinit var optionParamsCache: IbkrOptionParamsCache
     private val underlyingConIds = ConcurrentHashMap<Symbol, Int>()
+    private val inFlightUnderlyingConIds = ConcurrentHashMap<Symbol, Deferred<Int>>()
+    private val underlyingContractReqIds = ConcurrentHashMap<Symbol, Int>()
 
     // Tick metadata for the underlying stock, captured from its ContractDetails. minTick is the
     // finest increment; marketRuleIds (CSV) lets us resolve the price-banded tick (MiFID II).
@@ -52,6 +60,7 @@ class IbkrContractCache(
 
     private val stockTickMeta = ConcurrentHashMap<Symbol, StockTickMeta>()
     private val optionConIds = ConcurrentHashMap<OptionContractKey, Int>()
+    private val optionContractReqIds = ConcurrentHashMap<OptionContractKey, Int>()
 
     // The exchange of the series each cached conId belongs to — market-data requests must route with
     // the venue the contract actually lists on. For EU options the configured/params exchange can
@@ -76,6 +85,8 @@ class IbkrContractCache(
     )
 
     private val verifiedStrikes = ConcurrentHashMap<VerifiedKey, TreeSet<BigDecimal>>()
+    private val verifiedStrikesReqIds = ConcurrentHashMap<VerifiedKey, Int>()
+    private val inFlightVerifiedStrikes = ConcurrentHashMap<VerifiedKey, Deferred<Set<BigDecimal>?>>()
 
     // Cooldown after a verified-strikes lookup times out (IBKR degraded / competing-session denial).
     // Without this the scanner re-issues a full-chain reqContractDetails for the same key every cycle;
@@ -88,20 +99,38 @@ class IbkrContractCache(
         underlyingConIds[symbol]?.let { return it }
 
         logger.debug { "[$symbol] Fetching underlying conId" }
-        val details = fetchStockContractDetails(symbol)
-
-        val conId =
-            details.firstOrNull()?.contract()?.conid()
-                ?: error("No stock contract found for $symbol")
-
-        details.firstOrNull()?.let { cd ->
-            stockTickMeta[symbol] = StockTickMeta(minTick = cd.minTick(), marketRuleIds = cd.marketRuleIds() ?: "")
-            tradingHoursCache.update(symbol, cd.liquidHours())
+        val resultDeferred = CompletableDeferred<Int>()
+        inFlightUnderlyingConIds.putIfAbsent(symbol, resultDeferred)?.let { return it.await() }
+        currentCoroutineContext().job.invokeOnCompletion { cause ->
+            if (cause != null) {
+                inFlightUnderlyingConIds.remove(symbol, resultDeferred)
+                resultDeferred.completeExceptionally(
+                    IllegalStateException("Underlying conId fetch for $symbol was cancelled before completion"),
+                )
+            }
         }
 
-        underlyingConIds[symbol] = conId
-        logger.debug { "[$symbol] Underlying conId = $conId" }
-        return conId
+        return runCatching {
+            val details = fetchStockContractDetails(symbol)
+            val conId =
+                details.firstOrNull()?.contract()?.conid()
+                    ?: error("No stock contract found for $symbol")
+
+            details.firstOrNull()?.let { cd ->
+                stockTickMeta[symbol] = StockTickMeta(minTick = cd.minTick(), marketRuleIds = cd.marketRuleIds() ?: "")
+                tradingHoursCache.update(symbol, cd.liquidHours())
+            }
+
+            underlyingConIds[symbol] = conId
+            inFlightUnderlyingConIds.remove(symbol)
+            resultDeferred.complete(conId)
+            logger.debug { "[$symbol] Underlying conId = $conId" }
+            conId
+        }.getOrElse { e ->
+            inFlightUnderlyingConIds.remove(symbol, resultDeferred)
+            resultDeferred.completeExceptionally(e)
+            throw e
+        }
     }
 
     /**
@@ -116,25 +145,28 @@ class IbkrContractCache(
             .onFailure { e -> logger.debug { "[$symbol] trading-hours warm failed: ${e.message}" } }
             .isSuccess
 
-    private suspend fun fetchStockContractDetails(symbol: Symbol): List<com.ib.client.ContractDetails> {
-        val reqId = registry.nextReqId()
-        val deferred = CompletableDeferred<List<com.ib.client.ContractDetails>>()
-        registry.pendingContractDetails[reqId] = PendingContractRequest(deferred, CopyOnWriteArrayList())
+    private suspend fun fetchStockContractDetails(symbol: Symbol): List<ContractDetails> {
+        underlyingContractReqIds[symbol]?.let { reqId ->
+            awaitContractDetailsOrTimeout(reqId, 5000L.milliseconds) {
+                underlyingContractReqIds.remove(symbol, reqId)
+            }?.let { return it }
+        }
+
+        val reqId = idCounter.nextOrderId()
+        underlyingContractReqIds[symbol] = reqId
+        contractDetailsRegistry.startRequest(reqId, "underlying conId ${symbol.value}")
 
         // TWS_LIMITS: reqContractDetails holds NO market-data line — one-shot request/response that
-        // self-retires on contractDetailsEnd (→ deferred completes) or the 5s timeout. Costs only
-        // message rate + IBKR's contract-details pacing (~one at a time per underlying).
+        // completes in the registry on contractDetailsEnd. Caller timeouts stop waiting only; they do
+        // not delete registry state because TWS may still answer and warm a later lookup.
         client.reqContractDetails(reqId, contractFactory.stockContract(symbol))
-        return try {
-            withTimeout(5000L.milliseconds) {
-                deferred.await()
-            }
-        } catch (_: TimeoutCancellationException) {
-            registry.pendingContractDetails.remove(reqId)
-            registry.timedOutReqIds.add(reqId)
-            logger.error { "[$symbol] Contract lookup timeout (5s) — IBKR not responding" }
-            error("Contract lookup timeout for $symbol after 5s")
+        return awaitContractDetailsOrTimeout(reqId, 5000L.milliseconds) {
+            underlyingContractReqIds.remove(symbol, reqId)
         }
+            ?: run {
+                logger.error { "[$symbol] Contract lookup timeout (5s) — IBKR not responding" }
+                error("Contract lookup timeout for $symbol after 5s")
+            }
     }
 
     /**
@@ -187,10 +219,11 @@ class IbkrContractCache(
     }
 
     private suspend fun getOrFetchMarketRule(marketRuleId: Int): List<PriceIncrement>? {
-        registry.cachedMarketRule(marketRuleId)?.let { return it }
-        val deferred = registry.registerMarketRule(marketRuleId)
-        client.reqMarketRule(marketRuleId)
-        return withTimeoutOrNull(3_000L.milliseconds) { deferred.await() }
+        marketRuleRegistry.cached(marketRuleId)?.let { return it }
+        if (marketRuleRegistry.startRequest(marketRuleId)) {
+            client.reqMarketRule(marketRuleId)
+        }
+        return withTimeoutOrNull(3_000L.milliseconds) { marketRuleRegistry.await(marketRuleId, 3_000L.milliseconds) }
     }
 
     suspend fun getOrFetchOptionConId(key: OptionContractKey): Int {
@@ -218,19 +251,24 @@ class IbkrContractCache(
             }
         }
 
-        val reqId = registry.nextReqId()
-        val deferred = CompletableDeferred<List<com.ib.client.ContractDetails>>()
-        registry.pendingContractDetails[reqId] = PendingContractRequest(deferred, CopyOnWriteArrayList())
+        optionContractReqIds[key]?.let { reqId ->
+            awaitContractDetailsOrTimeout(reqId, 5000L.milliseconds) {
+                optionContractReqIds.remove(key, reqId)
+            }?.let { details ->
+                return completeOptionConIdLookup(key, resultDeferred, details)
+            }
+        }
 
-        val cachedParams = optionParamsCache.getCached(key.symbol)
-        val cachedExchange = cachedParams?.exchange
-        val cachedTradingClass = cachedParams?.tradingClass
+        val reqId = idCounter.nextOrderId()
+        optionContractReqIds[key] = reqId
+        contractDetailsRegistry.startRequest(reqId, "option conId $key")
+
         val def = contractFactory.defFor(key.symbol)
         // Minimal search: symbol+secType+currency+expiry+right only — no exchange, no tradingClass, no strike.
         // Adding tradingClass or exchange causes error 200 "not found" for both EU (EUREX) and US options.
         // Filter by strike in the response instead.
         val searchContract =
-            com.ib.client.Contract().apply {
+            Contract().apply {
                 symbol(key.symbol.value)
                 secType("OPT")
                 currency(def.currency)
@@ -255,15 +293,14 @@ class IbkrContractCache(
         // Serialised via the rate limiter: IBKR paces concurrent contract-details for the same
         // underlying (~5s), so one lookup fires at a time.
 
-        // TWS_LIMITS: one-shot request/response, no standing line. Self-retires on contractDetailsEnd
-        // or the 5s timeout. Serialised by the rate limiter (~one per underlying at a time) because
-        // IBKR paces concurrent contract-details lookups.
+        // TWS_LIMITS: one-shot request/response, no standing line. Registry state is terminal on
+        // contractDetailsEnd/error/disconnect and remains visible after caller timeout.
         client.reqContractDetails(reqId, searchContract)
-        val details: List<com.ib.client.ContractDetails> =
-            withTimeoutOrNull(5000L.milliseconds) { deferred.await() }
+        val details: List<ContractDetails> =
+            awaitContractDetailsOrTimeout(reqId, 5000L.milliseconds) {
+                optionContractReqIds.remove(key, reqId)
+            }
                 ?: run {
-                    registry.pendingContractDetails.remove(reqId)
-                    registry.timedOutReqIds.add(reqId)
                     val msg = "Option contract lookup timeout for $key after 5s"
                     logger.error { "[$key] Option contract lookup timeout (5s) — IBKR not responding" }
                     inFlightOptionConIds.remove(key)
@@ -271,6 +308,133 @@ class IbkrContractCache(
                     error(msg)
                 }
         logger.debug { "[$key] reqContractDetails returned ${details.size} contracts" }
+
+        return completeOptionConIdLookup(key, resultDeferred, details)
+    }
+
+    /**
+     * Proactively resolve the authoritative (verified) strike set for an expiry+right with ONE
+     * reqContractDetails, caching both the strike set AND every strike's conId. Called during the
+     * scan so candidate selection only ever sees real, tradeable strikes (no phantoms), and so
+     * execution finds the conId already cached (no per-entry contract-details storm / ambiguous
+     * minimal-spec fallback that yields IBKR error 200 → no tick → no fill). Returns null if the
+     * lookup fails/times out — the caller should skip the symbol for this cycle.
+     */
+    suspend fun getOrFetchVerifiedStrikes(
+        symbol: Symbol,
+        expiry: LocalDate,
+        optionType: OptionType,
+    ): Set<BigDecimal>? {
+        verifiedStrikes[VerifiedKey(symbol, expiry, optionType)]?.let { return it }
+        evictExpired()
+
+        val vkey = VerifiedKey(symbol, expiry, optionType)
+        verifiedStrikesCooldown[vkey]?.let { failedAt ->
+            if (Duration.between(failedAt, Instant.now()) < verifiedStrikesCooldownTtl) return null
+            verifiedStrikesCooldown.remove(vkey)
+        }
+
+        val resultDeferred = CompletableDeferred<Set<BigDecimal>?>()
+        inFlightVerifiedStrikes.putIfAbsent(vkey, resultDeferred)?.let { return it.await() }
+        currentCoroutineContext().job.invokeOnCompletion { cause ->
+            if (cause != null) {
+                inFlightVerifiedStrikes.remove(vkey, resultDeferred)
+                resultDeferred.completeExceptionally(
+                    IllegalStateException("Verified-strikes fetch for $vkey was cancelled before completion"),
+                )
+            }
+        }
+
+        verifiedStrikesReqIds[vkey]?.let { reqId ->
+            awaitContractDetailsOrTimeout(reqId, 30000L.milliseconds) {
+                verifiedStrikesReqIds.remove(vkey, reqId)
+            }?.let { details ->
+                return completeVerifiedStrikesLookup(vkey, resultDeferred, symbol, expiry, optionType, details)
+            }
+        }
+
+        val reqId = idCounter.nextOrderId()
+        verifiedStrikesReqIds[vkey] = reqId
+        contractDetailsRegistry.startRequest(reqId, "verified strikes $symbol $expiry $optionType")
+
+        val def = contractFactory.defFor(symbol)
+        val searchContract =
+            Contract().apply {
+                symbol(symbol.value)
+                secType("OPT")
+                currency(def.currency)
+                lastTradeDateOrContractMonth(
+                    expiry.format(
+                        DateTimeFormatter
+                            .ofPattern("yyyyMMdd"),
+                    ),
+                )
+                right(optionType.ibkrCode)
+            }
+
+        // TWS_LIMITS: one-shot request/response, no standing line. Registry state survives the 30s
+        // caller wait so late callbacks can still warm a later cycle.
+        // This is the call that historically flooded contract-details pacing and wedged the engine —
+        // keep it rate-limited and cooled down.
+        client.reqContractDetails(reqId, searchContract)
+        val details: List<ContractDetails> =
+            awaitContractDetailsOrTimeout(reqId, 30000L.milliseconds) {
+                verifiedStrikesReqIds.remove(vkey, reqId)
+            }
+                ?: run {
+                    verifiedStrikesCooldown[vkey] = Instant.now()
+                    logger.warn { "[$symbol $expiry $optionType] verified-strikes timeout (30s), cooldown active" }
+                    inFlightVerifiedStrikes.remove(vkey)
+                    resultDeferred.complete(null)
+                    null
+                } ?: return null
+
+        return completeVerifiedStrikesLookup(vkey, resultDeferred, symbol, expiry, optionType, details)
+    }
+
+    private fun completeOptionConIdLookup(
+        key: OptionContractKey,
+        resultDeferred: CompletableDeferred<Int>,
+        details: List<ContractDetails>,
+    ): Int =
+        runCatching {
+            val conId = cacheOptionConIdFromDetails(key, details)
+            inFlightOptionConIds.remove(key)
+            resultDeferred.complete(conId)
+            logger.debug { "[$key] conId = $conId" }
+            conId
+        }.getOrElse { e ->
+            inFlightOptionConIds.remove(key, resultDeferred)
+            resultDeferred.completeExceptionally(e)
+            throw e
+        }
+
+    private fun completeVerifiedStrikesLookup(
+        vkey: VerifiedKey,
+        resultDeferred: CompletableDeferred<Set<BigDecimal>?>,
+        symbol: Symbol,
+        expiry: LocalDate,
+        optionType: OptionType,
+        details: List<ContractDetails>,
+    ): Set<BigDecimal>? =
+        runCatching {
+            val strikes = cacheVerifiedStrikesFromDetails(symbol, expiry, optionType, details)
+            inFlightVerifiedStrikes.remove(vkey)
+            resultDeferred.complete(strikes)
+            strikes
+        }.getOrElse { e ->
+            inFlightVerifiedStrikes.remove(vkey, resultDeferred)
+            resultDeferred.completeExceptionally(e)
+            throw e
+        }
+
+    private fun cacheOptionConIdFromDetails(
+        key: OptionContractKey,
+        details: List<ContractDetails>,
+    ): Int {
+        val cachedParams = optionParamsCache.getCached(key.symbol)
+        val cachedExchange = cachedParams?.exchange
+        val cachedTradingClass = cachedParams?.tradingClass
 
         // Cache the authoritative strike list for this expiry+right from the real IBKR response.
         // reqSecDefOptParams returns a flat union across all expirations; far-out monthly expiries have
@@ -304,77 +468,28 @@ class IbkrContractCache(
                     val available = details.map { it.contract().strike() }.toSortedSet()
                     logger.warn { "[$key] Strike not found. Available strikes for this expiry: $available" }
                     missingContracts[key] = Instant.now()
-                    val msg = "No option contract found for $key (got ${details.size} results)"
-                    inFlightOptionConIds.remove(key)
-                    resultDeferred.completeExceptionally(IllegalStateException(msg))
-                    error(msg)
+                    error("No option contract found for $key (got ${details.size} results)")
                 }
 
         optionConIds[key] = conId
-        inFlightOptionConIds.remove(key)
-        resultDeferred.complete(conId)
-        logger.debug { "[$key] conId = $conId" }
+        details
+            .firstOrNull { it.contract().conid() == conId }
+            ?.contract()
+            ?.exchange()
+            ?.takeIf { it.isNotBlank() }
+            ?.let { optionConIdExchanges[key] = it }
         return conId
     }
 
-    /**
-     * Proactively resolve the authoritative (verified) strike set for an expiry+right with ONE
-     * reqContractDetails, caching both the strike set AND every strike's conId. Called during the
-     * scan so candidate selection only ever sees real, tradeable strikes (no phantoms), and so
-     * execution finds the conId already cached (no per-entry contract-details storm / ambiguous
-     * minimal-spec fallback that yields IBKR error 200 → no tick → no fill). Returns null if the
-     * lookup fails/times out — the caller should skip the symbol for this cycle.
-     */
-    suspend fun getOrFetchVerifiedStrikes(
+    private fun cacheVerifiedStrikesFromDetails(
         symbol: Symbol,
         expiry: LocalDate,
         optionType: OptionType,
+        details: List<ContractDetails>,
     ): Set<BigDecimal>? {
-        verifiedStrikes[VerifiedKey(symbol, expiry, optionType)]?.let { return it }
-        evictExpired()
-
-        val vkey = VerifiedKey(symbol, expiry, optionType)
-        verifiedStrikesCooldown[vkey]?.let { failedAt ->
-            if (Duration.between(failedAt, Instant.now()) < verifiedStrikesCooldownTtl) return null
-            verifiedStrikesCooldown.remove(vkey)
-        }
-
-        val reqId = registry.nextReqId()
-        val deferred = CompletableDeferred<List<com.ib.client.ContractDetails>>()
-        registry.pendingContractDetails[reqId] = PendingContractRequest(deferred, CopyOnWriteArrayList())
-
         val cachedParams = optionParamsCache.getCached(symbol)
         val cachedExchange = cachedParams?.exchange
         val cachedTradingClass = cachedParams?.tradingClass
-        val def = contractFactory.defFor(symbol)
-        val searchContract =
-            com.ib.client.Contract().apply {
-                symbol(symbol.value)
-                secType("OPT")
-                currency(def.currency)
-                lastTradeDateOrContractMonth(
-                    expiry.format(
-                        DateTimeFormatter
-                            .ofPattern("yyyyMMdd"),
-                    ),
-                )
-                right(optionType.ibkrCode)
-            }
-
-        // TWS_LIMITS: one-shot request/response, no standing line. Self-retires on contractDetailsEnd
-        // or the 30s timeout (verified-strikes fan-out is heavy → longer bound + per-key cooldown).
-        // This is the call that historically flooded contract-details pacing and wedged the engine —
-        // keep it rate-limited and cooled down.
-        client.reqContractDetails(reqId, searchContract)
-        val details: List<com.ib.client.ContractDetails> =
-            withTimeoutOrNull(30000L.milliseconds) { deferred.await() }
-                ?: run {
-                    registry.pendingContractDetails.remove(reqId)
-                    registry.timedOutReqIds.add(reqId)
-                    verifiedStrikesCooldown[vkey] = Instant.now()
-                    logger.warn { "[$symbol $expiry $optionType] verified-strikes timeout (30s), cooldown active" }
-                    null
-                } ?: return null
 
         val actualStrikes = details.map { it.contract().strike() }.toSet()
         verifiedStrikes[VerifiedKey(symbol, expiry, optionType)] =
@@ -425,6 +540,22 @@ class IbkrContractCache(
         logger.debug { "[$symbol $expiry] Verified ${actualStrikes.size} strikes + warmed conIds (proactive)" }
         return verifiedStrikes[VerifiedKey(symbol, expiry, optionType)]
     }
+
+    private suspend fun awaitContractDetailsOrTimeout(
+        reqId: Int,
+        timeout: KotlinDuration,
+        onBrokerFailure: () -> Unit,
+    ): List<ContractDetails>? =
+        try {
+            contractDetailsRegistry.awaitEnd(reqId, timeout)
+        } catch (_: TimeoutCancellationException) {
+            null
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: RuntimeException) {
+            onBrokerFailure()
+            throw e
+        }
 
     fun isMissing(key: OptionContractKey): Boolean =
         missingContracts[key]?.let { Duration.between(it, Instant.now()) < missingContractTtl } ?: false
