@@ -26,6 +26,7 @@ private val logger = KotlinLogging.logger {}
  */
 @Component
 class IbkrOrdersRegistry {
+    @Volatile
     private var openOrdersSynchronized = CompletableDeferred<Boolean>()
     private val openOrders = ConcurrentHashMap<Int, OpenOrder>()
     private val fillPrices = ConcurrentHashMap<Int, BigDecimal>()
@@ -101,6 +102,11 @@ class IbkrOrdersRegistry {
 
     fun onOpenOrderEnd() {
         openOrdersSynchronized.complete(true)
+    }
+
+    /** A reconnect must re-sync: drop the completed signal so awaitOpenOrders waits for the next end. */
+    fun onDisconnect() {
+        openOrdersSynchronized = CompletableDeferred()
     }
 
     suspend fun awaitOpenOrders() = openOrdersSynchronized.await()

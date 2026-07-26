@@ -24,12 +24,16 @@ import org.springframework.stereotype.Component
 import java.time.Clock
 import java.time.Instant
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 private val logger = KotlinLogging.logger {}
 
 /** How many times recovery polls the broker position feed before trusting/abandoning a snapshot. */
 private const val RECOVERY_POSITION_POLLS = 5
 private const val RECOVERY_POSITION_POLL_DELAY_MS = 500L
+
+/** Max wait for the broker's initial portfolio download before a snapshot decision. */
+private val INITIAL_SNAPSHOT_TIMEOUT = 10.seconds
 
 /**
  * Re-attaches the engine to flag positions it stopped watching.
@@ -226,6 +230,7 @@ class FlagRecoveryService(
      * one successful broker fetch reported a flat account.
      */
     private suspend fun fetchPositionsSnapshot(): List<AccountPosition>? {
+        val ready = positionsPort.awaitInitialSnapshot(INITIAL_SNAPSHOT_TIMEOUT)
         var lastSuccessfulSnapshot: List<AccountPosition>? = null
         repeat(RECOVERY_POSITION_POLLS) { attempt ->
             val snapshot =
@@ -238,6 +243,13 @@ class FlagRecoveryService(
             }
             if (attempt < RECOVERY_POSITION_POLLS - 1) delay(RECOVERY_POSITION_POLL_DELAY_MS.milliseconds)
         }
-        return lastSuccessfulSnapshot
+        // A cold feed (download not yet complete) reporting empty is not a flat account — treat it as
+        // unavailable so a live position is never false-closed.
+        return if (!ready && lastSuccessfulSnapshot.isNullOrEmpty()) {
+            logger.warn { "Flag recovery: position feed not warmed (initial download pending) — treating as unavailable" }
+            null
+        } else {
+            lastSuccessfulSnapshot
+        }
     }
 }

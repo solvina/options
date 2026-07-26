@@ -15,6 +15,8 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
@@ -45,6 +47,10 @@ class FlagExecutionService(
     private val maxPositionPctOfCapital: BigDecimal = BigDecimal("0.25"),
 ) {
     private val trackedOrders = ConcurrentHashMap<Int, UUID>()
+
+    // Serializes broker-update handling: the collector and register()'s replayed updates run
+    // concurrently on the IO scope, and reopen/reprotect place real orders (not idempotent).
+    private val updateMutex = Mutex()
 
     init {
         scope.launch(start = CoroutineStart.UNDISPATCHED) { orderLifecyclePort.updates.collect(::onBrokerUpdate) }
@@ -237,6 +243,11 @@ class FlagExecutionService(
     }
 
     private suspend fun onBrokerUpdate(update: BrokerOrderUpdate) {
+        if (!trackedOrders.containsKey(update.orderId)) return // skip the lock for unrelated orders
+        updateMutex.withLock { handleBrokerUpdate(update) }
+    }
+
+    private suspend fun handleBrokerUpdate(update: BrokerOrderUpdate) {
         val positionId = trackedOrders[update.orderId] ?: return
         val position = flagPort.findById(positionId)
         if (position == null || position.status.isTerminal) {

@@ -330,6 +330,7 @@ class IbkrEWrapper(
 
     override fun accountDownloadEnd(accountName: String) {
         logger.debug { "accountDownloadEnd: $accountName" }
+        positionsRegistry.onAccountDownloadEnd()
     }
 
     override fun nextValidId(nextValidId: Int) {
@@ -681,6 +682,8 @@ class IbkrEWrapper(
         marketRuleRegistry.cancelAllPending(cause)
         marketDataRegistry.cancelAllPending(cause)
         accountRegistry.onDisconnect()
+        positionsRegistry.onDisconnect()
+        orderRegistry.onDisconnect()
     }
 
     override fun connectAck() {

@@ -13,8 +13,9 @@ class IbkrOrderIdCounter {
      * Called exclusively by EWrapper.nextValidId() on socket connect/reconnect.
      */
     fun init(startingId: Int) {
-        counter.set(counter.get().coerceAtLeast(startingId))
-        logger.info { "Order ID counter initialized/synchronized to ${counter.get()}, requested $startingId" }
+        // Atomic max: a get-then-set would drop concurrent nextOrderId() increments and rewind the id.
+        val synchronized = counter.accumulateAndGet(startingId, ::maxOf)
+        logger.info { "Order ID counter initialized/synchronized to $synchronized, requested $startingId" }
     }
 
     /**

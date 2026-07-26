@@ -4,6 +4,7 @@ import cz.solvina.options.domain.features.account.AccountPosition
 import cz.solvina.options.domain.features.account.PositionsPort
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.stereotype.Component
+import kotlin.time.Duration
 
 private val logger = KotlinLogging.logger {}
 
@@ -17,4 +18,6 @@ class IbkrPositionsAdapter(
             .also { pos ->
                 logger.info { "Retrieved positions: ${pos.size}" }
             }
+
+    override suspend fun awaitInitialSnapshot(timeout: Duration): Boolean = registry.awaitInitialDownload(timeout)
 }

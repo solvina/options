@@ -39,6 +39,10 @@ class StartupRecoveryServiceTest {
     private val orderCancellationService = mockk<OrderCancellationService>(relaxed = true)
     private val positionsPort = mockk<PositionsPort>()
 
+    init {
+        coEvery { positionsPort.awaitInitialSnapshot(any()) } returns true
+    }
+
     private val service =
         StartupRecoveryService(
             spreadPort = spreadPort,

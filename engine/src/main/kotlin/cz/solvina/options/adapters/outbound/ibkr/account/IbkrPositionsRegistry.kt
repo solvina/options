@@ -3,12 +3,16 @@ package cz.solvina.options.adapters.outbound.ibkr.account
 import com.ib.client.Contract
 import com.ib.client.Decimal
 import cz.solvina.options.domain.features.account.AccountPosition
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.withTimeout
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.time.Duration
 
 private val IBKR_DATE = DateTimeFormatter.ofPattern("yyyyMMdd")
 
@@ -16,6 +20,27 @@ private val IBKR_DATE = DateTimeFormatter.ofPattern("yyyyMMdd")
 class IbkrPositionsRegistry {
     // Thread-safe state store for current portfolio positions with real-time PnL
     val portfolio = ConcurrentHashMap<Int, AccountPosition>()
+
+    // Completes when TWS finishes the initial portfolio download. Until then an empty portfolio is a
+    // cold feed, not a flat account — recovery must not read it as "no positions".
+    @Volatile
+    private var downloadComplete = CompletableDeferred<Unit>()
+
+    fun onAccountDownloadEnd() {
+        downloadComplete.complete(Unit)
+    }
+
+    fun onDisconnect() {
+        downloadComplete = CompletableDeferred()
+    }
+
+    suspend fun awaitInitialDownload(timeout: Duration): Boolean =
+        try {
+            withTimeout(timeout) { downloadComplete.await() }
+            true
+        } catch (_: TimeoutCancellationException) {
+            false
+        }
 
     fun onUpdatePortfolio(
         contract: Contract,

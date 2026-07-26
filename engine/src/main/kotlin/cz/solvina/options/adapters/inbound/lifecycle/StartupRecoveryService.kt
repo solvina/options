@@ -27,6 +27,7 @@ import org.springframework.stereotype.Component
 import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.time.Duration.Companion.seconds
 
 private val logger = KotlinLogging.logger {}
 
@@ -35,6 +36,9 @@ private const val RECOVERY_POSITION_POLLS = 5
 
 /** Delay between recovery position polls — lets a feed that is still warming up at startup populate. */
 private const val RECOVERY_POSITION_POLL_DELAY_MS = 500L
+
+/** Max wait for the broker's initial portfolio download before a snapshot decision. */
+private val INITIAL_SNAPSHOT_TIMEOUT = 10.seconds
 
 /**
  * Periodic recovery only touches PENDING rows at least this old. A younger row may still have a
@@ -279,6 +283,7 @@ class StartupRecoveryService(
      * must NOT treat the spread as flat.
      */
     private suspend fun fetchPositionsForRecovery(spread: Spread): List<AccountPosition>? {
+        val ready = positionsPort.awaitInitialSnapshot(INITIAL_SNAPSHOT_TIMEOUT)
         var last: List<AccountPosition>? = null
         repeat(RECOVERY_POSITION_POLLS) { attempt ->
             val snapshot =
@@ -291,7 +296,13 @@ class StartupRecoveryService(
             }
             if (attempt < RECOVERY_POSITION_POLLS - 1) delay(RECOVERY_POSITION_POLL_DELAY_MS)
         }
-        return last
+        // A cold feed (download not yet complete) reporting empty is not proof the legs are flat.
+        return if (!ready && last.isNullOrEmpty()) {
+            logger.warn { "Recovery: position feed not warmed for ${spread.symbol} (initial download pending) — treating as unavailable" }
+            null
+        } else {
+            last
+        }
     }
 
     /** True if both legs of [spread] are present at the broker with the expected signed quantities. */
