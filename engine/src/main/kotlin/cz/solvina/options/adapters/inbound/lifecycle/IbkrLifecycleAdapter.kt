@@ -42,6 +42,7 @@ class IbkrLifecycleAdapter(
                             // Brief pause so IBKR sends back initial openOrder callbacks before we query
                             delay(3_000.milliseconds)
                             runCatching {
+                                client.reqAllOpenOrders()
                                 client.reqAutoOpenOrders(true)
                             }.onFailure { e -> logger.warn(e) { "Failed to request auto-open orders: ${e.message}" } }
                             runCatching { accountAdapter.subscribeToMainAccount() }
