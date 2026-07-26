@@ -1,7 +1,7 @@
 package cz.solvina.options.adapters.outbound.ibkr.registry
 
 import com.ib.client.Bar
-import cz.solvina.options.adapters.outbound.ibkr.IbkrAdmissionController
+import cz.solvina.options.domain.features.alert.AlertService
 import cz.solvina.options.domain.models.HistoricalBar
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.stereotype.Component
@@ -28,6 +28,7 @@ internal data class PendingRawBarsRequest(
 @Component
 class IbkrHistoricalDataRegistry(
     private val idCounter: IbkrOrderIdCounter,
+    private val alertService: AlertService,
 ) {
     internal val pendingHistoricalBars = ConcurrentHashMap<Int, PendingBarsRequest>()
 
@@ -71,7 +72,7 @@ class IbkrHistoricalDataRegistry(
         // address", "query returned no data", missing permissions) are unrelated and must NOT
         // inflate the broker-limit metric or trigger a spurious back-off. 420 = message-rate pacing.
         if (code == 420 || (code == 162 && msg.contains("pacing", ignoreCase = true))) {
-            IbkrAdmissionController.noteBrokerLimitHit(code)
+            alertService.noteBrokerLimitHit(code)
         }
         val ex = RuntimeException("IBKR error [code=$code]: $msg")
         pendingHistoricalBars.remove(id)?.onError?.invoke(ex)

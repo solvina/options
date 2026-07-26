@@ -1,6 +1,5 @@
 package cz.solvina.options.adapters.inbound.monitoring
 
-import cz.solvina.options.adapters.outbound.ibkr.IbkrAdmissionController
 import cz.solvina.options.domain.features.scanner.UniverseWarmupService
 import org.springframework.boot.actuate.health.Health
 import org.springframework.boot.actuate.health.HealthIndicator
@@ -14,7 +13,6 @@ import org.springframework.stereotype.Component
 @Component("warmup")
 class WarmupHealthIndicator(
     private val warmup: UniverseWarmupService,
-    private val admission: IbkrAdmissionController,
 ) : HealthIndicator {
     override fun health(): Health {
         val r = warmup.lastResult
@@ -24,7 +22,6 @@ class WarmupHealthIndicator(
             .withDetail("warmed", r?.warmed ?: 0)
             .withDetail("failed", r?.failed ?: 0)
             .withDetail("done", r?.done ?: false)
-            .withDetail("marketDataLinesAvailable", admission.availableMarketDataLines())
             .build()
     }
 }

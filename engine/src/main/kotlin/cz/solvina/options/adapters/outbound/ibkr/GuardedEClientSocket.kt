@@ -17,10 +17,6 @@ private val logger = KotlinLogging.logger {}
  * the order instead of sending it — market data, account subscriptions and cancellations keep
  * working so the operator can still see and unwind state, but nothing new reaches the market.
  *
- * Message pacing: every outbound request first draws a token from
- * [IbkrAdmissionController.paceMessage], so the global ~50 msgs/sec IBKR ceiling is enforced here
- * for ALL senders — no call site can bypass it. The token is taken BEFORE delegating to the
- * (synchronized) super method, so a pacing wait never blocks other threads on the client monitor.
  */
 class GuardedEClientSocket(
     wrapper: EWrapper,

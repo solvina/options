@@ -1,7 +1,6 @@
 package cz.solvina.options.adapters.outbound.ibkr.diagnostic
 
 import com.ib.client.EClientSocket
-import cz.solvina.options.adapters.outbound.ibkr.IbkrAdmissionController
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOpenOrdersAdapter
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrPositionsAdapter
@@ -48,7 +47,6 @@ class IbkrDiagnosticProbeAdapter(
     private val volatilityPort: VolatilityPort,
     private val registry: IbkrMarketDataRegistry,
     private val client: EClientSocket,
-    private val admission: IbkrAdmissionController,
     private val contractFactory: IbkrContractFactory,
     private val positionsAdapter: IbkrPositionsAdapter,
     private val openOrdersAdapter: IbkrOpenOrdersAdapter,

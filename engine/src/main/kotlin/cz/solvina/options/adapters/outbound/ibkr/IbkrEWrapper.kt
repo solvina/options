@@ -38,6 +38,7 @@ import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketRuleRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOptionParamsRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderIdCounter
 import cz.solvina.options.adapters.outbound.ibkr.registry.TickByTickBidAsk
+import cz.solvina.options.domain.features.alert.AlertService
 import cz.solvina.options.domain.features.market.MarketDataHealthTracker
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.stereotype.Component
@@ -110,6 +111,7 @@ class IbkrEWrapper(
     private val positionsRegistry: IbkrPositionsRegistry,
     private val dividendTickRegistry: IbkrDividendTickRegistry,
     private val marketDataHealthTracker: MarketDataHealthTracker,
+    private val alertService: AlertService,
 ) : EWrapper {
     override fun tickPrice(
         tickerId: Int,
@@ -651,7 +653,7 @@ class IbkrEWrapper(
         // 100 = max messages/sec exceeded, 101 = max market-data lines reached. The admission
         // controller exists to make both impossible — count every occurrence loudly.
         if (errorCode == 100 || errorCode == 101) {
-            IbkrAdmissionController.noteBrokerLimitHit(errorCode)
+            alertService.noteBrokerLimitHit(errorCode)
         }
 
         if (errorCode in listOf(2104, 2106, 2108, 2119, 2158, 2161, 10090, 10167)) {
