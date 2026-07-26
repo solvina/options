@@ -8,6 +8,7 @@ import cz.solvina.options.domain.features.flag.config.FlagTradingConfig
 import cz.solvina.options.domain.features.flag.config.FlagTradingConfigPort
 import cz.solvina.options.domain.features.flag.model.FlagPosition
 import cz.solvina.options.domain.features.flag.model.FlagStatus
+import cz.solvina.options.domain.features.flag.model.isActive
 import cz.solvina.options.domain.features.market.MarketDataPort
 import `cz.solvina.options.flags`.api.FlagsApi
 import `cz.solvina.options.flags`.dto.FlagAnalyticsDto
@@ -159,7 +160,7 @@ class FlagsApiImpl(
 
     private suspend fun FlagPosition.toDto(): FlagPositionDto {
         val livePrice =
-            if (status == FlagStatus.OPEN || status == FlagStatus.PENDING || status == FlagStatus.CLOSING) {
+            if (status.isActive) {
                 runCatching { marketDataPort.getUnderlyingPrice(symbol).amount }.getOrNull()
             } else {
                 null

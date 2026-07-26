@@ -63,9 +63,16 @@ class FlagPersistenceAdapter(
 
     override suspend fun countByStatus(status: FlagStatus): Long = withContext(Dispatchers.IO) { repository.countByStatus(status.name) }
 
-    override suspend fun findByStatus(status: FlagStatus): List<FlagPosition> =
+    override suspend fun findByStatuses(statuses: Set<FlagStatus>): List<FlagPosition> =
         withContext(Dispatchers.IO) {
-            repository.findByStatusOrderByOpenedAtDesc(status.name).map { it.toDomain() }
+            if (statuses.isEmpty()) {
+                emptyList()
+            } else {
+                repository
+                    .findByStatusInOrderByOpenedAtDesc(
+                        statuses.map { it.name },
+                    ).map { it.toDomain() }
+            }
         }
 
     private fun FlagPosition.toEntity(): FlagPositionEntity =

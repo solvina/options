@@ -466,7 +466,7 @@ class FlagManagementServiceTest {
 
         override suspend fun findAll() = store.values.toList()
 
-        override suspend fun findByStatus(status: FlagStatus) = store.values.filter { it.status == status }
+        override suspend fun findByStatuses(statuses: Set<FlagStatus>): List<FlagPosition> = store.values.filter { it.status in statuses }
 
         override suspend fun countByStatus(status: FlagStatus) = store.values.count { it.status == status }.toLong()
 
@@ -506,8 +506,6 @@ class FlagManagementServiceTest {
         override suspend fun rewatchParentFill(orderId: Int) = awaitParentFill(orderId)
 
         override suspend fun rewatchChildFill(orderId: Int): OrderFill = awaitChildFill(orderId)
-
-        override fun hasActiveWatch(orderId: Int) = false
 
         override suspend fun submitTrailingStopSell(
             symbol: Symbol,

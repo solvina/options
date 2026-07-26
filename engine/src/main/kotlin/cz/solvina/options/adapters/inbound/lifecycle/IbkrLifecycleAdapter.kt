@@ -6,7 +6,6 @@ import cz.solvina.options.adapters.outbound.ibkr.account.IbkrAccountAdapter
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrContractRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrHistoricalDataRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
-import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import cz.solvina.options.domain.features.connection.ConnectionPort
 import io.github.oshai.kotlinlogging.KotlinLogging
 import jakarta.annotation.PreDestroy
@@ -27,7 +26,6 @@ class IbkrLifecycleAdapter(
     private val historicalRegistry: IbkrHistoricalDataRegistry,
     private val contractRegistry: IbkrContractRegistry,
     private val marketDataRegistry: IbkrMarketDataRegistry,
-    private val orderRegistry: IbkrOrderRegistry,
     private val recoveryService: StartupRecoveryService,
     private val flagRecoveryService: FlagRecoveryService,
     private val client: EClientSocket,
@@ -71,7 +69,6 @@ class IbkrLifecycleAdapter(
         historicalRegistry.cancelAllPending(cause)
         contractRegistry.cancelAllPending(cause)
         marketDataRegistry.cancelAllPending(cause)
-        orderRegistry.cancelAllPending(cause)
         accountAdapter.onDisconnect()
         connectionPort.disconnect()
     }

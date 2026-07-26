@@ -4,7 +4,7 @@ import com.ib.client.EClientSocket
 import com.ib.client.OrderCancel
 import cz.solvina.options.adapters.outbound.ibkr.IbkrInstrumentsConfig
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOpenOrdersAdapter
-import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
+import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOrdersRegistry
 import cz.solvina.options.domain.features.alert.AlertLevel
 import cz.solvina.options.domain.features.alert.AlertPort
 import cz.solvina.options.domain.features.order.LegQuotes
@@ -17,7 +17,6 @@ import cz.solvina.options.domain.models.OptionContract
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.withTimeout
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
 import kotlin.time.Duration.Companion.milliseconds
@@ -26,7 +25,7 @@ private val logger = KotlinLogging.logger {}
 
 @Component
 class IbkrOrderExecutionAdapter(
-    private val registry: IbkrOrderRegistry,
+    private val registry: IbkrOrdersRegistry,
     private val client: EClientSocket,
     private val openOrdersAdapter: IbkrOpenOrdersAdapter,
     private val strategyRouter: ExchangeStrategyRouter,
@@ -69,8 +68,8 @@ class IbkrOrderExecutionAdapter(
                             qty = qty,
                         )
                     if (!verification.success) {
-                        // The leg-by-leg strategy only reports SUCCESS after BOTH order-level fill
-                        // deferreds completed FILLED — that is authoritative. This account-level
+                        // The leg-by-leg strategy only reports SUCCESS after BOTH order-level callbacks
+                        // reported FILLED — that is authoritative. This account-level
                         // re-check can simply lag (position feed latency); treating its timeout as
                         // "rejected" would abandon (cancel) two orders that are already filled and
                         // record a real position as CLOSED_REJECTED, leaving it live in the account
@@ -107,17 +106,9 @@ class IbkrOrderExecutionAdapter(
     }
 
     override suspend fun awaitFill(orderId: Int): OrderStatus {
-        val deferred =
-            registry.pendingOrderStatus[orderId]
-                // No deferred left doesn't always mean cancelled — the entry may have been consumed
-                // by another await while the order actually FILLED. The registry's fill record is
-                // the authoritative tiebreaker.
-                ?: return if (registry.isFilled(orderId)) OrderStatus.FILLED else OrderStatus.CANCELLED
-        return try {
-            deferred.await()
-        } finally {
-            registry.pendingOrderStatus.remove(orderId)
-        }
+        // Compatibility API for the spread executor. It is intentionally backed by the callback-fed
+        // registry stream, not by per-call deferreds.
+        return registry.awaitTerminal(orderId)
     }
 
     override suspend fun cancelAndAwait(orderId: Int): OrderStatus {
@@ -126,16 +117,7 @@ class IbkrOrderExecutionAdapter(
         // is logged at DEBUG and no reject reason is stashed.
         registry.markSelfCancelled(orderId)
         client.cancelOrder(orderId, OrderCancel())
-        runCatching {
-            withTimeout(10_000L.milliseconds) {
-                val deferred = registry.pendingOrderStatus[orderId]
-                if (deferred != null && !deferred.isCompleted) {
-                    deferred.await()
-                }
-            }
-        }.onFailure {
-            registry.pendingOrderStatus.remove(orderId)?.complete(OrderStatus.CANCELLED)
-        }
+        registry.awaitTerminal(orderId, 10_000L.milliseconds)
         delay(200.milliseconds)
         // A fill can race the cancel: IBKR fills the order before processing the cancel request.
         // Report the true terminal state so callers never record a filled order as aborted.
@@ -164,8 +146,7 @@ class IbkrOrderExecutionAdapter(
             is ReplacementCancelResult.Filled -> {
                 // The old order actually filled while we tried to cancel it — it is now a real
                 // position. Submitting a replacement would double it. Return the existing order id
-                // unchanged so the caller's fill watcher (already registered against it) delivers
-                // the FILLED status.
+                // unchanged so the caller's broker-update wait delivers the FILLED status.
                 logger.warn {
                     "Order replacement SKIPPED: old order $existingOrderId filled instead of cancelling — " +
                         "not submitting a replacement (would double the position)"

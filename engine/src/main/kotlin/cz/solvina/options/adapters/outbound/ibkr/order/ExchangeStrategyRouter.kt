@@ -2,9 +2,9 @@ package cz.solvina.options.adapters.outbound.ibkr.order
 
 import com.ib.client.EClientSocket
 import cz.solvina.options.adapters.outbound.ibkr.IbkrConnectionConfig
+import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOrdersRegistry
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderIdCounter
-import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import cz.solvina.options.domain.features.order.LegQuotes
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
@@ -23,7 +23,7 @@ private val logger = KotlinLogging.logger {}
  */
 @Component
 class ExchangeStrategyRouter(
-    private val registry: IbkrOrderRegistry,
+    private val registry: IbkrOrdersRegistry,
     private val ibkrOrderIdCounter: IbkrOrderIdCounter,
     private val client: EClientSocket,
     private val contractCache: IbkrContractCache,
@@ -36,7 +36,6 @@ class ExchangeStrategyRouter(
         registerStrategy(
             NativeComboOrderStrategy(
                 "CBOE",
-                registry,
                 ibkrOrderIdCounter,
                 client,
                 contractCache,
@@ -46,7 +45,6 @@ class ExchangeStrategyRouter(
         registerStrategy(
             NativeComboOrderStrategy(
                 "ISE",
-                registry,
                 ibkrOrderIdCounter,
                 client,
                 contractCache,
@@ -56,7 +54,6 @@ class ExchangeStrategyRouter(
         registerStrategy(
             NativeComboOrderStrategy(
                 "AMEX",
-                registry,
                 ibkrOrderIdCounter,
                 client,
                 contractCache,
@@ -66,7 +63,6 @@ class ExchangeStrategyRouter(
         registerStrategy(
             NativeComboOrderStrategy(
                 "SMART",
-                registry,
                 ibkrOrderIdCounter,
                 client,
                 contractCache,

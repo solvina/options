@@ -1,28 +1,25 @@
 package cz.solvina.options.adapters.outbound.ibkr.order
 
+import com.ib.client.Decimal
 import com.ib.client.EClientSocket
 import com.ib.client.Order
 import cz.solvina.options.adapters.outbound.ibkr.IbkrConnectionConfig
+import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOrdersRegistry
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderIdCounter
-import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import cz.solvina.options.domain.features.order.LegQuotes
 import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
 import cz.solvina.options.domain.models.OptionType
 import cz.solvina.options.domain.models.Symbol
-import io.mockk.Runs
 import io.mockk.coEvery
 import io.mockk.every
-import io.mockk.just
 import io.mockk.mockk
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import java.math.BigDecimal
 import java.time.LocalDate
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.BeforeTest
 import kotlin.test.assertEquals
@@ -34,19 +31,16 @@ import kotlin.test.assertTrue
  * Tests the LONG-first leg-by-leg contract: the protective long is submitted and confirmed before
  * the short, so the worst case is a paid-for long (bounded debit), never a naked short.
  *
- * Fills are driven through the real [pending] deferred map: [LegByLegOrderStrategy] registers a fresh
- * deferred under each new orderId before calling [EClientSocket.placeOrder], so the placeOrder mock
- * completes that deferred according to [fillByAction] — simulating an immediate broker fill (or, when
- * the action maps to null, a leg that never fills and times out).
+ * Fills are driven through the real [IbkrOrdersRegistry]: the placeOrder mock publishes synthetic
+ * terminal orderStatus callbacks according to [fillByAction].
  */
 class LegByLegOrderStrategyTest {
     private val client: EClientSocket = mockk(relaxed = true)
     private val ibkrOrderIdCounter: IbkrOrderIdCounter = mockk()
-    private val registry: IbkrOrderRegistry = mockk()
+    private lateinit var registry: IbkrOrdersRegistry
     private val contractCache: IbkrContractCache = mockk()
     private val connectionConfig = IbkrConnectionConfig(account = "")
 
-    private val pending = ConcurrentHashMap<Int, CompletableDeferred<OrderStatus>>()
     private val nextId = AtomicInteger(1000)
 
     /** action ("BUY"/"SELL") -> status the placeOrder hook completes that leg with; null = never fills. */
@@ -57,16 +51,29 @@ class LegByLegOrderStrategyTest {
 
     @BeforeTest
     fun setup() {
+        registry = IbkrOrdersRegistry()
         every { ibkrOrderIdCounter.nextOrderId() } answers { nextId.getAndIncrement() }
-        every { registry.pendingOrderStatus } returns pending
-        every { registry.markSelfCancelled(any()) } just Runs
         coEvery { contractCache.getOrFetchOptionConId(any()) } returns 123456
         every { client.placeOrder(any(), any(), any()) } answers {
             val id = firstArg<Int>()
             val order = thirdArg<Order>()
             val action = order.action().toString()
             placedOrders.add(action to order)
-            fillByAction[action]?.let { status -> pending[id]?.complete(status) }
+            fillByAction[action]?.let { status ->
+                registry.onOrderStatus(
+                    orderId = id,
+                    status = if (status == OrderStatus.FILLED) "Filled" else "Cancelled",
+                    filled = if (status == OrderStatus.FILLED) Decimal.get(1) else Decimal.ZERO,
+                    remaining = Decimal.ZERO,
+                    avgFillPrice = order.lmtPrice(),
+                    permId = 0,
+                    parentId = 0,
+                    lastFillPrice = order.lmtPrice(),
+                    clientId = 0,
+                    whyHeld = null,
+                    mktCapPrice = 0.0,
+                )
+            }
         }
     }
 

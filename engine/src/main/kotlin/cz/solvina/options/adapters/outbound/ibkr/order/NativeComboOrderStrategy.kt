@@ -9,14 +9,11 @@ import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
 import cz.solvina.options.adapters.outbound.ibkr.cache.OptionContractKey
 import cz.solvina.options.adapters.outbound.ibkr.cache.resolveConIdOrCached
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderIdCounter
-import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
-import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.features.order.floorToOptionTick
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
 import cz.solvina.options.domain.models.OptionType
 import io.github.oshai.kotlinlogging.KotlinLogging
-import kotlinx.coroutines.CompletableDeferred
 import java.math.BigDecimal
 
 private val logger = KotlinLogging.logger {}
@@ -31,7 +28,6 @@ private val logger = KotlinLogging.logger {}
  */
 class NativeComboOrderStrategy(
     private val exchangeId: String = "CBOE",
-    private val registry: IbkrOrderRegistry,
     private val ibkrOrderIdCounter: IbkrOrderIdCounter,
     private val client: EClientSocket,
     private val contractCache: IbkrContractCache,
@@ -73,9 +69,6 @@ class NativeComboOrderStrategy(
                     message = "Order id sequence not ready (nextOrderId=0)",
                 )
             }
-            val deferred = CompletableDeferred<OrderStatus>()
-            registry.pendingOrderStatus[orderId] = deferred
-
             logger.info {
                 "[$exchangeId] Submitting NATIVE COMBO order: SELL ${soldContract.strike}${soldContract.type.ibkrCode} / " +
                     "BUY ${boughtContract.strike}${boughtContract.type.ibkrCode} " +
@@ -165,9 +158,8 @@ class NativeComboOrderStrategy(
         require(validation.isValid) { "Cannot amend to an invalid price: ${validation.reason}" }
 
         // Re-`placeOrder` under the SAME orderId — IBKR treats this as a modification of the live
-        // order, not a new one. No cancel is issued (no PendingCancel race) and the fill watcher
-        // already registered against existingOrderId stays valid, so we deliberately do NOT touch
-        // registry.pendingOrderStatus here.
+        // order, not a new one. No cancel is issued (no PendingCancel race) and lifecycle tracking
+        // remains keyed by existingOrderId, so we deliberately do NOT touch the registry here.
         val bagContract = resolveBagContract(soldContract, boughtContract)
         val order = buildComboOrder(newCredit, qty)
 

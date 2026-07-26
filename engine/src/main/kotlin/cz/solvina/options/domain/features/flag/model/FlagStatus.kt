@@ -26,21 +26,33 @@ enum class FlagStatus {
     ENTRY_TIMEOUT,
 
     /**
-     * The exit already filled at the broker while the engine was not watching (e.g. the trailing
-     * stop fired after a restart killed its fill watcher). Closed administratively — realized P&L
+     * The exit already filled at the broker while the engine was down (e.g. the trailing
+     * stop fired during a restart). Closed administratively — realized P&L
      * is unknown because the actual exit price was never observed.
      */
     CLOSED_EXTERNAL,
+    ;
+
+    companion object {
+        val ACTIVE_STATUSES: Set<FlagStatus> = setOf(PENDING, OPEN, CLOSING)
+        val BROKER_POSITION_STATUSES: Set<FlagStatus> = setOf(OPEN, CLOSING)
+        val TERMINAL_STATUSES: Set<FlagStatus> =
+            setOf(
+                CLOSED_PROFIT,
+                CLOSED_STOP,
+                CLOSED_EOD,
+                CLOSED_MANUAL,
+                ENTRY_TIMEOUT,
+                CLOSED_EXTERNAL,
+            )
+    }
 }
 
+val FlagStatus.isActive: Boolean
+    get() = this in FlagStatus.ACTIVE_STATUSES
+
+val FlagStatus.hasBrokerPosition: Boolean
+    get() = this in FlagStatus.BROKER_POSITION_STATUSES
+
 val FlagStatus.isTerminal: Boolean
-    get() =
-        this in
-            setOf(
-                FlagStatus.CLOSED_PROFIT,
-                FlagStatus.CLOSED_STOP,
-                FlagStatus.CLOSED_EOD,
-                FlagStatus.CLOSED_MANUAL,
-                FlagStatus.ENTRY_TIMEOUT,
-                FlagStatus.CLOSED_EXTERNAL,
-            )
+    get() = this in FlagStatus.TERMINAL_STATUSES

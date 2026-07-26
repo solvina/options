@@ -1,9 +1,9 @@
 package cz.solvina.options.adapters.inbound.lifecycle
 
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOpenOrdersAdapter
+import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOrdersRegistry
 import cz.solvina.options.adapters.outbound.ibkr.account.OpenOrder
 import cz.solvina.options.adapters.outbound.ibkr.order.OrderCancellationService
-import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import cz.solvina.options.domain.features.account.AccountPosition
 import cz.solvina.options.domain.features.account.PositionsPort
 import cz.solvina.options.domain.features.connection.status.ConnectionStatusPort
@@ -26,6 +26,7 @@ import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 import java.time.Duration
 import java.time.Instant
+import java.util.concurrent.ConcurrentHashMap
 
 private val logger = KotlinLogging.logger {}
 
@@ -46,7 +47,7 @@ private val PERIODIC_MIN_PENDING_AGE: Duration = Duration.ofMinutes(60)
 class StartupRecoveryService(
     private val spreadPort: BullPutSpreadPort,
     private val bearCallPort: BearCallSpreadPort,
-    private val orderRegistry: IbkrOrderRegistry,
+    private val orderRegistry: IbkrOrdersRegistry,
     private val openOrdersAdapter: IbkrOpenOrdersAdapter,
     private val orderCancellationService: OrderCancellationService,
     private val positionsPort: PositionsPort,
@@ -54,12 +55,13 @@ class StartupRecoveryService(
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mutex = Mutex()
+    private val recoveredOrderWatches = ConcurrentHashMap.newKeySet<Int>()
 
     /**
-     * Periodic re-evaluation of PENDING rows, so a row left PENDING (e.g. its fill watcher was
-     * flushed by a disconnect) is resolved within minutes instead of waiting for the next restart.
-     * The MU 860/850 incident (2026-07-09): a flushed watcher was misread as a broker cancel, the
-     * row was written off, the order stayed working at IBKR and filled — an untracked live spread.
+     * Periodic re-evaluation of PENDING rows, so a row left PENDING after a disconnect is resolved
+     * within minutes instead of waiting for the next restart. The MU 860/850 incident (2026-07-09):
+     * a lost local wait was misread as a broker cancel, the row was written off, the order stayed
+     * working at IBKR and filled — an untracked live spread.
      */
     @Scheduled(
         fixedDelayString = "\${spread-recovery.delay-ms:300000}",
@@ -174,20 +176,16 @@ class StartupRecoveryService(
             }
 
             if (orderId in openOrderIds) {
-                if (orderRegistry.hasActiveWatch(orderId)) {
-                    logger.debug { "Recovery: orderId=$orderId for ${spread.symbol} already has an armed watcher — skipping" }
+                if (!recoveredOrderWatches.add(orderId)) {
+                    logger.debug { "Recovery: orderId=$orderId for ${spread.symbol} already has a recovery watcher — skipping" }
                     continue
                 }
-                // Order still working at the broker — arm a fresh fill watch. A fill that already
-                // landed this session is caught via isFilled (recorded before deferreds complete).
-                orderRegistry.ensureWatch(orderId)
                 if (orderRegistry.isFilled(orderId)) {
-                    orderRegistry.pendingOrderStatus.remove(orderId)
+                    recoveredOrderWatches.remove(orderId)
                     persist(statusChanged(spread, SpreadStatus.OPEN))
                     logger.warn { "Recovery: orderId=$orderId already FILLED — spread ${spread.id} promoted to OPEN" }
                     continue
                 }
-                val deferred = orderRegistry.pendingOrderStatus[orderId] ?: continue
                 logger.info {
                     "Recovery: re-registered orderId=$orderId for ${spread.symbol} " +
                         "${spread.soldLeg.contract.strike}${spread.soldLeg.contract.type.ibkrCode}/" +
@@ -195,7 +193,7 @@ class StartupRecoveryService(
                 }
 
                 scope.launch {
-                    val result = runCatching { deferred.await() }
+                    val result = runCatching { orderRegistry.awaitTerminal(orderId) }
                     when {
                         result.getOrNull() == OrderStatus.FILLED || orderRegistry.isFilled(orderId) -> {
                             persist(statusChanged(spread, SpreadStatus.OPEN))
@@ -208,13 +206,13 @@ class StartupRecoveryService(
                             // live at IBKR and filled after the row was closed. Leave PENDING; the
                             // periodic pass re-evaluates against the broker's actual order/position state.
                             logger.warn {
-                                "Recovery: fill watch for orderId=$orderId (${spread.symbol}) completed exceptionally " +
+                                "Recovery: broker-update wait for orderId=$orderId (${spread.symbol}) completed exceptionally " +
                                     "(${result.exceptionOrNull()?.message}) — leaving PENDING for re-evaluation, NOT closing"
                             }
                         }
                         else -> {
-                            // Broker-confirmed terminal cancel (onOrderStatus/onError completed the
-                            // deferred normally) — safe to write the attempt off.
+                            // Broker-confirmed terminal cancel (onOrderStatus/onError recorded terminal state) —
+                            // safe to write the attempt off.
                             persist(
                                 statusChanged(
                                     spread,
@@ -226,7 +224,7 @@ class StartupRecoveryService(
                             logger.info { "Recovery: orderId=$orderId cancelled/rejected — spread ${spread.id} closed" }
                         }
                     }
-                    orderRegistry.pendingOrderStatus.remove(orderId)
+                    recoveredOrderWatches.remove(orderId)
                 }
             } else {
                 // Order not found in IBKR — it filled or was cancelled while the engine was down.

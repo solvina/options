@@ -58,8 +58,8 @@ interface OrderExecutionStrategy {
 
     /**
      * Amend the working combo order [existingOrderId] to rest at [newCredit] in place: re-`placeOrder`
-     * under the SAME orderId (IBKR treats this as a modification), leaving the caller's existing fill
-     * watcher intact. Only implemented by strategies where [supportsInPlaceModify] is true.
+     * under the SAME orderId (IBKR treats this as a modification), leaving lifecycle tracking keyed
+     * to the same broker order id. Only implemented by strategies where [supportsInPlaceModify] is true.
      */
     suspend fun modifySpreadPrice(
         existingOrderId: Int,

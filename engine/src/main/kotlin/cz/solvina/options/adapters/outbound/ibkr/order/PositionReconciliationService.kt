@@ -86,13 +86,10 @@ class PositionReconciliationService(
             }
         }
 
-        // Timeout: one or both legs not found. Do NOT cancel orders or remove their fill deferreds
-        // here — this method only runs after the leg-by-leg strategy confirmed BOTH legs FILLED at
-        // the order level, so a timeout means the account position feed is lagging, not that the
-        // orders are dangling. The old cleanup deleted the SHORT leg's completed fill deferred,
-        // which made the execution loop's awaitFill see CANCELLED and record a real, filled spread
-        // as CLOSED_REJECTED — exactly the failure the caller's trust-order-level-fills path exists
-        // to prevent.
+        // Timeout: one or both legs not found. Do NOT cancel orders or alter lifecycle state here —
+        // this method only runs after the leg-by-leg strategy confirmed BOTH legs FILLED at the order
+        // level, so a timeout means the account position feed is lagging, not that the orders are
+        // dangling.
         logger.warn { "✗ Position reconciliation FAILED (timeout): $matchKey" }
 
         val finalShortLegFound =

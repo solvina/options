@@ -2,6 +2,7 @@ package cz.solvina.options.domain.features.report
 
 import cz.solvina.options.domain.features.flag.FlagPort
 import cz.solvina.options.domain.features.flag.model.FlagStatus
+import cz.solvina.options.domain.features.flag.model.hasBrokerPosition
 import cz.solvina.options.domain.features.spread.BearCallSpreadPort
 import cz.solvina.options.domain.features.spread.BullPutSpreadPort
 import cz.solvina.options.domain.features.spread.model.Spread
@@ -114,7 +115,7 @@ class ReportService(
             openedAt = openedAt,
             closedAt = closedAt,
             filled = status != FlagStatus.PENDING && status != FlagStatus.ENTRY_TIMEOUT,
-            openNow = status == FlagStatus.OPEN || status == FlagStatus.CLOSING,
+            openNow = status.hasBrokerPosition,
             cleanlyClosed = status in FLAG_CLOSED_STATUSES,
             realizedPnl = realizedPnl,
         )

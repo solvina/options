@@ -260,7 +260,7 @@ class FlagExecutionService(
             }
             update.orderId in setOf(position.stopLossOrderId, position.profitTargetOrderId) &&
                 update.isFilled &&
-                position.status in setOf(FlagStatus.OPEN, FlagStatus.CLOSING) ->
+                position.status in FlagStatus.BROKER_POSITION_STATUSES ->
                 bookExitFill(position, update.averageFillPrice, update.receivedAt)
         }
     }

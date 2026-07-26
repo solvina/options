@@ -33,19 +33,19 @@ private const val RECOVERY_POSITION_POLL_DELAY_MS = 500L
 /**
  * Re-attaches the engine to flag positions it stopped watching.
  *
- * Flag fill detection is an in-memory watcher armed when the bracket order is placed — a restart
- * or an IBKR disconnect kills it while the GTC trailing stop lives on at the broker. The row then
- * stays PENDING/OPEN forever, and a later manual/EOD close would sell shares the broker no longer
- * holds (the 2026-07 short-stock-orphan incident). This service runs at startup and periodically:
+ * Flag order lifecycle is registered in-memory when the bracket order is placed — a restart or an
+ * IBKR disconnect drops that local registration while the GTC trailing stop lives on at the broker.
+ * The row then stays PENDING/OPEN forever, and a later manual/EOD close would sell shares the broker
+ * no longer holds (the 2026-07 short-stock-orphan incident). This service runs at startup and
+ * periodically:
  *
- *  - orders still working at the broker → re-arm the fill watchers;
+ *  - orders still working at the broker → re-register lifecycle tracking;
  *  - entry filled while unwatched (protective child active, or shares held) → adopt as OPEN,
  *    re-placing the protective trailing stop if it is gone;
  *  - exit filled while unwatched (no orders, shares gone) → close as CLOSED_EXTERNAL, never sell;
  *  - entry expired without filling (no orders, no shares) → ENTRY_TIMEOUT.
  *
- * Rows whose orders have an armed watcher are skipped, so repeated runs are no-ops for healthy
- * positions.
+ * Repeated runs are no-ops for healthy positions already registered in memory.
  */
 @Component
 class FlagRecoveryService(
@@ -78,10 +78,7 @@ class FlagRecoveryService(
 
     suspend fun recover() =
         mutex.withLock {
-            val unwatched =
-                flagPort.findByStatus(FlagStatus.PENDING) +
-                    flagPort.findByStatus(FlagStatus.OPEN) +
-                    flagPort.findByStatus(FlagStatus.CLOSING)
+            val unwatched = flagPort.findByStatuses(FlagStatus.ACTIVE_STATUSES)
             if (unwatched.isEmpty()) return@withLock
 
             logger.info { "Flag recovery: reconciling ${unwatched.size} PENDING/OPEN/CLOSING row(s)" }

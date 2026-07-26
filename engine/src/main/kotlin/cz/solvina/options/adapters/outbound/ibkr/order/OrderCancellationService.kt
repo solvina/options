@@ -3,7 +3,7 @@ package cz.solvina.options.adapters.outbound.ibkr.order
 import com.ib.client.EClientSocket
 import com.ib.client.OrderCancel
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOpenOrdersAdapter
-import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
+import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOrdersRegistry
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.delay
 import org.springframework.stereotype.Component
@@ -20,7 +20,7 @@ private val logger = KotlinLogging.logger {}
 class OrderCancellationService(
     private val client: EClientSocket,
     private val openOrdersAdapter: IbkrOpenOrdersAdapter,
-    private val registry: IbkrOrderRegistry,
+    private val registry: IbkrOrdersRegistry,
 ) {
     data class CancellationResult(
         val orderId: Int,

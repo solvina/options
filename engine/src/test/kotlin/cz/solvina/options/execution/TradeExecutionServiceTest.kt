@@ -740,7 +740,7 @@ class TradeExecutionServiceTest {
                         qty: Int,
                     ): Int =
                         // Mirrors the real-world race: the replacement is submitted while the old
-                        // order's fill deferred is still unresolved (IBKR hasn't confirmed the cancel).
+                        // order is still unresolved (IBKR hasn't confirmed the cancel).
                         submitComboLimitOrder(soldContract, boughtContract, newCredit, qty, null)
 
                     override suspend fun getSymbolsWithOpenOrders(): Set<Symbol> = emptySet()
@@ -775,11 +775,11 @@ class TradeExecutionServiceTest {
         }
 
     @Test
-    fun `ladder does not launch a duplicate fill watcher when the replacement order id is unchanged`() =
+    fun `ladder does not launch a duplicate fill wait when the replacement order id is unchanged`() =
         runTest {
             // Mirrors OrderExecutionPort.replaceComboWithNewPrice returning the SAME order id when the
             // old order actually filled instead of being cancelled (ReplacementCancelResult.Filled) —
-            // the execution loop must not spin up a second, duplicate fill watcher for that id.
+            // the execution loop must not spin up a second, duplicate fill wait for that id.
             val awaitFillCallCount = AtomicInteger(0)
             val fillDeferred = CompletableDeferred<OrderStatus>()
             val ladderStepped = Channel<Unit>(1)
@@ -840,7 +840,7 @@ class TradeExecutionServiceTest {
             assertEquals(
                 1,
                 awaitFillCallCount.get(),
-                "the ladder must not launch a second fill watcher for an unchanged order id",
+                "the ladder must not launch a second fill wait for an unchanged order id",
             )
             // The order rested (and filled) at the ORIGINAL credit — the ladder's decremented credit
             // must not be recorded when no replacement was actually submitted.

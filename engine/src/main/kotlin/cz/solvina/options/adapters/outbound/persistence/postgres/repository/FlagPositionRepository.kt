@@ -9,6 +9,8 @@ import java.util.UUID
 interface FlagPositionRepository : JpaRepository<FlagPositionEntity, UUID> {
     fun findByStatusOrderByOpenedAtDesc(status: String): List<FlagPositionEntity>
 
+    fun findByStatusInOrderByOpenedAtDesc(statuses: Collection<String>): List<FlagPositionEntity>
+
     fun findAllByOrderByOpenedAtDesc(): List<FlagPositionEntity>
 
     fun findByStatus(

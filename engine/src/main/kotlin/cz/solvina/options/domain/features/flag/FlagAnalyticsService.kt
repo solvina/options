@@ -2,6 +2,7 @@ package cz.solvina.options.domain.features.flag
 
 import cz.solvina.options.domain.features.flag.model.FlagPosition
 import cz.solvina.options.domain.features.flag.model.FlagStatus
+import cz.solvina.options.domain.features.flag.model.isActive
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.math.RoundingMode
@@ -66,7 +67,7 @@ class FlagAnalyticsService(
     suspend fun compute(): Analytics {
         val all = flagPort.findAll()
         val closed = all.filter { it.status in closedStatuses && it.realizedPnl != null && it.closedAt != null }
-        val open = all.filter { it.status == FlagStatus.OPEN || it.status == FlagStatus.PENDING || it.status == FlagStatus.CLOSING }
+        val open = all.filter { it.status.isActive }
 
         val wins = closed.filter { it.realizedPnl != null && it.realizedPnl > BigDecimal.ZERO }
         val losses = closed.filter { it.realizedPnl != null && it.realizedPnl <= BigDecimal.ZERO }

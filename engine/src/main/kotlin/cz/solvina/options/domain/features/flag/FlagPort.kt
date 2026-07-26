@@ -25,7 +25,9 @@ interface FlagPort {
 
     suspend fun countByStatus(status: FlagStatus): Long
 
-    suspend fun findByStatus(status: FlagStatus): List<FlagPosition>
+    suspend fun findByStatus(status: FlagStatus): List<FlagPosition> = findByStatuses(setOf(status))
+
+    suspend fun findByStatuses(statuses: Set<FlagStatus>): List<FlagPosition>
 }
 
 data class FlagPage(

@@ -345,11 +345,11 @@ class TradeExecutionService(
         // One ladder step, shared by the Credit and Timer handlers. Returns false when the credit
         // floor was reached (caller breaks out with FLOOR_REACHED). When the ladder discovers the
         // current order filled instead of cancelling, it returns the SAME order id with the credit
-        // unchanged — no new fill watcher is needed; the pending Fill event completes the loop.
+        // unchanged — lifecycle tracking remains on the same broker order id.
         suspend fun ladderStep(): Boolean {
             // Once a reprice hit an unverifiable cancel we stop laddering entirely and ride the
-            // current working order to its authoritative resolution (fill watcher or the timeout's
-            // cancel-and-await). Re-attempting would just re-hit the same uncertainty.
+            // current working order to its authoritative broker-update resolution or the timeout's
+            // cancel-and-await. Re-attempting would just re-hit the same uncertainty.
             if (ladderFrozen) return true
             val stepped =
                 try {
@@ -643,7 +643,7 @@ class TradeExecutionService(
             return null
         }
 
-        // US atomic combos: amend the live order's limit IN PLACE (same orderId, same fill watcher).
+        // US atomic combos: amend the live order's limit IN PLACE (same orderId, same lifecycle stream).
         // The cancel-and-replace path below races IBKR's PendingCancel latency — a slow cancel is
         // declared "unverifiable", the ladder freezes on the order, then IBKR completes OUR OWN cancel
         // and the executor misreads that terminal CANCELLED as a broker ORDER_REJECTED, false-aborting

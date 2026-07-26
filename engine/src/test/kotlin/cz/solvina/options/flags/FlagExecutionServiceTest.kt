@@ -310,8 +310,6 @@ class FlagExecutionServiceTest {
 
         override suspend fun rewatchChildFill(orderId: Int) = awaitChildFill(orderId)
 
-        override fun hasActiveWatch(orderId: Int) = false
-
         override suspend fun submitTrailingStopSell(
             symbol: Symbol,
             shares: Int,
@@ -383,7 +381,7 @@ class FlagExecutionServiceTest {
 
         override suspend fun findAll() = saved.toList()
 
-        override suspend fun findByStatus(status: FlagStatus) = saved.filter { it.status == status }
+        override suspend fun findByStatuses(statuses: Set<FlagStatus>) = saved.filter { it.status in statuses }
 
         override suspend fun countByStatus(status: FlagStatus) = saved.count { it.status == status }.toLong()
 
@@ -419,8 +417,6 @@ class FlagExecutionServiceTest {
         override suspend fun rewatchParentFill(orderId: Int) = awaitParentFill(orderId)
 
         override suspend fun rewatchChildFill(orderId: Int): OrderFill = awaitChildFill(orderId)
-
-        override fun hasActiveWatch(orderId: Int) = false
 
         override suspend fun submitTrailingStopSell(
             symbol: Symbol,

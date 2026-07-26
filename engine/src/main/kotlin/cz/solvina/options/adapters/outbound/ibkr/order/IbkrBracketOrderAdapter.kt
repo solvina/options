@@ -6,9 +6,9 @@ import com.ib.client.Order
 import com.ib.client.OrderCancel
 import cz.solvina.options.adapters.outbound.ibkr.IbkrConnectionConfig
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
+import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOrdersRegistry
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderIdCounter
-import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import cz.solvina.options.domain.features.flag.BracketOrderIds
 import cz.solvina.options.domain.features.flag.BracketOrderPort
 import cz.solvina.options.domain.models.Symbol
@@ -20,7 +20,7 @@ private val logger = KotlinLogging.logger {}
 
 @Component
 class IbkrBracketOrderAdapter(
-    private val registry: IbkrOrderRegistry,
+    private val registry: IbkrOrdersRegistry,
     private val ibkrOrderIdCounter: IbkrOrderIdCounter,
     private val client: EClientSocket,
     private val contractFactory: IbkrContractFactory,

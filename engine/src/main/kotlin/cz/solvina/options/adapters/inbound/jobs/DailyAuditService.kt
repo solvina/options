@@ -94,7 +94,7 @@ class DailyAuditService(
         lines += "IBKR connected ✓"
 
         val openSpreads = spreadClosers.allOpen() + spreadClosers.allClosing()
-        val openFlags = flagPort.findOpen() + flagPort.findByStatus(FlagStatus.CLOSING)
+        val openFlags = flagPort.findByStatuses(FlagStatus.ACTIVE_STATUSES)
         lines += "Open: ${openSpreads.size} spread(s), ${openFlags.size} flag(s)"
 
         issues += reconciliationIssues()

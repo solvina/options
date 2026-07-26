@@ -3,9 +3,9 @@ package cz.solvina.options.lifecycle
 import com.ib.client.EClientSocket
 import cz.solvina.options.adapters.inbound.lifecycle.StartupRecoveryService
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOpenOrdersAdapter
+import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOrdersRegistry
 import cz.solvina.options.adapters.outbound.ibkr.account.OpenOrder
 import cz.solvina.options.adapters.outbound.ibkr.order.OrderCancellationService
-import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import cz.solvina.options.domain.features.account.AccountPosition
 import cz.solvina.options.domain.features.account.PositionsPort
 import cz.solvina.options.domain.features.order.LegAction
@@ -33,7 +33,7 @@ import kotlin.test.assertEquals
 class StartupRecoveryServiceTest {
     private val spreadPort = mockk<BullPutSpreadPort>(relaxed = true)
     private val bearCallPort = mockk<BearCallSpreadPort>(relaxed = true)
-    private val orderRegistry = mockk<IbkrOrderRegistry>(relaxed = true)
+    private val orderRegistry = mockk<IbkrOrdersRegistry>(relaxed = true)
     private val openOrdersAdapter = mockk<IbkrOpenOrdersAdapter>()
     private val client = mockk<EClientSocket>(relaxed = true)
     private val orderCancellationService = mockk<OrderCancellationService>(relaxed = true)

@@ -15,7 +15,7 @@ import java.time.temporal.ChronoUnit
  * Emits a single tick per call, derived from fixture data at the current simulated date.
  * This is sufficient for the optimistic fill model used in [BacktestOrderExecutionAdapter]:
  * the execution service receives one credit tick, does not trigger repricing, and the
- * fill watcher immediately returns FILLED.
+ * order execution port immediately returns FILLED.
  */
 class BacktestMarketTickAdapter(
     private val clock: MutableClock,

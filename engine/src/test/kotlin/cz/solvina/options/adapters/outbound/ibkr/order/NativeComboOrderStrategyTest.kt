@@ -4,7 +4,6 @@ import com.ib.client.EClientSocket
 import cz.solvina.options.adapters.outbound.ibkr.IbkrConnectionConfig
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderIdCounter
-import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
 import cz.solvina.options.domain.models.OptionType
@@ -24,7 +23,6 @@ class NativeComboOrderStrategyTest {
     private val strategy =
         NativeComboOrderStrategy(
             exchangeId = "SMART",
-            registry = mockk<IbkrOrderRegistry>(relaxed = true),
             ibkrOrderIdCounter = IbkrOrderIdCounter.testCounter(),
             client = mockk<EClientSocket>(relaxed = true),
             contractCache = mockk<IbkrContractCache>(relaxed = true),

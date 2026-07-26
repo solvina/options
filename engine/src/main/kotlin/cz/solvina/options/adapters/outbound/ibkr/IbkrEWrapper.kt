@@ -35,7 +35,6 @@ import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrDividendTickRegist
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrHistoricalDataRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderIdCounter
-import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.TickByTickBidAsk
 import cz.solvina.options.domain.features.market.MarketDataHealthTracker
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -101,11 +100,10 @@ class IbkrEWrapper(
     private val historicalRegistry: IbkrHistoricalDataRegistry,
     private val contractRegistry: IbkrContractRegistry,
     private val marketDataRegistry: IbkrMarketDataRegistry,
-    private val orderRegistry: IbkrOrderRegistry,
+    private val orderRegistry: IbkrOrdersRegistry,
     private val ibkrOrderIdCounter: IbkrOrderIdCounter,
     private val accountRegistry: IbkrAccountRegistry,
     private val positionsRegistry: IbkrPositionsRegistry,
-    private val openOrdersRegistry: IbkrOrdersRegistry,
     private val dividendTickRegistry: IbkrDividendTickRegistry,
     private val marketDataHealthTracker: MarketDataHealthTracker,
 ) : EWrapper {
@@ -223,7 +221,7 @@ class IbkrEWrapper(
                 "whyHeld" to whyHeld,
             )
         }
-        openOrdersRegistry.onOrderStatus(
+        orderRegistry.onOrderStatus(
             orderId,
             status,
             filled,
@@ -236,7 +234,6 @@ class IbkrEWrapper(
             whyHeld,
             mktCapPrice,
         )
-        orderRegistry.onOrderStatus(orderId, status, avgFillPrice, filled.value(), remaining.value())
     }
 
     override fun openOrder(
@@ -264,7 +261,7 @@ class IbkrEWrapper(
                 "status" to orderState.status(),
             )
         }
-        openOrdersRegistry.onOpenOrder(orderId, contract, order, orderState)
+        orderRegistry.onOpenOrder(orderId, contract, order, orderState)
     }
 
     override fun openOrderEnd() {
@@ -673,7 +670,6 @@ class IbkrEWrapper(
         historicalRegistry.cancelAllPending(cause)
         contractRegistry.cancelAllPending(cause)
         marketDataRegistry.cancelAllPending(cause)
-        orderRegistry.cancelAllPending(cause)
         accountRegistry.onDisconnect()
     }
 

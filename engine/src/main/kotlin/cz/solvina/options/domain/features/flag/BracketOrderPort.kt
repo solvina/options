@@ -30,8 +30,7 @@ interface BracketOrderPort {
      *
      * Returns order IDs immediately. The single trailing protective order's id is returned as both
      * stopLossOrderId and profitTargetOrderId (so existing close logic cancels it).
-     */
-    /** Reserves consecutive broker ids without sending anything to TWS. */
+     * Reserves consecutive broker ids without sending anything to TWS. */
     fun reserveBracketOrderIds(): BracketOrderIds = error("Broker order-id reservation is not implemented")
 
     /** Reserves one broker id without sending anything to TWS. */
@@ -71,9 +70,6 @@ interface BracketOrderPort {
 
     @Deprecated("Order lifecycle is delivered through OrderLifecyclePort")
     suspend fun rewatchChildFill(orderId: Int): OrderFill = awaitChildFill(orderId)
-
-    @Deprecated("Order lifecycle is delivered through OrderLifecyclePort")
-    fun hasActiveWatch(orderId: Int): Boolean = false
 
     /**
      * Places a standalone GTC trailing-stop SELL to re-protect shares whose original protective

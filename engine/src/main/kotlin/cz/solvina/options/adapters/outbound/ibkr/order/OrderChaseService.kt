@@ -5,26 +5,25 @@ import com.ib.client.Decimal
 import com.ib.client.EClientSocket
 import com.ib.client.Order
 import com.ib.client.OrderCancel
+import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOrdersRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderIdCounter
-import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import cz.solvina.options.domain.features.order.LegOrder
 import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.features.order.ceilToOptionTick
 import cz.solvina.options.domain.features.order.floorToOptionTick
 import cz.solvina.options.domain.features.scanner.ScannerConfig
 import io.github.oshai.kotlinlogging.KotlinLogging
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.withTimeout
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 
 private val logger = KotlinLogging.logger {}
 
 @Service
 class OrderChaseService(
-    private val registry: IbkrOrderRegistry,
+    private val registry: IbkrOrdersRegistry,
     private val ibkrOrderIdCounter: IbkrOrderIdCounter,
     private val client: EClientSocket,
     private val config: ScannerConfig,
@@ -40,30 +39,20 @@ class OrderChaseService(
         var price = initialPrice
 
         for (attempt in 0..config.orderChaseMaxRetries) {
-            val deferred =
-                registry.pendingOrderStatus[orderId]
-                    ?: CompletableDeferred<OrderStatus>().also {
-                        registry.pendingOrderStatus[orderId] = it
-                    }
-
-            val timeoutMs = config.orderChaseTimeoutMinutes * 60_000L
             var cancelledByTimeout = false
-            val status =
-                try {
-                    withTimeout(timeoutMs) { deferred.await() }
-                } catch (e: TimeoutCancellationException) {
-                    logger.info { "Order $orderId timed out after ${config.orderChaseTimeoutMinutes}min, cancelling" }
-                    cancelledByTimeout = true
-                    cancelAndWait(orderId)
-                    OrderStatus.CANCELLED
-                }
+            val status = registry.awaitTerminal(orderId, config.orderChaseTimeoutMinutes.minutes)
+            if (status == OrderStatus.PENDING) {
+                logger.info { "Order $orderId timed out after ${config.orderChaseTimeoutMinutes}min, cancelling" }
+                cancelledByTimeout = true
+                cancelAndWait(orderId)
+            }
 
             if (status == OrderStatus.FILLED) {
                 logger.info { "Order $orderId filled at price $price" }
                 return LegOrder(orderId, OrderStatus.FILLED)
             }
 
-            // If the order failed-fast (e.g. code 399 after-hours completes deferred immediately),
+            // If the order failed-fast (e.g. code 399 after-hours records a terminal cancellation),
             // the timeout path didn't run, so cancel the IBKR order now before repricing.
             if (!cancelledByTimeout) cancelAndWait(orderId)
 
@@ -93,9 +82,6 @@ class OrderChaseService(
                 orderId = ibkrOrderIdCounter.nextOrderId()
                 logger.info { "Repricing: new orderId=$orderId price=$price (attempt ${attempt + 1}/${config.orderChaseMaxRetries})" }
 
-                val newDeferred = CompletableDeferred<OrderStatus>()
-                registry.pendingOrderStatus[orderId] = newDeferred
-
                 val ibkrOrder =
                     Order().apply {
                         action(action)
@@ -115,16 +101,7 @@ class OrderChaseService(
     private suspend fun cancelAndWait(orderId: Int) {
         registry.markSelfCancelled(orderId)
         client.cancelOrder(orderId, OrderCancel())
-        runCatching {
-            withTimeout(10_000L) {
-                val deferred = registry.pendingOrderStatus[orderId]
-                if (deferred != null && !deferred.isCompleted) {
-                    deferred.await()
-                }
-            }
-        }.onFailure {
-            registry.pendingOrderStatus.remove(orderId)?.complete(OrderStatus.CANCELLED)
-        }
+        registry.awaitTerminal(orderId, 10.seconds)
         delay(500)
     }
 }

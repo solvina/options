@@ -1,6 +1,6 @@
 package cz.solvina.options.adapters.outbound.ibkr.order
 
-import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
+import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOrdersRegistry
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.stereotype.Component
 
@@ -27,7 +27,7 @@ sealed interface ReplacementCancelResult {
 @Component
 class OrderReplacementService(
     private val orderCancellationService: OrderCancellationService,
-    private val orderRegistry: IbkrOrderRegistry,
+    private val orderRegistry: IbkrOrdersRegistry,
 ) {
     /**
      * Atomically replace an order: cancel old order with verification, then allow new submission.

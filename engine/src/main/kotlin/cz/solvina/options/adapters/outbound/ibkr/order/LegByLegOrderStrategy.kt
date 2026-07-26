@@ -5,11 +5,11 @@ import com.ib.client.Decimal
 import com.ib.client.EClientSocket
 import com.ib.client.Order
 import cz.solvina.options.adapters.outbound.ibkr.IbkrConnectionConfig
+import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOrdersRegistry
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
 import cz.solvina.options.adapters.outbound.ibkr.cache.OptionContractKey
 import cz.solvina.options.adapters.outbound.ibkr.cache.resolveConIdOrCached
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderIdCounter
-import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import cz.solvina.options.domain.features.order.LegQuotes
 import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.features.order.ceilToOptionTick
@@ -19,9 +19,6 @@ import cz.solvina.options.domain.models.OptionContract
 import cz.solvina.options.domain.models.OptionType
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.withTimeout
 import java.math.BigDecimal
 import kotlin.time.Duration.Companion.milliseconds
 
@@ -46,7 +43,7 @@ private val logger = KotlinLogging.logger {}
  */
 class LegByLegOrderStrategy(
     private val exchangeId: String = "EUREX",
-    private val registry: IbkrOrderRegistry,
+    private val registry: IbkrOrdersRegistry,
     private val ibkrOrderIdCounter: IbkrOrderIdCounter,
     private val client: EClientSocket,
     private val contractCache: IbkrContractCache,
@@ -128,9 +125,6 @@ class LegByLegOrderStrategy(
             logger.info {
                 "[$exchangeId] SUCCESS: both legs filled — LONG=$longOrderId SHORT=$shortOrderId (verified spread)"
             }
-            // The LONG leg's fill deferred is no longer needed — the caller consumes only the
-            // SHORT (primary) order id. Drop it so pendingOrderStatus doesn't leak an entry (E8).
-            registry.pendingOrderStatus.remove(longOrderId)
             OrderSubmissionResult(
                 status = SubmissionStatus.SUCCESS,
                 primaryOrderId = shortOrderId,
@@ -157,9 +151,6 @@ class LegByLegOrderStrategy(
         legQuotes: LegQuotes?,
         reason: String,
     ): OrderSubmissionResult {
-        // The LONG leg's fill deferred won't be awaited further on this path (no success handoff);
-        // drop it so pendingOrderStatus doesn't leak (E8).
-        registry.pendingOrderStatus.remove(longOrderId)
         if (unwindStrandedLongLeg) {
             val sellBack = legQuotes?.boughtBid?.floorToOptionTick()?.coerceAtLeast(BigDecimal("0.01")) ?: BigDecimal("0.01")
             logger.error {
@@ -186,20 +177,19 @@ class LegByLegOrderStrategy(
     }
 
     /** Await a single leg's fill up to [legFillTimeoutMs]. Timeout or broker error counts as not-filled. */
-    private suspend fun awaitLegFill(orderId: Int): OrderStatus {
-        val deferred = registry.pendingOrderStatus[orderId] ?: return OrderStatus.CANCELLED
-        return try {
-            withTimeout(legFillTimeoutMs.milliseconds) { deferred.await() }
-        } catch (_: TimeoutCancellationException) {
-            logger.warn { "[$exchangeId] Leg $orderId did not fill within ${legFillTimeoutMs}ms" }
-            OrderStatus.PENDING
+    private suspend fun awaitLegFill(orderId: Int): OrderStatus =
+        try {
+            val status = registry.awaitTerminal(orderId, legFillTimeoutMs.milliseconds)
+            if (status == OrderStatus.PENDING) {
+                logger.warn { "[$exchangeId] Leg $orderId did not fill within ${legFillTimeoutMs}ms" }
+            }
+            status
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             logger.warn(e) { "[$exchangeId] Leg $orderId fill failed (broker error) — treating as not filled" }
             OrderStatus.CANCELLED
         }
-    }
 
     private fun cancelQuietly(orderId: Int) {
         // Our own abort cancel, not a broker rejection — mark it so the code-202 callback is
@@ -207,8 +197,6 @@ class LegByLegOrderStrategy(
         registry.markSelfCancelled(orderId)
         runCatching { client.cancelOrder(orderId, com.ib.client.OrderCancel()) }
             .onFailure { e -> logger.warn(e) { "[$exchangeId] Failed to cancel order $orderId" } }
-        // Abandoned leg — drop its fill deferred so pendingOrderStatus doesn't leak (E8).
-        registry.pendingOrderStatus.remove(orderId)
     }
 
     override fun validateOrder(
@@ -290,8 +278,6 @@ class LegByLegOrderStrategy(
                 logger.error { "[$exchangeId] nextOrderId returned 0 for $legDescription leg — submission unavailable" }
                 0
             } else {
-                registry.pendingOrderStatus[orderId] = CompletableDeferred()
-
                 logger.debug {
                     "[$exchangeId] Submitting $legDescription leg: $action ${contract.strike}${contract.type.ibkrCode} " +
                         "@ $limitPrice orderId=$orderId"

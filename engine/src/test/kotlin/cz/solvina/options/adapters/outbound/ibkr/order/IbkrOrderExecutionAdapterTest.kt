@@ -1,9 +1,10 @@
 package cz.solvina.options.adapters.outbound.ibkr.order
 
+import com.ib.client.Decimal
 import com.ib.client.EClientSocket
 import cz.solvina.options.adapters.outbound.ibkr.IbkrInstrumentsConfig
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOpenOrdersAdapter
-import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
+import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOrdersRegistry
 import cz.solvina.options.domain.features.alert.AlertLevel
 import cz.solvina.options.domain.features.alert.AlertPort
 import cz.solvina.options.domain.features.order.OrderStatus
@@ -14,7 +15,6 @@ import cz.solvina.options.domain.models.Symbol
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import java.math.BigDecimal
@@ -22,14 +22,14 @@ import java.time.LocalDate
 import kotlin.test.assertEquals
 
 /**
- * Leg-by-leg entries only report SUCCESS once both order-level fill deferreds already completed
+ * Leg-by-leg entries only report SUCCESS once both order-level callbacks already reported
  * FILLED (see [LegByLegOrderStrategy]) — that is authoritative. A slow account position feed lagging
  * behind that confirmation must not be treated as a rejection: doing so used to abandon (cancel)
  * already-filled orders and record the spread as CLOSED_REJECTED while a real, unmanaged position
  * sat in the account (no TP/SL/DTE). The adapter must trust the order-level fills and alert instead.
  */
 class IbkrOrderExecutionAdapterTest {
-    private val registry: IbkrOrderRegistry = mockk(relaxed = true)
+    private val registry: IbkrOrdersRegistry = mockk(relaxed = true)
     private val client: EClientSocket = mockk(relaxed = true)
     private val openOrdersAdapter: IbkrOpenOrdersAdapter = mockk(relaxed = true)
     private val strategyRouter: ExchangeStrategyRouter = mockk()
@@ -127,12 +127,9 @@ class IbkrOrderExecutionAdapterTest {
         }
 
     @Test
-    fun `awaitFill falls back to the registry fill record when the deferred is gone`() =
+    fun `awaitFill returns immediate terminal state from the registry`() =
         runTest {
-            // A missing deferred does not always mean cancelled: the entry may have been consumed
-            // while the order actually FILLED (e.g. a fill racing a cancel, or a deferred already
-            // handed off elsewhere). The registry's fill record is the authoritative tiebreaker.
-            val realRegistry = IbkrOrderRegistry()
+            val realRegistry = IbkrOrdersRegistry()
             val realAdapter =
                 IbkrOrderExecutionAdapter(
                     registry = realRegistry,
@@ -145,12 +142,20 @@ class IbkrOrderExecutionAdapterTest {
                     alertPort = alertPort,
                 )
 
-            // Order 42 filled, then its deferred was consumed/removed.
-            realRegistry.pendingOrderStatus[42] = CompletableDeferred()
-            realRegistry.onOrderStatus(42, "Filled", 1.23)
-            realRegistry.pendingOrderStatus.remove(42)
+            realRegistry.onOrderStatus(
+                orderId = 42,
+                status = "Filled",
+                filled = Decimal.get(1),
+                remaining = Decimal.ZERO,
+                avgFillPrice = 1.23,
+                permId = 0,
+                parentId = 0,
+                lastFillPrice = 1.23,
+                clientId = 0,
+                whyHeld = null,
+                mktCapPrice = 0.0,
+            )
 
-            assertEquals(OrderStatus.FILLED, realAdapter.awaitFill(42), "filled order with a consumed deferred must report FILLED")
-            assertEquals(OrderStatus.CANCELLED, realAdapter.awaitFill(43), "unknown order still reports CANCELLED")
+            assertEquals(OrderStatus.FILLED, realAdapter.awaitFill(42), "filled order must report FILLED from registry state")
         }
 }

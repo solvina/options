@@ -6,8 +6,8 @@ package cz.solvina.options.domain.features.order
  * old and the new order could rest and fill, doubling the position).
  *
  * This is a RECOVERABLE control-flow signal, not a fatal error: the ladder must catch it, stop
- * repricing, and ride the existing order to its authoritative resolution (fill watcher or the
- * execution timeout's cancel-and-await). It must NEVER be allowed to escape the entry coroutine —
+ * repricing, and ride the existing order to its authoritative broker-update resolution or the
+ * execution timeout's cancel-and-await. It must NEVER be allowed to escape the entry coroutine —
  * doing so leaves the spread stuck in PENDING while its order keeps working at the broker and later
  * fills as an untracked orphan.
  */

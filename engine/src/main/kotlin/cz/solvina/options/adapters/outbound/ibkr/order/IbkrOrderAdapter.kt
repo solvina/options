@@ -5,27 +5,25 @@ import com.ib.client.EClientSocket
 import com.ib.client.Order
 import com.ib.client.OrderCancel
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
+import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOrdersRegistry
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
 import cz.solvina.options.adapters.outbound.ibkr.cache.OptionContractKey
 import cz.solvina.options.adapters.outbound.ibkr.cache.resolveConIdOrCached
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderIdCounter
-import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import cz.solvina.options.domain.features.order.LegAction
 import cz.solvina.options.domain.features.order.LegOrder
 import cz.solvina.options.domain.features.order.OrderPort
-import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
 import io.github.oshai.kotlinlogging.KotlinLogging
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.withTimeout
 import org.springframework.stereotype.Component
+import kotlin.time.Duration.Companion.seconds
 
 private val logger = KotlinLogging.logger {}
 
 @Component
 class IbkrOrderAdapter(
-    private val registry: IbkrOrderRegistry,
+    private val registry: IbkrOrdersRegistry,
     private val ibkrOrderIdCounter: IbkrOrderIdCounter,
     private val client: EClientSocket,
     private val contractCache: IbkrContractCache,
@@ -47,8 +45,6 @@ class IbkrOrderAdapter(
         val ibkrContract = buildIbkrContract(contract, conId)
 
         val orderId = ibkrOrderIdCounter.nextOrderId()
-        val deferred = CompletableDeferred<OrderStatus>()
-        registry.pendingOrderStatus[orderId] = deferred
 
         val ibkrOrder =
             Order().apply {
@@ -87,8 +83,6 @@ class IbkrOrderAdapter(
 
         val ibkrContract = buildIbkrContract(contract, conId)
         val orderId = ibkrOrderIdCounter.nextOrderId()
-        val deferred = CompletableDeferred<OrderStatus>()
-        registry.pendingOrderStatus[orderId] = deferred
 
         val ibkrOrder =
             Order().apply {
@@ -103,7 +97,7 @@ class IbkrOrderAdapter(
         }
         client.placeOrder(orderId, ibkrContract, ibkrOrder)
 
-        val status = withTimeout(30_000L) { deferred.await() }
+        val status = registry.awaitTerminal(orderId, 30.seconds)
         return LegOrder(orderId = orderId, status = status)
     }
 

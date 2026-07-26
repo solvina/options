@@ -418,7 +418,7 @@ class FlagScannerService(
                 // Serialise position count check + submission to close the TOCTOU window where two
                 // concurrent breakout signals could both read below maxOpenPositions before either persists.
                 entryMutex.withLock {
-                    val active = flagPort.findOpen() + flagPort.findByStatus(FlagStatus.PENDING) + flagPort.findByStatus(FlagStatus.CLOSING)
+                    val active = flagPort.findByStatuses(FlagStatus.ACTIVE_STATUSES)
                     // One position per symbol at a time: a re-formed pattern can fire a second
                     // legitimate breakout minutes after the first (AAPL 2026-06-26 double-open),
                     // and two live positions on one symbol make broker-position attribution

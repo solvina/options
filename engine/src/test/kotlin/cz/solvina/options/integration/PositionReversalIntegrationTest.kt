@@ -96,7 +96,7 @@ class PositionReversalIntegrationTest {
     private val orderPort = mockk<OrderPort>()
     private val universePort = mockk<UniversePort>(relaxed = true)
     private val mockClient = mockk<com.ib.client.EClientSocket>(relaxed = true)
-    private val mockOrderRegistry = mockk<cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry>(relaxed = true)
+    private val mockOrderRegistry = mockk<cz.solvina.options.adapters.outbound.ibkr.account.IbkrOrdersRegistry>(relaxed = true)
 
     @BeforeEach
     fun setUp() {

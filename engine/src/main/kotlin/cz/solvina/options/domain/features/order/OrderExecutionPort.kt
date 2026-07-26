@@ -56,7 +56,7 @@ interface OrderExecutionPort {
     /**
      * Cancel the existing combo order and resubmit at [newCredit]. Returns the new orderId, or
      * [existingOrderId] unchanged when the old order turned out to have FILLED during the cancel
-     * (no replacement submitted — the caller's existing fill watcher will complete).
+     * (no replacement submitted — the caller continues tracking the same broker order id).
      *
      * Throws [OrderReplacementUnverifiedException] when the old order could not be confirmed removed:
      * no replacement is submitted (double-fill is prevented), and the caller MUST catch this and ride
@@ -85,7 +85,7 @@ interface OrderExecutionPort {
 
     /**
      * Amend the working combo order [existingOrderId] to rest at [newCredit], IN PLACE — same
-     * orderId, same fill watcher, no cancel. IBKR treats a re-`placeOrder` on a live id as a
+     * orderId, same lifecycle stream, no cancel. IBKR treats a re-`placeOrder` on a live id as a
      * modification. Only valid for exchanges where [supportsInPlaceComboModify] is true.
      */
     suspend fun modifyComboPriceInPlace(

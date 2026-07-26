@@ -4,6 +4,7 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
+import kotlin.time.Duration.Companion.milliseconds
 
 private val logger = KotlinLogging.logger {}
 
@@ -24,7 +25,7 @@ private val logger = KotlinLogging.logger {}
  */
 suspend fun IbkrContractCache.resolveConIdOrCached(key: OptionContractKey): Int? =
     try {
-        withTimeout(6_000L) { getOrFetchOptionConId(key) }
+        withTimeout(6_000L.milliseconds) { getOrFetchOptionConId(key) }
     } catch (e: TimeoutCancellationException) {
         cachedFallback(key, e)
     } catch (e: CancellationException) {

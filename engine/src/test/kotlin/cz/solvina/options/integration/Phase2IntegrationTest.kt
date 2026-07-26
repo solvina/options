@@ -3,11 +3,11 @@ package cz.solvina.options.integration
 import com.ib.client.EClientSocket
 import com.ib.client.OrderCancel
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOpenOrdersAdapter
+import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOrdersRegistry
 import cz.solvina.options.adapters.outbound.ibkr.account.OpenOrder
 import cz.solvina.options.adapters.outbound.ibkr.order.OrderCancellationService
 import cz.solvina.options.adapters.outbound.ibkr.order.OrderReplacementService
 import cz.solvina.options.adapters.outbound.ibkr.order.ReplacementCancelResult
-import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
 import io.mockk.coEvery
 import io.mockk.mockk
 import io.mockk.verify
@@ -25,7 +25,7 @@ class Phase2IntegrationTest {
     private val client: EClientSocket = mockk(relaxed = true)
     private val openOrdersAdapter: IbkrOpenOrdersAdapter = mockk()
 
-    private val orderRegistry: IbkrOrderRegistry = mockk(relaxed = true)
+    private val orderRegistry: IbkrOrdersRegistry = mockk(relaxed = true)
 
     private lateinit var orderCancellationService: OrderCancellationService
     private lateinit var orderReplacementService: OrderReplacementService

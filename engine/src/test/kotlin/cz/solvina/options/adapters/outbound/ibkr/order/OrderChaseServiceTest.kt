@@ -3,18 +3,18 @@ package cz.solvina.options.adapters.outbound.ibkr.order
 import com.ib.client.Contract
 import com.ib.client.EClientSocket
 import com.ib.client.Order
+import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOrdersRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderIdCounter
-import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderRegistry
+import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.features.scanner.ScannerConfig
 import io.mockk.Runs
+import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.just
 import io.mockk.mockk
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import java.math.BigDecimal
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.BeforeTest
 import kotlin.test.assertEquals
@@ -28,10 +28,9 @@ import kotlin.test.assertTrue
  */
 class OrderChaseServiceTest {
     private val client: EClientSocket = mockk(relaxed = true)
-    private val registry: IbkrOrderRegistry = mockk()
+    private val registry: IbkrOrdersRegistry = mockk()
     private val ibkrOrderIdCounter: IbkrOrderIdCounter = mockk()
 
-    private val pending = ConcurrentHashMap<Int, CompletableDeferred<cz.solvina.options.domain.features.order.OrderStatus>>()
     private val nextId = AtomicInteger(101)
     private val placedPrices = mutableListOf<Double>()
 
@@ -47,16 +46,13 @@ class OrderChaseServiceTest {
     @BeforeTest
     fun setup() {
         every { ibkrOrderIdCounter.nextOrderId() } answers { nextId.getAndIncrement() }
-        every { registry.pendingOrderStatus } returns pending
         every { registry.markSelfCancelled(any()) } just Runs
         every { registry.isFilled(any()) } returns false
+        coEvery { registry.awaitTerminal(any(), any()) } returns OrderStatus.PENDING
         every { client.placeOrder(any(), any(), any()) } answers {
             val order = thirdArg<Order>()
             placedPrices.add(order.lmtPrice())
         }
-        // The initial order (id=100) sits unfilled for the whole test — never completed — so every
-        // attempt times out and the chase reprices.
-        pending[100] = CompletableDeferred()
     }
 
     @Test
@@ -114,7 +110,7 @@ class OrderChaseServiceTest {
                     qty = 1,
                 )
 
-            assertEquals(cz.solvina.options.domain.features.order.OrderStatus.FILLED, result.status)
+            assertEquals(OrderStatus.FILLED, result.status)
             assertEquals(100, result.orderId)
             assertTrue(placedPrices.isEmpty(), "no replacement order may be placed after a fill raced the cancel")
         }
