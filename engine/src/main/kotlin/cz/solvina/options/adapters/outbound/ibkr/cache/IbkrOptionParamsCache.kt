@@ -1,7 +1,6 @@
 package cz.solvina.options.adapters.outbound.ibkr.cache
 
 import com.ib.client.EClientSocket
-import com.sun.tools.javac.tree.TreeInfo.symbol
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOptionParamsRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderIdCounter
@@ -67,8 +66,11 @@ class IbkrOptionParamsCache(
                 }
         cache[symbol] = params
         if (params.expirations.isNotEmpty()) {
-            runCatching { store.save(symbol, params) }
-                .onFailure { logger.warn { "[$symbol] Failed to persist option params: ${it.message}" } }
+            try {
+                store.save(symbol, params)
+            } catch (e: Exception) {
+                logger.error(e) { "[$symbol] Failed to persist option params: ${e.message}" }
+            }
         }
         logger.info {
             "[$symbol] Cached ${params.expirations.size} expirations, ${params.strikes.size} strikes " +

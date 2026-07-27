@@ -13,7 +13,7 @@ interface OptionParamsStorePort {
     fun loadAll(): Map<Symbol, OptionParams>
 
     /** Persist the latest fetched option params for [symbol]. */
-    suspend fun save(
+    fun save(
         symbol: Symbol,
         params: OptionParams,
     )

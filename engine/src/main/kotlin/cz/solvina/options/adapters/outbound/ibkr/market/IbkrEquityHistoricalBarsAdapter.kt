@@ -101,8 +101,16 @@ class IbkrEquityHistoricalBarsAdapter(
                     registry.pendingRawBars[reqId] =
                         PendingRawBarsRequest(
                             onBar = { bar -> parseBar(bar)?.let { trySend(it) } },
-                            onEnd = { close() },
-                            onError = { e -> close(e) },
+                            onEnd = {
+                                logger.debug { "[${symbol.value}] reqHistoricalData finished for: reqId=$reqId endDateTime='$endDateTime' duration='$durationStr' endOfData=true" }
+                                close()
+                            },
+                            onError = { e ->
+                                run {
+                                    logger.error(e) { "[${symbol.value}] reqHistoricalData failed: reqId=$reqId endDateTime='$endDateTime' duration='$durationStr' endOfData=false" }
+                                    close(e)
+                                }
+                            },
                         )
                     logger.debug { "[${symbol.value}] reqHistoricalData reqId=$reqId endDateTime='$endDateTime' duration='$durationStr'" }
                     // TWS_LIMITS: no standing market-data line, but counts against historical-data

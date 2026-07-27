@@ -223,7 +223,9 @@ class IbkrContractCache(
         if (marketRuleRegistry.startRequest(marketRuleId)) {
             client.reqMarketRule(marketRuleId)
         }
-        return withTimeoutOrNull(3_000L.milliseconds) { marketRuleRegistry.await(marketRuleId, 3_000L.milliseconds) }
+        return withTimeoutOrNull(3_000L.milliseconds) {
+            marketRuleRegistry.await(marketRuleId, 3_000L.milliseconds)
+        }
     }
 
     suspend fun getOrFetchOptionConId(key: OptionContractKey): Int {
@@ -549,10 +551,13 @@ class IbkrContractCache(
         try {
             contractDetailsRegistry.awaitEnd(reqId, timeout)
         } catch (_: TimeoutCancellationException) {
+            logger.warn { "[$reqId] Contract details timeout (IBKR not responding)" }
             null
         } catch (e: CancellationException) {
+            logger.warn { "[$reqId] Contract details cancelled (IBKR not responding)" }
             throw e
         } catch (e: RuntimeException) {
+            logger.warn { "[$reqId] Contract details error (IBKR not responding)" }
             onBrokerFailure()
             throw e
         }

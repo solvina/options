@@ -242,6 +242,7 @@ class FlagScannerService(
                     .streamBars(symbol)
                     .catch { e -> logger.error(e) { "[${symbol.value}] Real-time bar stream error: ${e.message}" } }
                     .collect { bar ->
+                        logger.debug { "[${symbol.value}] New bar: ${bar.time}" }
                         // Update high/low watermarks for any open position on this symbol
                         flagManagementService.updateWatermarksForSymbol(symbol, BigDecimal.valueOf(bar.close))
 

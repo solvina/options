@@ -6,8 +6,6 @@ import cz.solvina.options.adapters.outbound.ibkr.cache.OptionParamsStorePort
 import cz.solvina.options.adapters.outbound.persistence.postgres.entity.OptionParamsCacheEntity
 import cz.solvina.options.adapters.outbound.persistence.postgres.repository.OptionParamsCacheRepository
 import cz.solvina.options.domain.models.Symbol
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
 import java.time.LocalDate
@@ -42,11 +40,10 @@ class OptionParamsCachePersistenceAdapter(
                 )
         }
 
-    override suspend fun save(
+    override fun save(
         symbol: Symbol,
         params: OptionParams,
     ) {
-        withContext(Dispatchers.IO) {
             repository.save(
                 OptionParamsCacheEntity(
                     symbol = symbol.value,
@@ -64,7 +61,6 @@ class OptionParamsCachePersistenceAdapter(
                     fetchedAt = params.fetchedAt,
                 ),
             )
-        }
     }
 
     private fun readList(json: String): List<String> = mapper.readValue(json, Array<String>::class.java).toList()
