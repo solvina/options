@@ -7,11 +7,11 @@ import cz.solvina.options.adapters.outbound.ibkr.account.IbkrPositionsAdapter
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrOptionParamsCache
 import cz.solvina.options.adapters.outbound.ibkr.market.IbkrHistoricalDataAdapter
+import cz.solvina.options.adapters.outbound.ibkr.market.MarketSnapshotHelper
 import cz.solvina.options.adapters.outbound.ibkr.market.SnapshotReady
 import cz.solvina.options.adapters.outbound.ibkr.market.midPrice
-import cz.solvina.options.adapters.outbound.ibkr.market.reqMktDataSnapshot
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
-import cz.solvina.options.adapters.outbound.ibkr.registry.PendingContinuousMarketDataRequest
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderIdCounter
 import cz.solvina.options.adapters.outbound.ibkr.registry.PendingTickByTickRequest
 import cz.solvina.options.domain.features.account.AccountPort
 import cz.solvina.options.domain.features.diagnostic.AccountHealthReport
@@ -35,6 +35,7 @@ import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
+import kotlin.time.Duration.Companion.milliseconds
 
 private val logger = KotlinLogging.logger {}
 private const val RISK_FREE_RATE = 0.05
@@ -46,6 +47,8 @@ class IbkrDiagnosticProbeAdapter(
     private val historicalDataAdapter: IbkrHistoricalDataAdapter,
     private val volatilityPort: VolatilityPort,
     private val registry: IbkrMarketDataRegistry,
+    private val marketSnapshotHelper: MarketSnapshotHelper,
+    private val idCounter: IbkrOrderIdCounter,
     private val client: EClientSocket,
     private val contractFactory: IbkrContractFactory,
     private val positionsAdapter: IbkrPositionsAdapter,
@@ -120,7 +123,11 @@ class IbkrDiagnosticProbeAdapter(
         return runCatching {
             logger.info { "[$symbol] DIAG reqMktData snapshot (stock spot)" }
             val snapshot =
-                reqMktDataSnapshot(registry, client, contractFactory.stockContract(symbol), "", SnapshotReady.STOCK_PRICE)
+                marketSnapshotHelper.reqMktDataSnapshot(
+                    symbol,
+                    contractFactory.stockContract(symbol),
+                    SnapshotReady.STOCK_PRICE,
+                )
             val ms = System.currentTimeMillis() - start
             logger.info {
                 "[$symbol] DIAG reqMktData stock → bid=${snapshot.bid} ask=${snapshot.ask} " +
@@ -154,7 +161,11 @@ class IbkrDiagnosticProbeAdapter(
         val start = System.currentTimeMillis()
         logger.info { "[${contract.symbol}] DIAG reqMktData snapshot (option ${contract.strike}P exp=${contract.expiry})" }
         val snapshot =
-            reqMktDataSnapshot(registry, client, contractFactory.optionContract(contract), "", SnapshotReady.OPTION_QUOTE)
+            marketSnapshotHelper.reqMktDataSnapshot(
+                contract.symbol,
+                contractFactory.optionContract(contract),
+                SnapshotReady.OPTION_QUOTE,
+            )
         val ms = System.currentTimeMillis() - start
         logger.info {
             "[${contract.symbol}] DIAG reqMktData option ${contract.strike}P → " +
@@ -175,7 +186,12 @@ class IbkrDiagnosticProbeAdapter(
             val spot =
                 runCatching {
                     val stock = contractFactory.stockContract(contract.symbol)
-                    val snap = reqMktDataSnapshot(registry, client, stock, "", SnapshotReady.STOCK_PRICE)
+                    val snap =
+                        marketSnapshotHelper.reqMktDataSnapshot(
+                            contract.symbol,
+                            stock,
+                            SnapshotReady.STOCK_PRICE,
+                        )
                     snap.last.takeIf { !it.isNaN() } ?: snap.close.takeIf { !it.isNaN() }
                 }.getOrNull()
             val sigma = runCatching { volatilityPort.getIvRank(contract.symbol).currentIv }.getOrNull()
@@ -226,46 +242,55 @@ class IbkrDiagnosticProbeAdapter(
         val lastAsk = AtomicReference(Double.NaN)
         val lastDelta = AtomicReference(Double.NaN)
 
-        val soldTickReqId = registry.nextReqId()
-        val boughtTickReqId = registry.nextReqId()
-        val soldGreeksReqId = registry.nextReqId()
-        val boughtGreeksReqId = registry.nextReqId()
-        val underlyingReqId = registry.nextReqId()
+        val soldTickReqId = idCounter.nextOrderId()
+        val boughtTickReqId = idCounter.nextOrderId()
+        val soldGreeksReqId = idCounter.nextOrderId()
+        val boughtGreeksReqId = idCounter.nextOrderId()
+        val underlyingReqId = idCounter.nextOrderId()
 
-        registry.pendingTickByTick[soldTickReqId] =
+        registry.addPendingTickByTickRequest(
+            soldTickReqId,
+            symbol,
             PendingTickByTickRequest { tick ->
                 tickCount.incrementAndGet()
                 lastBid.set(tick.bidPrice)
                 lastAsk.set(tick.askPrice)
                 logger.info { "[$symbol] DIAG tick BidAsk sold: bid=${tick.bidPrice} ask=${tick.askPrice}" }
                 true
-            }
-        registry.pendingTickByTick[boughtTickReqId] =
+            },
+        )
+        registry.addPendingTickByTickRequest(
+            boughtTickReqId,
+            symbol,
             PendingTickByTickRequest { tick ->
                 tickCount.incrementAndGet()
                 logger.info { "[$symbol] DIAG tick BidAsk bought: bid=${tick.bidPrice} ask=${tick.askPrice}" }
                 true
-            }
-        registry.pendingContinuousMarketData[soldGreeksReqId] =
-            PendingContinuousMarketDataRequest(
-                onUpdate = { snap ->
-                    if (!snap.delta.isNaN()) lastDelta.set(snap.delta)
-                    logger.info { "[$symbol] DIAG tick Greeks sold: delta=${snap.delta} impliedVol=${snap.impliedVol}" }
-                },
-            )
-        registry.pendingContinuousMarketData[boughtGreeksReqId] =
-            PendingContinuousMarketDataRequest(
-                onUpdate = { snap ->
-                    logger.info { "[$symbol] DIAG tick Greeks bought: delta=${snap.delta} impliedVol=${snap.impliedVol}" }
-                },
-            )
-        registry.pendingContinuousMarketData[underlyingReqId] =
-            PendingContinuousMarketDataRequest(
-                onUpdate = { snap ->
-                    val price = snap.last.takeIf { !it.isNaN() } ?: snap.close.takeIf { !it.isNaN() }
-                    if (price != null) logger.info { "[$symbol] DIAG tick underlying price: $price" }
-                },
-            )
+            },
+        )
+        registry.addPendingContinuousMarketDataRequest(
+            soldGreeksReqId,
+            symbol,
+            onUpdate = { snap ->
+                if (!snap.delta.isNaN()) lastDelta.set(snap.delta)
+                logger.info { "[$symbol] DIAG tick Greeks sold: delta=${snap.delta} impliedVol=${snap.impliedVol}" }
+            },
+        )
+        registry.addPendingContinuousMarketDataRequest(
+            boughtGreeksReqId,
+            symbol,
+            onUpdate = { snap ->
+                logger.info { "[$symbol] DIAG tick Greeks bought: delta=${snap.delta} impliedVol=${snap.impliedVol}" }
+            },
+        )
+        registry.addPendingContinuousMarketDataRequest(
+            underlyingReqId,
+            symbol,
+            onUpdate = { snap ->
+                val price = snap.last.takeIf { !it.isNaN() } ?: snap.close.takeIf { !it.isNaN() }
+                if (price != null) logger.info { "[$symbol] DIAG tick underlying price: $price" }
+            },
+        )
 
         // TWS_LIMITS: +5 market-data lines (1 underlying + 2 tick-by-tick + 2 Greeks) for the manual
         // diagnostic window only. Self-retiring — every one is cancelled after the delay below. Off the
@@ -277,18 +302,18 @@ class IbkrDiagnosticProbeAdapter(
         client.reqMktData(boughtGreeksReqId, contractFactory.optionContract(boughtContract), "100", false, false, null)
 
         logger.info { "[$symbol] DIAG tick stream active — waiting ${windowMs}ms" }
-        delay(windowMs)
+        delay(windowMs.milliseconds)
 
         // Cancel all subscriptions
-        registry.pendingTickByTick.remove(soldTickReqId)
+        registry.remove(soldTickReqId)
         client.cancelTickByTickData(soldTickReqId)
-        registry.pendingTickByTick.remove(boughtTickReqId)
+        registry.remove(boughtTickReqId)
         client.cancelTickByTickData(boughtTickReqId)
-        registry.pendingContinuousMarketData.remove(soldGreeksReqId)
+        registry.remove(soldGreeksReqId)
         client.cancelMktData(soldGreeksReqId)
-        registry.pendingContinuousMarketData.remove(boughtGreeksReqId)
+        registry.remove(boughtGreeksReqId)
         client.cancelMktData(boughtGreeksReqId)
-        registry.pendingContinuousMarketData.remove(underlyingReqId)
+        registry.remove(underlyingReqId)
         client.cancelMktData(underlyingReqId)
 
         logger.info {

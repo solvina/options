@@ -37,6 +37,7 @@ import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketRuleRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOptionParamsRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderIdCounter
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrRealTimeBarsRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.TickByTickBidAsk
 import cz.solvina.options.domain.features.alert.AlertService
 import cz.solvina.options.domain.features.market.MarketDataHealthTracker
@@ -106,6 +107,7 @@ class IbkrEWrapper(
     private val optionParamsRegistry: IbkrOptionParamsRegistry,
     private val marketRuleRegistry: IbkrMarketRuleRegistry,
     private val marketDataRegistry: IbkrMarketDataRegistry,
+    private val realTimeBarsRegistry: IbkrRealTimeBarsRegistry,
     private val orderRegistry: IbkrOrdersRegistry,
     private val ibkrOrderIdCounter: IbkrOrderIdCounter,
     private val accountRegistry: IbkrAccountRegistry,
@@ -528,7 +530,16 @@ class IbkrEWrapper(
         // Real-time bars stream continuously (flag scanner) even between scans — the best live-data
         // heartbeat for the market-data flow signal. See MarketDataHealthTracker.recordLiveTick.
         marketDataHealthTracker.recordLiveTick()
-        marketDataRegistry.onRealtimeBar(reqId, time, open, high, low, close, volume.value().toLong(), wap.value().toDouble())
+        realTimeBarsRegistry.onRealtimeBar(
+            reqId,
+            time,
+            open,
+            high,
+            low,
+            close,
+            volume.value().toLong(),
+            wap.value().toDouble(),
+        )
     }
 
     override fun currentTime(time: Long) {
@@ -559,7 +570,14 @@ class IbkrEWrapper(
         marketDataType: Int,
     ) {
         logger.debug { "marketDataType: reqId=$reqId, type=$marketDataType" }
-        marketDataRegistry.reqIdToSymbol[reqId]?.let { marketDataTypeTracker.recordType(it, marketDataType) }
+        val symbol =
+            realTimeBarsRegistry.getSymbolForRealTimeBar(reqId)
+                ?: marketDataRegistry.getSymbolForMarketData(reqId)
+        if (symbol != null) {
+            marketDataTypeTracker.recordType(symbol, marketDataType)
+        } else {
+            logger.warn { "marketDataType: unknown reqId=$reqId" }
+        }
     }
 
     override fun commissionReport(commissionReport: CommissionReport) {
@@ -670,6 +688,7 @@ class IbkrEWrapper(
                 contractDetailsRegistry.onError(id, errorCode, errorMsg)
                 optionParamsRegistry.onError(id, errorCode, errorMsg)
                 marketDataRegistry.onError(id, errorCode, errorMsg)
+                realTimeBarsRegistry.onError(id, errorCode, errorMsg)
                 orderRegistry.onError(id, errorCode, errorMsg)
                 dividendTickRegistry.onError(id, errorCode, errorMsg)
             }

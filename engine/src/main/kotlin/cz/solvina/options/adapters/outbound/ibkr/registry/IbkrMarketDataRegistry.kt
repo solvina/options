@@ -10,18 +10,21 @@ import java.util.concurrent.ConcurrentHashMap
 
 private val logger = KotlinLogging.logger {}
 
-internal data class PendingMarketDataRequest(
-    val deferred: CompletableDeferred<MarketDataSnapshot>,
+data class PendingMarketDataRequest(
     /** Streaming reqMktData (snapshot=false) never emits tickSnapshotEnd, so the deferred is resolved
      *  as soon as this predicate accepts the accumulated snapshot. Defaults to "never ready", which
      *  preserves the old timeout-only behaviour for callers that don't supply one. */
     val isReady: (MarketDataSnapshot) -> Boolean = { false },
     @Volatile var snapshot: MarketDataSnapshot = MarketDataSnapshot(),
-)
+) {
+    internal val deferred: CompletableDeferred<MarketDataSnapshot> = CompletableDeferred()
+
+    suspend fun await(): MarketDataSnapshot = deferred.await()
+}
 
 /** Continuous reqMktData(snapshot=false) subscription. Each tick replaces [snapshot] with a new
  *  immutable instance via copy(); [onUpdate] is called after each replacement. */
-internal data class PendingContinuousMarketDataRequest(
+data class PendingContinuousMarketDataRequest(
     @Volatile var snapshot: MarketDataSnapshot = MarketDataSnapshot(),
     val onUpdate: (MarketDataSnapshot) -> Unit = {},
 )
@@ -34,16 +37,16 @@ data class TickByTickBidAsk(
 )
 
 /** Active reqTickByTick subscription. [trySend] is called on every incoming tick. */
-internal data class PendingTickByTickRequest(
+data class PendingTickByTickRequest(
     val trySend: (TickByTickBidAsk) -> Boolean,
 )
 
 /** Active reqRealTimeBars subscription. [onError] receives per-request IBKR errors (e.g. rejection
  *  for missing live subscription) — without it a failed bars subscription is indistinguishable from
  *  a quiet market and the flag strategy goes silently inert. */
-internal data class PendingRealTimeBarsRequest(
+data class PendingRealTimeBarsRequest(
     val onBar: (RealTimeBar) -> Unit,
-    val onError: (Int, String) -> Unit = { _, _ -> },
+    val onError: (Int, String) -> Unit,
 )
 
 /**
@@ -69,41 +72,61 @@ internal fun normalizeDelayedOptionComputationField(field: Int): Int = if (field
 class IbkrMarketDataRegistry(
     private val idCounter: IbkrOrderIdCounter,
 ) {
-    internal val pendingMarketData = ConcurrentHashMap<Int, PendingMarketDataRequest>()
-    internal val pendingContinuousMarketData = ConcurrentHashMap<Int, PendingContinuousMarketDataRequest>()
-    internal val pendingTickByTick = ConcurrentHashMap<Int, PendingTickByTickRequest>()
+    private val pendingMarketData = ConcurrentHashMap<Int, PendingMarketDataRequest>()
+    private val pendingContinuousMarketData = ConcurrentHashMap<Int, PendingContinuousMarketDataRequest>()
+    private val pendingTickByTick = ConcurrentHashMap<Int, PendingTickByTickRequest>()
 
-    /** Active reqRealTimeBars subscriptions. */
-    internal val pendingRealTimeBars = ConcurrentHashMap<Int, PendingRealTimeBarsRequest>()
+    fun createPendingMarketDataRequest(
+        reqId: Int,
+        symbol: Symbol,
+        isReady: (MarketDataSnapshot) -> Boolean,
+    ): PendingMarketDataRequest =
+        PendingMarketDataRequest(isReady)
+            .also { request -> pendingMarketData[reqId] = request }
+            .also { reqIdToSymbol[reqId] = symbol }
+
+    fun getPendingContinuousMarketDataSnapshot(reqId: Int): MarketDataSnapshot? = pendingContinuousMarketData[reqId]?.snapshot
+
+    fun addPendingContinuousMarketDataRequest(
+        reqId: Int,
+        symbol: Symbol,
+        onUpdate: (MarketDataSnapshot) -> Unit,
+    ) {
+        pendingContinuousMarketData[reqId] = PendingContinuousMarketDataRequest(onUpdate = onUpdate)
+        reqIdToSymbol[reqId] = symbol
+    }
+
+    fun addPendingTickByTickRequest(
+        reqId: Int,
+        symbol: Symbol,
+        request: PendingTickByTickRequest,
+    ) {
+        pendingTickByTick[reqId] = request
+        reqIdToSymbol[reqId] = symbol
+    }
+
+    fun remove(reqId: Int) {
+        pendingMarketData.remove(reqId)
+            ?: pendingContinuousMarketData.remove(reqId)
+            ?: pendingTickByTick.remove(reqId)
+        // Every registration writes reqIdToSymbol; this is the single cleanup choke point all
+        // lifecycle paths funnel through, so retire the symbol entry here too — otherwise the map
+        // grows one entry per snapshot/stream for the life of the process.
+        reqIdToSymbol.remove(reqId)
+    }
+
+    fun hasReqId(reqId: Int): Boolean =
+        pendingMarketData.containsKey(reqId) ||
+            pendingContinuousMarketData.containsKey(reqId) ||
+            pendingTickByTick.containsKey(reqId)
 
     /** reqId → symbol for subscriptions whose owning symbol is known, so the marketDataType
      *  callback (keyed only by reqId) can be attributed to a symbol. */
-    internal val reqIdToSymbol = ConcurrentHashMap<Int, Symbol>()
-
-    fun onRealtimeBar(
-        reqId: Int,
-        time: Long,
-        open: Double,
-        high: Double,
-        low: Double,
-        close: Double,
-        volume: Long,
-        wap: Double,
-    ) {
-        val bar =
-            RealTimeBar(
-                time = Instant.ofEpochSecond(time),
-                open = open,
-                high = high,
-                low = low,
-                close = close,
-                volume = volume,
-                wap = wap,
-            )
-        pendingRealTimeBars[reqId]?.onBar?.invoke(bar)
-    }
+    private val reqIdToSymbol = ConcurrentHashMap<Int, Symbol>()
 
     fun nextReqId(): Int = idCounter.nextOrderId()
+
+    fun getSymbolForMarketData(reqId: Int): Symbol? = reqIdToSymbol[reqId]
 
     /** Resolve a streaming snapshot request the moment its readiness predicate is satisfied. Without
      *  this the deferred only ever completes on timeout (which discards the real ticks), so every
@@ -199,13 +222,6 @@ class IbkrMarketDataRegistry(
         code: Int,
         msg: String,
     ) {
-        // Real-time bars first: the graceful branches below return unconditionally and would swallow
-        // a bars rejection (e.g. 354/10195 for missing live subscription), leaving the flag strategy
-        // silently bar-less. The subscriber decides how loudly to surface it.
-        pendingRealTimeBars[id]?.let { request ->
-            request.onError(code, msg)
-            return
-        }
         // 200 = no security definition / ambiguous — could indicate options not authorized on the account.
         // 354 = no live subscription, 10197 = competing live session.
         // 10168 = delayed market data not enabled/available for this venue (delayed-mode paper hits
@@ -235,14 +251,16 @@ class IbkrMarketDataRegistry(
     }
 
     fun cancelAllPending(cause: Exception) {
-        val count = pendingMarketData.size + pendingContinuousMarketData.size + pendingTickByTick.size + pendingRealTimeBars.size
+        val count = pendingMarketData.size + pendingContinuousMarketData.size + pendingTickByTick.size
         if (count > 0) logger.warn { "Cancelling $count pending market data requests due to disconnect" }
         pendingMarketData.values.forEach { it.deferred.completeExceptionally(cause) }
         pendingMarketData.clear()
         // Continuous subscriptions: flows will detect completion via their awaitClose blocks
         pendingContinuousMarketData.clear()
         pendingTickByTick.clear()
+        // Drop symbol attributions too, so a disconnect leaves no orphaned entries even if a
+        // flow's awaitClose (which normally calls remove()) is delayed.
+        reqIdToSymbol.clear()
         // Real-time bar subscriptions will notice disconnect via their awaitClose blocks
-        pendingRealTimeBars.clear()
     }
 }

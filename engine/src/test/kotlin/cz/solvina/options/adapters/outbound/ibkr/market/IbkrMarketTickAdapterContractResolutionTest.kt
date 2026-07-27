@@ -9,6 +9,7 @@ import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrOptionParamsCache
 import cz.solvina.options.adapters.outbound.ibkr.cache.OptionContractKey
 import cz.solvina.options.adapters.outbound.ibkr.cache.OptionParams
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderIdCounter
 import cz.solvina.options.domain.features.universe.InstrumentRouting
 import cz.solvina.options.domain.models.OptionContract
 import cz.solvina.options.domain.models.OptionType
@@ -22,7 +23,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
@@ -50,10 +50,10 @@ class IbkrMarketTickAdapterContractResolutionTest {
     private val adapter =
         IbkrMarketTickAdapter(
             registry = registry,
+            idCounter = IbkrOrderIdCounter.testCounter(),
             client = client,
             contractFactory = contractFactory,
             contractCache = contractCache,
-            optionParamsCache = optionParamsCache,
             connectionConfig = IbkrConnectionConfig(useLiveMarketData = true),
             // SupervisorJob (matching production) so a failed fetch surfaces only via await();
             // Unconfined runs the detached fetch inline so resolution completes deterministically

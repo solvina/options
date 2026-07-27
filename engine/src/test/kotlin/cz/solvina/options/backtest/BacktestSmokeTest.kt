@@ -23,6 +23,7 @@ import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.features.volatility.IvRankService
 import cz.solvina.options.domain.models.Symbol
 import cz.solvina.options.testutil.InMemoryBearCallSpreadPort
+import io.mockk.mockk
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -190,6 +191,7 @@ class BacktestSmokeTest {
                 spreadQuery = spreadQuery,
                 config = config,
                 clock = clock,
+                regimeService = mockk(relaxed = true), // TODO - this needs to be sorted in a different way, tech debt
                 optionChainPort = optionChainAdapter,
             )
 

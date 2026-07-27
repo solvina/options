@@ -44,23 +44,23 @@ class OptionParamsCachePersistenceAdapter(
         symbol: Symbol,
         params: OptionParams,
     ) {
-            repository.save(
-                OptionParamsCacheEntity(
-                    symbol = symbol.value,
-                    expirationsJson = mapper.writeValueAsString(params.expirations.map { it.toString() }),
-                    strikesJson = mapper.writeValueAsString(params.strikes.map { it.toPlainString() }),
-                    strikesByExpiryJson =
-                        mapper.writeValueAsString(
-                            params.strikesByExpiry.entries.associate { (k, v) ->
-                                k.toString() to v.map { it.toPlainString() }
-                            },
-                        ),
-                    exchange = params.exchange,
-                    tradingClass = params.tradingClass,
-                    multiplier = params.multiplier,
-                    fetchedAt = params.fetchedAt,
-                ),
-            )
+        repository.save(
+            OptionParamsCacheEntity(
+                symbol = symbol.value,
+                expirationsJson = mapper.writeValueAsString(params.expirations.map { it.toString() }),
+                strikesJson = mapper.writeValueAsString(params.strikes.map { it.toPlainString() }),
+                strikesByExpiryJson =
+                    mapper.writeValueAsString(
+                        params.strikesByExpiry.entries.associate { (k, v) ->
+                            k.toString() to v.map { it.toPlainString() }
+                        },
+                    ),
+                exchange = params.exchange,
+                tradingClass = params.tradingClass,
+                multiplier = params.multiplier,
+                fetchedAt = params.fetchedAt,
+            ),
+        )
     }
 
     private fun readList(json: String): List<String> = mapper.readValue(json, Array<String>::class.java).toList()

@@ -5,10 +5,9 @@ import com.ib.client.EClientSocket
 import cz.solvina.options.adapters.outbound.ibkr.IbkrConnectionConfig
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
-import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrOptionParamsCache
 import cz.solvina.options.adapters.outbound.ibkr.cache.OptionContractKey
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
-import cz.solvina.options.adapters.outbound.ibkr.registry.PendingContinuousMarketDataRequest
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderIdCounter
 import cz.solvina.options.adapters.outbound.ibkr.registry.PendingTickByTickRequest
 import cz.solvina.options.domain.features.market.MarketTickPort
 import cz.solvina.options.domain.features.market.SpreadCreditTick
@@ -27,6 +26,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import org.springframework.stereotype.Component
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
+import kotlin.time.Duration.Companion.milliseconds
 
 private val logger = KotlinLogging.logger {}
 
@@ -38,10 +38,10 @@ private data class LegPrices(
 @Component
 class IbkrMarketTickAdapter(
     private val registry: IbkrMarketDataRegistry,
+    private val idCounter: IbkrOrderIdCounter,
     private val client: EClientSocket,
     private val contractFactory: IbkrContractFactory,
     private val contractCache: IbkrContractCache,
-    private val optionParamsCache: IbkrOptionParamsCache,
     private val connectionConfig: IbkrConnectionConfig,
     // Independent scope for conId resolution so a bounded caller-side wait never cancels (and thus
     // poisons) an in-flight IBKR contract lookup — a late-but-successful response still caches.
@@ -55,22 +55,23 @@ class IbkrMarketTickAdapter(
         callbackFlow {
             val reqId = registry.nextReqId()
             // Collector's priority class pays for the line (EXEC entry pricing vs EXIT monitoring).
-            registry.pendingContinuousMarketData[reqId] =
-                PendingContinuousMarketDataRequest(
-                    onUpdate = { snapshot ->
-                        val price =
-                            snapshot.last.takeIf { !it.isNaN() }
-                                ?: snapshot.close.takeIf { !it.isNaN() }
-                        if (price != null) trySend(price)
-                    },
-                )
+            registry.addPendingContinuousMarketDataRequest(
+                reqId,
+                symbol,
+                onUpdate = { snapshot ->
+                    val price =
+                        snapshot.last.takeIf { !it.isNaN() }
+                            ?: snapshot.close.takeIf { !it.isNaN() }
+                    if (price != null) trySend(price)
+                },
+            )
             // TWS_LIMITS: +1 market-data line (EXEC or EXIT, per the collector's MarketDataPriority).
             // Short-lived: lives only as long as the entry/exit decision reading the underlying price;
             // retires via cancelMktData in awaitClose when the collector stops. Subscribe→read→cancel.
             client.reqMktData(reqId, contractFactory.stockContract(symbol), "", false, false, null)
             logger.debug { "[$symbol] Started underlying price stream (reqId=$reqId)" }
             awaitClose {
-                registry.pendingContinuousMarketData.remove(reqId)
+                registry.remove(reqId)
                 client.cancelMktData(reqId)
                 logger.debug { "[$symbol] Cancelled underlying price stream (reqId=$reqId)" }
             }
@@ -89,10 +90,10 @@ class IbkrMarketTickAdapter(
         callbackFlow {
             val streamStartNanos = System.nanoTime()
             val firstTickLogged = AtomicBoolean(false)
-            val soldTickReqId = registry.nextReqId()
-            val boughtTickReqId = registry.nextReqId()
-            val soldGreeksReqId = registry.nextReqId()
-            val boughtGreeksReqId = registry.nextReqId()
+            val soldTickReqId = idCounter.nextOrderId()
+            val boughtTickReqId = idCounter.nextOrderId()
+            val soldGreeksReqId = idCounter.nextOrderId()
+            val boughtGreeksReqId = idCounter.nextOrderId()
 
             val soldPrices = AtomicReference(LegPrices())
             val boughtPrices = AtomicReference(LegPrices())
@@ -110,13 +111,13 @@ class IbkrMarketTickAdapter(
                 val soldMid = (s.bid + s.ask) / 2
                 val boughtMid = (b.bid + b.ask) / 2
                 val soldDelta =
-                    registry.pendingContinuousMarketData[soldGreeksReqId]
-                        ?.snapshot
+                    registry
+                        .getPendingContinuousMarketDataSnapshot(soldGreeksReqId)
                         ?.delta
                         ?.takeIf { !it.isNaN() }
                 val boughtDelta =
-                    registry.pendingContinuousMarketData[boughtGreeksReqId]
-                        ?.snapshot
+                    registry
+                        .getPendingContinuousMarketDataSnapshot(boughtGreeksReqId)
                         ?.delta
                         ?.takeIf { !it.isNaN() }
                 trySend(
@@ -136,39 +137,47 @@ class IbkrMarketTickAdapter(
             // the continuous reqMktData below carries (delayed) bid/ask instead. Saves 2 data lines.
             val useTickByTick = !connectionConfig.delayedMarketData
             if (useTickByTick) {
-                registry.pendingTickByTick[soldTickReqId] =
+                registry.addPendingTickByTickRequest(
+                    soldTickReqId,
+                    soldContract.symbol,
                     PendingTickByTickRequest { tick ->
                         soldPrices.set(LegPrices(bid = tick.bidPrice, ask = tick.askPrice))
                         emitIfReady()
                         true
-                    }
-                registry.pendingTickByTick[boughtTickReqId] =
+                    },
+                )
+                registry.addPendingTickByTickRequest(
+                    boughtTickReqId,
+                    boughtContract.symbol,
                     PendingTickByTickRequest { tick ->
                         boughtPrices.set(LegPrices(bid = tick.bidPrice, ask = tick.askPrice))
                         emitIfReady()
                         true
-                    }
+                    },
+                )
             }
             // onUpdate doubles as fallback for bid/ask when reqTickByTickData is not supported
             // (e.g. paper account gets error 10189 + then delayed data via reqMarketDataType(3))
-            registry.pendingContinuousMarketData[soldGreeksReqId] =
-                PendingContinuousMarketDataRequest(
-                    onUpdate = { snap ->
-                        val bid = snap.bid.takeIf { !it.isNaN() && it > 0 } ?: return@PendingContinuousMarketDataRequest
-                        val ask = snap.ask.takeIf { !it.isNaN() && it > 0 } ?: return@PendingContinuousMarketDataRequest
-                        soldPrices.set(LegPrices(bid = bid, ask = ask))
-                        emitIfReady()
-                    },
-                )
-            registry.pendingContinuousMarketData[boughtGreeksReqId] =
-                PendingContinuousMarketDataRequest(
-                    onUpdate = { snap ->
-                        val bid = snap.bid.takeIf { !it.isNaN() && it > 0 } ?: return@PendingContinuousMarketDataRequest
-                        val ask = snap.ask.takeIf { !it.isNaN() && it > 0 } ?: return@PendingContinuousMarketDataRequest
-                        boughtPrices.set(LegPrices(bid = bid, ask = ask))
-                        emitIfReady()
-                    },
-                )
+            registry.addPendingContinuousMarketDataRequest(
+                soldGreeksReqId,
+                soldContract.symbol,
+                onUpdate = { snap ->
+                    val bid = snap.bid.takeIf { !it.isNaN() && it > 0 } ?: return@addPendingContinuousMarketDataRequest
+                    val ask = snap.ask.takeIf { !it.isNaN() && it > 0 } ?: return@addPendingContinuousMarketDataRequest
+                    soldPrices.set(LegPrices(bid = bid, ask = ask))
+                    emitIfReady()
+                },
+            )
+            registry.addPendingContinuousMarketDataRequest(
+                boughtGreeksReqId,
+                boughtContract.symbol,
+                onUpdate = { snap ->
+                    val bid = snap.bid.takeIf { !it.isNaN() && it > 0 } ?: return@addPendingContinuousMarketDataRequest
+                    val ask = snap.ask.takeIf { !it.isNaN() && it > 0 } ?: return@addPendingContinuousMarketDataRequest
+                    boughtPrices.set(LegPrices(bid = bid, ask = ask))
+                    emitIfReady()
+                },
+            )
 
             val mktDataLines = if (useTickByTick) 4 else 2
             val greeksGenericTicks = if (useTickByTick) "100" else ""
@@ -200,10 +209,10 @@ class IbkrMarketTickAdapter(
                 client.reqMktData(soldGreeksReqId, soldContract4Mkt, greeksGenericTicks, false, false, null)
                 client.reqMktData(boughtGreeksReqId, boughtContract4Mkt, greeksGenericTicks, false, false, null)
             } catch (e: Throwable) {
-                registry.pendingTickByTick.remove(soldTickReqId)
-                registry.pendingTickByTick.remove(boughtTickReqId)
-                registry.pendingContinuousMarketData.remove(soldGreeksReqId)
-                registry.pendingContinuousMarketData.remove(boughtGreeksReqId)
+                registry.remove(soldTickReqId)
+                registry.remove(boughtTickReqId)
+                registry.remove(soldGreeksReqId)
+                registry.remove(boughtGreeksReqId)
                 logger.info {
                     "[${soldContract.symbol}] Spread credit stream setup aborted " +
                         "(${e.javaClass.simpleName}) — released $linesAcquired mkt-data lines"
@@ -218,14 +227,14 @@ class IbkrMarketTickAdapter(
 
             awaitClose {
                 if (useTickByTick) {
-                    registry.pendingTickByTick.remove(soldTickReqId)
+                    registry.remove(soldTickReqId)
                     client.cancelTickByTickData(soldTickReqId)
-                    registry.pendingTickByTick.remove(boughtTickReqId)
+                    registry.remove(boughtTickReqId)
                     client.cancelTickByTickData(boughtTickReqId)
                 }
-                registry.pendingContinuousMarketData.remove(soldGreeksReqId)
+                registry.remove(soldGreeksReqId)
                 client.cancelMktData(soldGreeksReqId)
-                registry.pendingContinuousMarketData.remove(boughtGreeksReqId)
+                registry.remove(boughtGreeksReqId)
                 client.cancelMktData(boughtGreeksReqId)
                 linesAcquired -= mktDataLines
                 logger.debug {
@@ -264,7 +273,7 @@ class IbkrMarketTickAdapter(
         val conId =
             try {
                 // withTimeoutOrNull → null on OUR timeout; an outer-flow cancellation still propagates.
-                withTimeoutOrNull(conIdResolveTimeoutMs) { fetch.await() }
+                withTimeoutOrNull(conIdResolveTimeoutMs.milliseconds) { fetch.await() }
             } catch (e: CancellationException) {
                 throw e // outer flow cancelled — propagate; the detached fetch still caches the conId
             } catch (_: Exception) {

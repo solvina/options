@@ -1,12 +1,10 @@
 package cz.solvina.options.adapters.outbound.ibkr.market
 
-import com.ib.client.EClientSocket
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrOptionParamsCache
 import cz.solvina.options.adapters.outbound.ibkr.cache.OptionContractKey
 import cz.solvina.options.adapters.outbound.ibkr.cache.OptionParams
-import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
 import cz.solvina.options.domain.features.market.OptionChainPort
 import cz.solvina.options.domain.features.market.model.ChainCoverage
 import cz.solvina.options.domain.features.market.model.OptionQuote
@@ -33,8 +31,7 @@ private val logger = KotlinLogging.logger {}
 
 @Component
 class IbkrOptionChainAdapter(
-    private val registry: IbkrMarketDataRegistry,
-    private val client: EClientSocket,
+    private val marketSnapshotHelper: MarketSnapshotHelper,
     private val strategyParams: StrategyParamsRegistry,
     private val optionParamsCache: IbkrOptionParamsCache,
     private val contractCache: IbkrContractCache,
@@ -209,11 +206,9 @@ class IbkrOptionChainAdapter(
                     "spec exchange=${params.exchange} tradingClass=${params.tradingClass} multiplier=${params.multiplier}"
                 }
             val snapshot =
-                reqMktDataSnapshot(
-                    registry,
-                    client,
+                marketSnapshotHelper.reqMktDataSnapshot(
+                    symbol,
                     mdContract,
-                    "",
                     SnapshotReady.OPTION_QUOTE,
                 )
 

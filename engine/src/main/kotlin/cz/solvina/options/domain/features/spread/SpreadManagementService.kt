@@ -35,6 +35,7 @@ import java.time.LocalTime
 import java.time.temporal.ChronoUnit
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.time.Duration.Companion.milliseconds
 
 private val logger = KotlinLogging.logger {}
 private val tradeLogger = KotlinLogging.logger("TRADES")
@@ -523,7 +524,7 @@ class SpreadManagementService(
         val stopNbbo =
             if (closeStatus == SpreadStatus.CLOSED_STOP && tickPort != null) {
                 runCatching {
-                    withTimeout(3_000L) {
+                    withTimeout(3_000L.milliseconds) {
                         tickPort.streamSpreadCredit(spread.soldLeg.contract, spread.boughtLeg.contract).first()
                     }
                 }.getOrNull()?.takeIf { it.soldAsk > 0.0 && it.boughtBid > 0.0 }

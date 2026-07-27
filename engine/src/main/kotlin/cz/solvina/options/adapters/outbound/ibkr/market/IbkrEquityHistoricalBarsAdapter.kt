@@ -102,12 +102,16 @@ class IbkrEquityHistoricalBarsAdapter(
                         PendingRawBarsRequest(
                             onBar = { bar -> parseBar(bar)?.let { trySend(it) } },
                             onEnd = {
-                                logger.debug { "[${symbol.value}] reqHistoricalData finished for: reqId=$reqId endDateTime='$endDateTime' duration='$durationStr' endOfData=true" }
+                                logger.debug {
+                                    "[${symbol.value}] reqHistoricalData finished for: reqId=$reqId endDateTime='$endDateTime' duration='$durationStr' endOfData=true"
+                                }
                                 close()
                             },
                             onError = { e ->
                                 run {
-                                    logger.error(e) { "[${symbol.value}] reqHistoricalData failed: reqId=$reqId endDateTime='$endDateTime' duration='$durationStr' endOfData=false" }
+                                    logger.error(e) {
+                                        "[${symbol.value}] reqHistoricalData failed: reqId=$reqId endDateTime='$endDateTime' duration='$durationStr' endOfData=false"
+                                    }
                                     close(e)
                                 }
                             },

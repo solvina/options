@@ -4,7 +4,7 @@ import com.ib.client.EClientSocket
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.cache.OptionContractKey
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
-import cz.solvina.options.adapters.outbound.ibkr.registry.PendingContinuousMarketDataRequest
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderIdCounter
 import cz.solvina.options.domain.features.market.MarketDataHealthTracker
 import cz.solvina.options.domain.features.market.MarketDataPort
 import cz.solvina.options.domain.models.Money
@@ -30,6 +30,8 @@ private const val POSITION_STREAM_LINE_TIMEOUT_MS = 5_000L
 @Component
 class IbkrMarketDataAdapter(
     private val registry: IbkrMarketDataRegistry,
+    private val marketSnapshotHelper: MarketSnapshotHelper,
+    private val idCounter: IbkrOrderIdCounter,
     private val client: EClientSocket,
     private val contractFactory: IbkrContractFactory,
     private val historicalDataAdapter: IbkrHistoricalDataAdapter,
@@ -46,7 +48,12 @@ class IbkrMarketDataAdapter(
         }
 
     private suspend fun resolveUnderlyingPrice(symbol: Symbol): Money {
-        val snapshot = reqMktDataSnapshot(registry, client, contractFactory.stockContract(symbol), "", SnapshotReady.STOCK_PRICE)
+        val snapshot =
+            marketSnapshotHelper.reqMktDataSnapshot(
+                symbol,
+                contractFactory.stockContract(symbol),
+                SnapshotReady.STOCK_PRICE,
+            )
         val price = snapshot.last.takeIf { it > 0 } ?: snapshot.close.takeIf { it > 0 }
         if (price != null) return Money(BigDecimal(price).setScale(2, RoundingMode.HALF_UP))
 
@@ -60,7 +67,11 @@ class IbkrMarketDataAdapter(
 
     override suspend fun getOptionMidLive(contract: OptionContract): Money? {
         val snapshot =
-            reqMktDataSnapshot(registry, client, contractFactory.optionContract(contract), "", SnapshotReady.OPTION_PRICE)
+            marketSnapshotHelper.reqMktDataSnapshot(
+                contract.symbol,
+                contractFactory.optionContract(contract),
+                SnapshotReady.OPTION_PRICE,
+            )
         val mid = midPrice(snapshot.bid, snapshot.ask)
         // Live bid/ask only — deliberately no Black-Scholes / previous-day fallback. Price-based
         // exit decisions must not run on synthetic data; a null tells the caller to skip the cycle.
@@ -69,7 +80,11 @@ class IbkrMarketDataAdapter(
 
     override suspend fun getOptionMid(contract: OptionContract): Money {
         val snapshot =
-            reqMktDataSnapshot(registry, client, contractFactory.optionContract(contract), "", SnapshotReady.OPTION_PRICE)
+            marketSnapshotHelper.reqMktDataSnapshot(
+                contract.symbol,
+                contractFactory.optionContract(contract),
+                SnapshotReady.OPTION_PRICE,
+            )
         val mid = midPrice(snapshot.bid, snapshot.ask)
         if (mid > BigDecimal.ZERO) return Money(mid)
 
@@ -97,7 +112,7 @@ class IbkrMarketDataAdapter(
         // Cancel streams whose position has closed (no longer in the wanted set).
         positionStreams.keys.filter { it !in wanted }.forEach { key ->
             positionStreams.remove(key)?.let { reqId ->
-                registry.pendingContinuousMarketData.remove(reqId)
+                registry.remove(reqId)
                 runCatching { client.cancelMktData(reqId) }
             }
         }
@@ -105,8 +120,12 @@ class IbkrMarketDataAdapter(
         for (contract in contracts) {
             val key = keyOf(contract)
             if (positionStreams.containsKey(key)) continue
-            val reqId = registry.nextReqId()
-            registry.pendingContinuousMarketData[reqId] = PendingContinuousMarketDataRequest()
+            val reqId = idCounter.nextOrderId()
+            registry.addPendingContinuousMarketDataRequest(
+                reqId,
+                contract.symbol,
+                {}, // we only care about the latest snapshot
+            )
             positionStreams[key] = reqId
             // TWS_LIMITS: +1 market-data line per open-position leg = 2 per spread (EXIT reserve, sized
             // maxOpenSpreads × 2). HELD FOR THE LIFE OF THE POSITION — retires only when the leg drops
@@ -115,7 +134,7 @@ class IbkrMarketDataAdapter(
             runCatching { client.reqMktData(reqId, contractFactory.optionContract(contract), "", false, false, null) }
                 .onFailure { e ->
                     positionStreams.remove(key)
-                    registry.pendingContinuousMarketData.remove(reqId)
+                    registry.remove(reqId)
                     logger.warn { "[${contract.symbol}] position quote stream reqMktData failed: ${e.message}" }
                 }
         }
@@ -123,7 +142,7 @@ class IbkrMarketDataAdapter(
 
     override fun streamedOptionMid(contract: OptionContract): Money? {
         val reqId = positionStreams[keyOf(contract)] ?: return null
-        val snap = registry.pendingContinuousMarketData[reqId]?.snapshot ?: return null
+        val snap = registry.getPendingContinuousMarketDataSnapshot(reqId) ?: return null
         if (Duration.between(snap.asOf, Instant.now()).toMillis() > POSITION_STREAM_STALENESS_MS) return null
         val mid = midPrice(snap.bid, snap.ask)
         return if (mid > BigDecimal.ZERO) Money(mid) else null

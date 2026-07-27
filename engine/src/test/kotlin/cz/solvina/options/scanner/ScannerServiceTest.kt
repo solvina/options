@@ -299,6 +299,7 @@ class ScannerServiceTest {
             config = config,
             clock = Clock.systemUTC(),
             optionChainPort = mockk(relaxed = true),
+            regimeService = mockk(relaxed = true),
             scope = scope,
         )
     }
