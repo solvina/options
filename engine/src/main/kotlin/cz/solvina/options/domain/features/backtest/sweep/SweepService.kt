@@ -1,11 +1,13 @@
 package cz.solvina.options.domain.features.backtest.sweep
 
 import cz.solvina.options.domain.features.backtest.BacktestEngine
-import cz.solvina.options.domain.features.backtest.RuleBacktestStrategy
+import cz.solvina.options.domain.features.backtest.StrategyBacktestAdapter
 import cz.solvina.options.domain.features.bars.BarStorePort
 import cz.solvina.options.domain.features.bars.FetchJobStatus
 import cz.solvina.options.domain.features.bars.HistoricalDataService
 import cz.solvina.options.domain.features.bars.Timeframe
+import cz.solvina.options.domain.features.strategy.StrategyTrade
+import cz.solvina.options.domain.features.strategy.SupportBounceStrategy
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CoroutineScope
@@ -67,7 +69,7 @@ data class SweepDefinition(
     val to: LocalDate,
     val timeframe: Timeframe,
     val initialCapital: BigDecimal,
-    val baseParams: RuleBacktestStrategy.Params,
+    val baseParams: SupportBounceStrategy.Params,
     /** Swept param name → axis, in column order. */
     val axes: LinkedHashMap<String, SweepAxis>,
     val parallelism: Int,
@@ -168,7 +170,7 @@ class SweepService(
 
         private fun paramPositive(
             name: String,
-            p: RuleBacktestStrategy.Params,
+            p: SupportBounceStrategy.Params,
         ): Boolean =
             when (name) {
                 "stopAtrMultiple" -> p.stopAtrMultiple > 0.0
@@ -247,10 +249,10 @@ class SweepService(
 
     /** Applies one swept value onto the strategy params. Caller guarantees the name is SWEEPABLE. */
     fun applyParam(
-        p: RuleBacktestStrategy.Params,
+        p: SupportBounceStrategy.Params,
         name: String,
         value: Any,
-    ): RuleBacktestStrategy.Params {
+    ): SupportBounceStrategy.Params {
         val d = (value as? BigDecimal)?.toDouble() ?: 0.0
         val i = (value as? BigDecimal)?.toInt() ?: 0
         val b = value as? Boolean ?: false
@@ -465,11 +467,11 @@ class SweepService(
     ): BacktestEngine.Summary {
         var params = def.baseParams
         combo.forEachIndexed { i, v -> params = applyParam(params, sweptParams[i], v) }
-        RuleBacktestStrategy.validationError(params)?.let { throw IllegalArgumentException(it) }
+        SupportBounceStrategy.validationError(params)?.let { throw IllegalArgumentException(it) }
         val warmupDays = warmupDays(def)
         val engine = BacktestEngine(barStore)
         val result =
-            engine.run<RuleBacktestStrategy.RuleTrade>(
+            engine.run<StrategyTrade>(
                 BacktestEngine.Request(
                     symbols = def.symbols,
                     from = def.from,
@@ -480,7 +482,7 @@ class SweepService(
                     holdOvernight = true,
                     timeframe = def.timeframe,
                 ),
-                RuleBacktestStrategy(params),
+                StrategyBacktestAdapter(SupportBounceStrategy(params, def.timeframe)),
             )
         return result.summary
     }

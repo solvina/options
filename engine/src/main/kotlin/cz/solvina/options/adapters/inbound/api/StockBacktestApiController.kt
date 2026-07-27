@@ -1,11 +1,13 @@
 package cz.solvina.options.adapters.inbound.api
 
 import cz.solvina.options.domain.features.backtest.BacktestEngine
-import cz.solvina.options.domain.features.backtest.RuleBacktestStrategy
+import cz.solvina.options.domain.features.backtest.StrategyBacktestAdapter
 import cz.solvina.options.domain.features.bars.BarStorePort
 import cz.solvina.options.domain.features.bars.FetchJobStatus
 import cz.solvina.options.domain.features.bars.HistoricalDataService
 import cz.solvina.options.domain.features.bars.Timeframe
+import cz.solvina.options.domain.features.strategy.StrategyTrade
+import cz.solvina.options.domain.features.strategy.SupportBounceStrategy
 import cz.solvina.options.domain.features.universe.SectorEtf
 import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.models.Symbol
@@ -24,7 +26,7 @@ private val logger = KotlinLogging.logger {}
 
 /**
  * Stock rule-strategy backtest. Silently ensures the required bars are downloaded/cached at the
- * chosen timeframe (data-on-demand), then runs [RuleBacktestStrategy] through the shared
+ * chosen timeframe (data-on-demand), then runs [SupportBounceStrategy] through the shared
  * [BacktestEngine]. First run over a cold span downloads; later runs serve from the store.
  *
  * NOTE on the path: the app runs under WebFlux base-path /options, and BOTH proxies (nginx and the
@@ -45,7 +47,7 @@ class StockBacktestApiController(
         val to: LocalDate,
         val timeframe: String? = null, // "1d" (default) | "4h" | "5min"
         val initialCapital: BigDecimal? = null,
-        // Rule params (null → RuleBacktestStrategy.Params defaults)
+        // Rule params (null → SupportBounceStrategy.Params defaults)
         val rsiPeriod: Int? = null,
         val rsiOversold: Double? = null,
         val requireRsiRising: Boolean? = null,
@@ -63,10 +65,10 @@ class StockBacktestApiController(
         val maxOpenPositions: Int? = null,
         val maxLeverage: Double? = null,
     ) {
-        /** Nulls fall back to [RuleBacktestStrategy.Params] defaults. Shared with the sweep API. */
-        fun toParams(): RuleBacktestStrategy.Params {
-            val d = RuleBacktestStrategy.Params()
-            return RuleBacktestStrategy.Params(
+        /** Nulls fall back to [SupportBounceStrategy.Params] defaults. Shared with the sweep API. */
+        fun toParams(): SupportBounceStrategy.Params {
+            val d = SupportBounceStrategy.Params()
+            return SupportBounceStrategy.Params(
                 rsiPeriod = rsiPeriod ?: d.rsiPeriod,
                 rsiOversold = rsiOversold ?: d.rsiOversold,
                 requireRsiRising = requireRsiRising ?: d.requireRsiRising,
@@ -90,7 +92,7 @@ class StockBacktestApiController(
     @PostMapping("/stock")
     suspend fun runStockBacktest(
         @RequestBody req: StockBacktestRequest,
-    ): ResponseEntity<BacktestEngine.Result<RuleBacktestStrategy.RuleTrade>> {
+    ): ResponseEntity<BacktestEngine.Result<StrategyTrade>> {
         if (req.symbols.isEmpty() || req.from.isAfter(req.to)) return ResponseEntity.badRequest().build()
         val timeframe = Timeframe.fromLabel(req.timeframe ?: Timeframe.DAILY.label)
         val symbols = req.symbols.map { Symbol(it.trim().uppercase()) }
@@ -135,9 +137,9 @@ class StockBacktestApiController(
         }
 
         val engine = BacktestEngine(barStore)
-        val strategy = RuleBacktestStrategy(params)
+        val strategy = StrategyBacktestAdapter(SupportBounceStrategy(params, timeframe))
         val result =
-            engine.run<RuleBacktestStrategy.RuleTrade>(
+            engine.run<StrategyTrade>(
                 BacktestEngine.Request(
                     symbols = symbols,
                     from = req.from,
@@ -161,12 +163,12 @@ class StockBacktestApiController(
 
     /** Returns a rejection reason, or null when the resolved params are runnable. */
     private fun validationError(
-        p: RuleBacktestStrategy.Params,
+        p: SupportBounceStrategy.Params,
         initialCapital: BigDecimal?,
     ): String? =
         when {
             initialCapital != null && initialCapital <= BigDecimal.ZERO -> "initialCapital must be > 0"
-            else -> RuleBacktestStrategy.validationError(p)
+            else -> SupportBounceStrategy.validationError(p)
         }
 
     companion object {

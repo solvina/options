@@ -1,9 +1,9 @@
 package cz.solvina.options.domain.features.backtest.sweep
 
-import cz.solvina.options.domain.features.backtest.RuleBacktestStrategy
 import cz.solvina.options.domain.features.bars.BarStorePort
 import cz.solvina.options.domain.features.bars.HistoricalDataService
 import cz.solvina.options.domain.features.bars.Timeframe
+import cz.solvina.options.domain.features.strategy.SupportBounceStrategy
 import cz.solvina.options.domain.models.Symbol
 import io.mockk.mockk
 import org.junit.jupiter.api.Test
@@ -27,7 +27,7 @@ class SweepServiceTest {
             to = LocalDate.parse("2025-01-01"),
             timeframe = Timeframe.DAILY,
             initialCapital = BigDecimal("20000"),
-            baseParams = RuleBacktestStrategy.Params(),
+            baseParams = SupportBounceStrategy.Params(),
             axes = LinkedHashMap(axes),
             parallelism = 1,
         )
@@ -112,7 +112,7 @@ class SweepServiceTest {
 
     @Test
     fun `applyParam converts int and bool fields`() {
-        var p = RuleBacktestStrategy.Params()
+        var p = SupportBounceStrategy.Params()
         p = service.applyParam(p, "smaSlowPeriod", BigDecimal("150"))
         p = service.applyParam(p, "stopAtrMultiple", BigDecimal("2.5"))
         p = service.applyParam(p, "requireUptrend", false)

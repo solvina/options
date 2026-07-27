@@ -1,5 +1,8 @@
-package cz.solvina.options.domain.features.backtest
+package cz.solvina.options.strategy
 
+import cz.solvina.options.domain.features.backtest.BacktestAccountView
+import cz.solvina.options.domain.features.backtest.BacktestSignal
+import cz.solvina.options.domain.features.backtest.BacktestableStrategy
 import cz.solvina.options.domain.features.bars.AtrCalculator
 import cz.solvina.options.domain.features.bars.Candle
 import cz.solvina.options.domain.models.Symbol
@@ -19,7 +22,7 @@ import kotlin.math.max
  * No look-ahead: every indicator is updated from the current bar's close only, and the engine fills
  * the emitted bracket on the *next* bar's open. Exits (stop/target) are simulated by the engine.
  */
-class RuleBacktestStrategy(
+class LegacyRuleStrategy(
     private val p: Params,
 ) : BacktestableStrategy {
     data class Params(
