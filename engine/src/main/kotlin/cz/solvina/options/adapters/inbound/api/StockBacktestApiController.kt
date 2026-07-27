@@ -168,11 +168,17 @@ class StockBacktestApiController(
             },
         )
 
+    /**
+     * Runs [req] and returns a `BacktestEngine.Result<StrategyTrade>`, or 400 with `{ "error": … }`.
+     * The reason travels in the body because a rejected param is a user-fixable mistake and the UI
+     * can only say "400" otherwise.
+     */
     @PostMapping("/stock")
     suspend fun runStockBacktest(
         @RequestBody req: StockBacktestRequest,
-    ): ResponseEntity<BacktestEngine.Result<StrategyTrade>> {
-        if (req.symbols.isEmpty() || req.from.isAfter(req.to)) return ResponseEntity.badRequest().build()
+    ): ResponseEntity<Any> {
+        if (req.symbols.isEmpty()) return reject("at least one symbol is required")
+        if (req.from.isAfter(req.to)) return reject("'from' must not be after 'to'")
         val timeframe = Timeframe.fromLabel(req.timeframe ?: Timeframe.DAILY.label)
         val symbols = req.symbols.map { Symbol(it.trim().uppercase()) }
 
@@ -246,12 +252,12 @@ class StockBacktestApiController(
             )
         // The engine logs the result summary; this line pairs the strategy params with it.
         logger.info { "Stock backtest [${template.id}] params: ${resolved.asMap()}" }
-        return ResponseEntity.status(HttpStatus.OK).body(result)
+        return ResponseEntity.status(HttpStatus.OK).body<Any>(result)
     }
 
-    private fun reject(reason: String): ResponseEntity<BacktestEngine.Result<StrategyTrade>> {
+    private fun reject(reason: String): ResponseEntity<Any> {
         logger.warn { "Stock backtest rejected: $reason" }
-        return ResponseEntity.badRequest().build()
+        return ResponseEntity.badRequest().body<Any>(mapOf("error" to reason))
     }
 
     companion object {
