@@ -16,6 +16,7 @@ import cz.solvina.options.domain.features.flag.PatternDetector
 import cz.solvina.options.domain.features.flag.config.FlagStrategyConfig
 import cz.solvina.options.domain.features.flag.config.FlagTradingConfig
 import cz.solvina.options.domain.features.flag.config.FlagTradingConfigPort
+import cz.solvina.options.domain.features.market.MarketDataTypeTracker
 import cz.solvina.options.domain.features.universe.MarketSchedule
 import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.models.Symbol
@@ -119,6 +120,7 @@ class FlagScannerServiceTest {
         symbolMutexManager = mockk(relaxed = true),
         scope = testScope,
         clock = clock,
+        marketDataTypeTracker = MarketDataTypeTracker(clock),
     )
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -271,6 +273,25 @@ class FlagScannerServiceTest {
 
             assertTrue(service.subscribeSymbol("AAPL", "US"), "First subscribe should return true")
             assertFalse(service.subscribeSymbol("AAPL", "US"), "Re-subscribe while active should return false")
+        }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // unsubscribeSession — EU post-close teardown frees only EU-session subscriptions
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `unsubscribeSession cancels only the target session's subscriptions`() =
+        runTest(testDispatcher) {
+            // Default universePort: getFlagWatchlist = [AAPL(US), SAP(EU)]. Jobs are launched but not
+            // advanced, so they stay Active (same idiom as the subscribeSymbol test above).
+            val service = buildService()
+            service.subscribeSymbol("AAPL", "US")
+            service.subscribeSymbol("SAP", "EU")
+
+            service.unsubscribeSession("EU")
+
+            assertTrue(service.subscribeSymbol("SAP", "EU"), "EU symbol was unsubscribed → can resubscribe")
+            assertFalse(service.subscribeSymbol("AAPL", "US"), "US symbol must remain active")
         }
 
     // ─────────────────────────────────────────────────────────────────────────

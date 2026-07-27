@@ -13,6 +13,7 @@ import cz.solvina.options.domain.features.flag.config.FlagStrategyConfig
 import cz.solvina.options.domain.features.flag.config.FlagTradingConfig
 import cz.solvina.options.domain.features.flag.config.FlagTradingConfigPort
 import cz.solvina.options.domain.features.flag.model.FlagStatus
+import cz.solvina.options.domain.features.market.MarketDataTypeTracker
 import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -58,6 +59,7 @@ class FlagScannerService(
     private val scope: CoroutineScope,
     private val clock: Clock,
     private val symbolMutexManager: SymbolMutexManager,
+    private val marketDataTypeTracker: MarketDataTypeTracker,
 ) {
     private val subscriptions = ConcurrentHashMap<Symbol, Job>()
     private val aggregators = ConcurrentHashMap<Symbol, BarAggregator>()
@@ -106,6 +108,28 @@ class FlagScannerService(
 
     @Scheduled(cron = "0 31 9 * * MON-FRI", zone = "America/New_York")
     fun onUsMarketOpen() = resubscribeWatchlist(flagSymbolsForSession("US"), "US open resubscription")
+
+    // Just after EU close (17:31 Berlin, EU close is 17:30). Real-time bar lines are held until
+    // cancelled, so releasing EU subscriptions here frees market-data lines for the US session that
+    // is still open. onEuMarketOpen re-subscribes the next morning. Open EU positions stay protected
+    // by their broker-side GTC trailing stop; unsubscribing only stops local watermark updates.
+    @Scheduled(cron = "\${flag.eu-unsubscribe-cron:0 31 17 * * MON-FRI}", zone = "Europe/Berlin")
+    fun onEuMarketClose() = unsubscribeSession("EU")
+
+    /** Cancel and drop every active flag subscription for [session]'s symbols (frees their IBKR lines). */
+    fun unsubscribeSession(session: String) {
+        val symbols = flagSymbolsForSession(session).map { Symbol(it) }
+        val active = symbols.filter { subscriptions[it]?.isActive == true }
+        if (active.isEmpty()) {
+            logger.debug { "Flag scanner: no active $session subscriptions to unsubscribe" }
+            return
+        }
+        logger.info { "Flag scanner: unsubscribing ${active.size} $session symbol(s) after close: ${active.map { it.value }}" }
+        active.forEach { symbol ->
+            subscriptions[symbol]?.cancel()
+            subscriptions.remove(symbol)
+        }
+    }
 
     // Flag watchlist is DB-driven (instrument_universe.flag_enabled); split by each symbol's
     // exchange session so the US/EU open crons resubscribe only the symbols they cover.
@@ -455,6 +479,7 @@ class FlagScannerService(
         val poleHeightPct: Double?,
         val flagBars: Int?,
         val flagRetracementPct: Double?,
+        val dataFeed: String,
     )
 
     fun getScannerStatus(): List<SymbolScannerStatus> =
@@ -472,6 +497,7 @@ class FlagScannerService(
                     poleHeightPct = state.pole()?.let { round1(it.height / it.startBar.close * 100) },
                     flagBars = state.flag()?.bars?.size,
                     flagRetracementPct = state.flag()?.let { round1(it.retracement * 100) },
+                    dataFeed = marketDataTypeTracker.feedFor(symbol).name,
                 )
             }.sortedBy { it.symbol }
 
