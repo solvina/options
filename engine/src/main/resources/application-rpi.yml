@@ -22,27 +22,6 @@ ibkr:
     host: localhost   # IB Gateway runs in Docker on the same RPi, mapped to host:7497
     paper-account: true
     use-live-market-data: true   # use live data for better options availability
-  instruments:
-    ASML:
-      currency: EUR
-      exchange: AEB
-      optionExchange: EUREX
-      marketExchange: EU
-      marketTimezone: Europe/Amsterdam
-      marketOpen: "09:00"
-      marketClose: "17:30"
-    SAP:
-      currency: EUR
-      optionExchange: EUREX   # base config has DTB but IBKR returns EUREX
-      marketExchange: EU
-    SIE:
-      currency: EUR
-      optionExchange: EUREX   # base config has DTB but IBKR returns EUREX
-      marketExchange: EU
-    ALV:
-      currency: EUR
-      optionExchange: EUREX   # base config has DTB but IBKR returns EUREX
-      marketExchange: EU
 
 sweep:
   enabled: false   # a 100k-combo sweep would starve the trading engine — run sweeps on the workstation

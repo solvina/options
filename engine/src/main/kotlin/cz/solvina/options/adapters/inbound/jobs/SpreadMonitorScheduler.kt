@@ -1,9 +1,9 @@
 package cz.solvina.options.adapters.inbound.jobs
 
-import cz.solvina.options.adapters.outbound.ibkr.IbkrInstrumentsConfig
 import cz.solvina.options.domain.features.connection.status.ConnectionStatusPort
 import cz.solvina.options.domain.features.scanner.TradingKillSwitch
 import cz.solvina.options.domain.features.spread.SpreadManagementService
+import cz.solvina.options.domain.features.universe.UniversePort
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -14,8 +14,6 @@ import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 import java.time.Clock
 import java.time.DayOfWeek
-import java.time.LocalTime
-import java.time.ZoneId
 import java.time.ZonedDateTime
 
 private val logger = KotlinLogging.logger {}
@@ -25,7 +23,7 @@ class SpreadMonitorScheduler(
     private val spreadManagementService: SpreadManagementService,
     private val connectionStatusPort: ConnectionStatusPort,
     private val killSwitch: TradingKillSwitch,
-    private val instrumentsConfig: IbkrInstrumentsConfig,
+    private val universePort: UniversePort,
     // Overridable so tests can pin the day of week (the weekday gate below made a wall-clock test
     // fail every weekend). Spring uses the default; no Clock bean is defined.
     private val clock: Clock = Clock.systemDefaultZone(),
@@ -70,11 +68,10 @@ class SpreadMonitorScheduler(
     }
 
     private fun isAnyExchangeOpen(): Boolean =
-        instrumentsConfig.exchanges.values.any { hours ->
-            val zone = ZoneId.of(hours.timezone)
-            val now = ZonedDateTime.now(clock.withZone(zone))
+        universePort.getExchangeSessions().any { session ->
+            val now = ZonedDateTime.now(clock.withZone(session.zone))
             if (now.dayOfWeek == DayOfWeek.SATURDAY || now.dayOfWeek == DayOfWeek.SUNDAY) return@any false
             val time = now.toLocalTime()
-            !time.isBefore(LocalTime.parse(hours.open)) && time.isBefore(LocalTime.parse(hours.close))
+            !time.isBefore(session.open) && time.isBefore(session.close)
         }
 }

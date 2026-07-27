@@ -2,7 +2,7 @@ package cz.solvina.options.adapters.outbound.ibkr.order
 
 import com.ib.client.EClientSocket
 import com.ib.client.OrderCancel
-import cz.solvina.options.adapters.outbound.ibkr.IbkrInstrumentsConfig
+import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOpenOrdersAdapter
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOrdersRegistry
 import cz.solvina.options.domain.features.alert.AlertLevel
@@ -31,7 +31,7 @@ class IbkrOrderExecutionAdapter(
     private val strategyRouter: ExchangeStrategyRouter,
     private val reconciliationService: PositionReconciliationService,
     private val orderReplacementService: OrderReplacementService,
-    private val instrumentsConfig: IbkrInstrumentsConfig,
+    private val contractFactory: IbkrContractFactory,
     private val alertPort: AlertPort,
 ) : OrderExecutionPort {
     override suspend fun submitComboLimitOrder(
@@ -41,8 +41,8 @@ class IbkrOrderExecutionAdapter(
         qty: Int,
         legQuotes: LegQuotes?,
     ): Int {
-        // Determine actual exchange from instrument config (DTB for EU stocks, CBOE for US, etc)
-        val exchange = instrumentsConfig.instruments[soldContract.symbol.value]?.optionExchange ?: "SMART"
+        // Determine actual exchange from the symbol's DB routing (EUREX for EU stocks, SMART for US)
+        val exchange = contractFactory.defFor(soldContract.symbol).optionExchange
 
         // Route to exchange-specific strategy
         val result =
@@ -170,7 +170,7 @@ class IbkrOrderExecutionAdapter(
     }
 
     override fun supportsInPlaceComboModify(symbol: Symbol): Boolean {
-        val exchange = instrumentsConfig.instruments[symbol.value]?.optionExchange ?: "SMART"
+        val exchange = contractFactory.defFor(symbol).optionExchange
         return strategyRouter.supportsInPlaceModify(exchange)
     }
 
@@ -181,7 +181,7 @@ class IbkrOrderExecutionAdapter(
         newCredit: Money,
         qty: Int,
     ) {
-        val exchange = instrumentsConfig.instruments[soldContract.symbol.value]?.optionExchange ?: "SMART"
+        val exchange = contractFactory.defFor(soldContract.symbol).optionExchange
         strategyRouter.modifySpreadPrice(exchange, existingOrderId, soldContract, boughtContract, newCredit, qty)
     }
 

@@ -17,6 +17,15 @@ interface UniversePort {
      */
     fun sectorOf(symbol: Symbol): String? = null
 
+    /**
+     * Broker routing (currency, exchanges, multiplier, market session) for [symbol], defaults applied.
+     * Defaults to the US routing so unit-test fakes need no routing wiring.
+     */
+    fun routingFor(symbol: Symbol): InstrumentRouting = InstrumentRouting()
+
+    /** Every configured market session. Backs "is any exchange open?" checks. */
+    fun getExchangeSessions(): List<ExchangeSession> = listOf(ExchangeSession.US)
+
     /** Returns true if the underlying exchange for [symbol] is currently within regular trading hours. */
     fun isMarketOpen(symbol: Symbol): Boolean
 

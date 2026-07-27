@@ -4,14 +4,14 @@ import com.ib.client.Contract
 import com.ib.client.ContractDetails
 import com.ib.client.EClientSocket
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
-import cz.solvina.options.adapters.outbound.ibkr.IbkrInstrumentsConfig
-import cz.solvina.options.adapters.outbound.ibkr.InstrumentDef
 import cz.solvina.options.adapters.outbound.ibkr.registry.ContractRequestStatus
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrContractDetailsRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketRuleRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderIdCounter
+import cz.solvina.options.domain.features.universe.InstrumentRouting
 import cz.solvina.options.domain.models.OptionType
 import cz.solvina.options.domain.models.Symbol
+import cz.solvina.options.testutil.FakeUniversePort
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
@@ -31,12 +31,11 @@ class IbkrContractCacheInFlightTest {
     private val contractDetailsRegistry = IbkrContractDetailsRegistry()
     private val marketRuleRegistry = IbkrMarketRuleRegistry()
     private val client: EClientSocket = mockk(relaxed = true)
-    private val instrumentsConfig =
-        IbkrInstrumentsConfig(
-            instruments = mapOf("ASML" to InstrumentDef(currency = "EUR", exchange = "AEB", optionExchange = "EUREX")),
-            exchanges = emptyMap(),
+    private val universePort =
+        FakeUniversePort(
+            "ASML" to InstrumentRouting(currency = "EUR", stockExchange = "AEB", optionExchange = "EUREX"),
         )
-    private val contractFactory = IbkrContractFactory(instrumentsConfig)
+    private val contractFactory = IbkrContractFactory(universePort)
     private val optionParamsCache: IbkrOptionParamsCache = mockk()
 
     private val cache =

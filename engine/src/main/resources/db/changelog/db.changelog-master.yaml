@@ -55,3 +55,7 @@ databaseChangeLog:
       file: db/changelog/v32__fresh_db_missing_tables.yaml
   - include:
       file: db/changelog/v33__flag_close_order_tracking.yaml
+  - include:
+      file: db/changelog/v34__eu_flag_universe.yaml
+  - include:
+      file: db/changelog/v35__instrument_routing_and_sessions.yaml

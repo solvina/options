@@ -2,7 +2,7 @@ package cz.solvina.options.adapters.outbound.ibkr.order
 
 import com.ib.client.Decimal
 import com.ib.client.EClientSocket
-import cz.solvina.options.adapters.outbound.ibkr.IbkrInstrumentsConfig
+import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOpenOrdersAdapter
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOrdersRegistry
 import cz.solvina.options.domain.features.alert.AlertLevel
@@ -12,6 +12,7 @@ import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
 import cz.solvina.options.domain.models.OptionType
 import cz.solvina.options.domain.models.Symbol
+import cz.solvina.options.testutil.FakeUniversePort
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -45,7 +46,7 @@ class IbkrOrderExecutionAdapterTest {
             strategyRouter = strategyRouter,
             reconciliationService = reconciliationService,
             orderReplacementService = orderReplacementService,
-            instrumentsConfig = IbkrInstrumentsConfig(),
+            contractFactory = IbkrContractFactory(FakeUniversePort()),
             alertPort = alertPort,
         )
 
@@ -138,7 +139,7 @@ class IbkrOrderExecutionAdapterTest {
                     strategyRouter = strategyRouter,
                     reconciliationService = reconciliationService,
                     orderReplacementService = orderReplacementService,
-                    instrumentsConfig = IbkrInstrumentsConfig(),
+                    contractFactory = IbkrContractFactory(FakeUniversePort()),
                     alertPort = alertPort,
                 )
 

@@ -1,12 +1,12 @@
 package cz.solvina.options.adapters.outbound.persistence.postgres
 
-import cz.solvina.options.adapters.outbound.ibkr.ExchangeHours
-import cz.solvina.options.adapters.outbound.ibkr.IbkrInstrumentsConfig
-import cz.solvina.options.adapters.outbound.ibkr.InstrumentDef
 import cz.solvina.options.adapters.outbound.persistence.postgres.entity.InstrumentUniverseEntity
+import cz.solvina.options.adapters.outbound.persistence.postgres.repository.ExchangeSessionRepository
 import cz.solvina.options.adapters.outbound.persistence.postgres.repository.InstrumentUniverseRepository
 import cz.solvina.options.domain.features.universe.DaySession
+import cz.solvina.options.domain.features.universe.ExchangeSession
 import cz.solvina.options.domain.features.universe.InstrumentConfig
+import cz.solvina.options.domain.features.universe.InstrumentRouting
 import cz.solvina.options.domain.features.universe.MarketCalendarPort
 import cz.solvina.options.domain.features.universe.MarketSchedule
 import cz.solvina.options.domain.features.universe.UniversePort
@@ -24,14 +24,27 @@ import java.util.concurrent.ConcurrentHashMap
 @Component
 class UniversePersistenceAdapter(
     private val repository: InstrumentUniverseRepository,
-    private val instrumentsConfig: IbkrInstrumentsConfig,
+    private val exchangeSessionRepository: ExchangeSessionRepository,
     private val marketCalendar: MarketCalendarPort,
 ) : UniversePort {
     private val cache = ConcurrentHashMap<String, InstrumentConfig>()
 
+    // Market sessions ("US", "EU") from `exchange_session`. Seeded by migration and effectively
+    // static, so it is loaded once alongside the instrument cache.
+    private val sessions = ConcurrentHashMap<String, ExchangeSession>()
+
     @PostConstruct
     fun loadCache() {
         repository.findAll().forEach { cache[it.symbol] = it.toDomain() }
+        exchangeSessionRepository.findAll().forEach {
+            sessions[it.name] =
+                ExchangeSession(
+                    name = it.name,
+                    zone = ZoneId.of(it.timezone),
+                    open = LocalTime.parse(it.openTime),
+                    close = LocalTime.parse(it.closeTime),
+                )
+        }
     }
 
     override fun getWatchlist(): List<Symbol> = cache.values.filter { it.enabled }.map { it.symbol }
@@ -42,11 +55,23 @@ class UniversePersistenceAdapter(
 
     override fun sectorOf(symbol: Symbol): String? = cache[symbol.value]?.sector
 
+    override fun routingFor(symbol: Symbol): InstrumentRouting {
+        val config = cache[symbol.value] ?: return InstrumentRouting()
+        val default = InstrumentRouting()
+        return InstrumentRouting(
+            currency = config.currency ?: default.currency,
+            stockExchange = config.stockExchange ?: default.stockExchange,
+            optionExchange = config.optionExchange ?: default.optionExchange,
+            multiplier = config.multiplier ?: default.multiplier,
+            marketExchange = config.marketExchange ?: default.marketExchange,
+        )
+    }
+
+    override fun getExchangeSessions(): List<ExchangeSession> = sessions.values.toList().ifEmpty { listOf(ExchangeSession.US) }
+
     override fun isMarketOpen(symbol: Symbol): Boolean {
-        val def = instrumentsConfig.instruments[symbol.value] ?: InstrumentDef()
-        val hours = instrumentsConfig.exchanges[def.marketExchange] ?: US_HOURS
-        val zone = ZoneId.of(hours.timezone)
-        val now = ZonedDateTime.now(zone)
+        val exchangeSession = sessionFor(symbol)
+        val now = ZonedDateTime.now(exchangeSession.zone)
         if (now.dayOfWeek == DayOfWeek.SATURDAY || now.dayOfWeek == DayOfWeek.SUNDAY) return false
         val time = now.toLocalTime()
         // Prefer the broker's liquid-hours calendar when known — it captures holidays and half-days
@@ -57,20 +82,27 @@ class UniversePersistenceAdapter(
             is DaySession.Open -> return !time.isBefore(session.open) && time.isBefore(session.close)
             null -> Unit // no calendar yet — fall through to the fixed-window default below
         }
-        val open = LocalTime.parse(hours.open)
-        val close = LocalTime.parse(hours.close)
-        return !time.isBefore(open) && time.isBefore(close)
+        return !time.isBefore(exchangeSession.open) && time.isBefore(exchangeSession.close)
     }
 
     override fun getMarketSchedule(symbol: Symbol): MarketSchedule {
-        val def = instrumentsConfig.instruments[symbol.value] ?: InstrumentDef()
-        val hours = instrumentsConfig.exchanges[def.marketExchange] ?: US_HOURS
+        val exchangeSession = sessionFor(symbol)
         return MarketSchedule(
-            zone = ZoneId.of(hours.timezone),
-            open = LocalTime.parse(hours.open),
-            close = LocalTime.parse(hours.close),
-            session = def.marketExchange,
+            zone = exchangeSession.zone,
+            open = exchangeSession.open,
+            close = exchangeSession.close,
+            session = exchangeSession.name,
         )
+    }
+
+    /**
+     * Session governing [symbol]: its `market_exchange` routing (default "US") looked up in the
+     * `exchange_session` cache, falling back to [ExchangeSession.US] when the row is missing (e.g. a
+     * symbol routed to a market nobody seeded yet).
+     */
+    private fun sessionFor(symbol: Symbol): ExchangeSession {
+        val marketExchange = routingFor(symbol).marketExchange
+        return sessions[marketExchange] ?: ExchangeSession.US
     }
 
     override suspend fun getAll(): List<InstrumentConfig> =
@@ -103,6 +135,11 @@ class UniversePersistenceAdapter(
             enabled = enabled,
             flagEnabled = flagEnabled,
             sector = sector,
+            currency = currency,
+            stockExchange = stockExchange,
+            optionExchange = optionExchange,
+            multiplier = multiplier,
+            marketExchange = marketExchange,
             ivRankThreshold = ivRankThreshold?.toDouble(),
             minDte = minDte,
             maxDte = maxDte,
@@ -128,6 +165,11 @@ class UniversePersistenceAdapter(
             enabled = enabled,
             flagEnabled = flagEnabled,
             sector = sector,
+            currency = currency,
+            stockExchange = stockExchange,
+            optionExchange = optionExchange,
+            multiplier = multiplier,
+            marketExchange = marketExchange,
             ivRankThreshold = ivRankThreshold?.toBigDecimal(),
             minDte = minDte,
             maxDte = maxDte,
@@ -146,13 +188,4 @@ class UniversePersistenceAdapter(
             nextEarningsDate = nextEarningsDate,
             notes = notes,
         )
-
-    companion object {
-        private val US_HOURS =
-            ExchangeHours(
-                timezone = "America/New_York",
-                open = "09:30",
-                close = "16:00",
-            )
-    }
 }

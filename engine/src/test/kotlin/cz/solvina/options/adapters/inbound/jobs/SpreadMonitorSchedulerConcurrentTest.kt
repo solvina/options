@@ -1,10 +1,10 @@
 package cz.solvina.options.adapters.inbound.jobs
 
-import cz.solvina.options.adapters.outbound.ibkr.ExchangeHours
-import cz.solvina.options.adapters.outbound.ibkr.IbkrInstrumentsConfig
 import cz.solvina.options.domain.features.connection.status.ConnectionStatusPort
 import cz.solvina.options.domain.features.scanner.TradingKillSwitch
 import cz.solvina.options.domain.features.spread.SpreadManagementService
+import cz.solvina.options.domain.features.universe.ExchangeSession
+import cz.solvina.options.domain.features.universe.UniversePort
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -14,6 +14,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import java.time.Clock
 import java.time.Instant
+import java.time.LocalTime
 import java.time.ZoneOffset
 import kotlin.test.assertTrue
 
@@ -28,21 +29,13 @@ class SpreadMonitorSchedulerConcurrentTest {
     private val spreadManagementService = mockk<SpreadManagementService>(relaxed = true)
     private val connectionStatusPort = mockk<ConnectionStatusPort>()
     private val killSwitch = mockk<TradingKillSwitch>()
-    private val instrumentsConfig = mockk<IbkrInstrumentsConfig>()
+    private val universePort = mockk<UniversePort>()
 
     @BeforeEach
     fun setup() {
         every { killSwitch.monitorPaused } returns false
         every { connectionStatusPort.isConnected() } returns true
-        every { instrumentsConfig.exchanges } returns
-            mapOf(
-                "US" to
-                    ExchangeHours(
-                        timezone = "America/New_York",
-                        open = "09:30",
-                        close = "16:00",
-                    ),
-            )
+        every { universePort.getExchangeSessions() } returns listOf(ExchangeSession.US)
     }
 
     @Test
@@ -52,7 +45,7 @@ class SpreadMonitorSchedulerConcurrentTest {
                 spreadManagementService,
                 connectionStatusPort,
                 killSwitch,
-                instrumentsConfig,
+                universePort,
             )
 
         // Should not throw
@@ -68,7 +61,7 @@ class SpreadMonitorSchedulerConcurrentTest {
                 spreadManagementService,
                 connectionStatusPort,
                 killSwitch,
-                instrumentsConfig,
+                universePort,
             )
 
         // Should not throw
@@ -84,7 +77,7 @@ class SpreadMonitorSchedulerConcurrentTest {
                 spreadManagementService,
                 connectionStatusPort,
                 killSwitch,
-                instrumentsConfig,
+                universePort,
             )
 
         // Should not throw
@@ -102,7 +95,7 @@ class SpreadMonitorSchedulerConcurrentTest {
                 spreadManagementService,
                 connectionStatusPort,
                 killSwitch,
-                instrumentsConfig,
+                universePort,
             )
 
         // Multiple rapid calls should not deadlock (because tryLock is non-blocking)
@@ -124,14 +117,9 @@ class SpreadMonitorSchedulerConcurrentTest {
         // Widen exchange hours to the full day and pin the clock to a Wednesday so
         // isAnyExchangeOpen() is independent of when this test actually runs — the wall-clock
         // version failed every weekend on the scheduler's weekday gate.
-        every { instrumentsConfig.exchanges } returns
-            mapOf(
-                "US" to
-                    ExchangeHours(
-                        timezone = "America/New_York",
-                        open = "00:00",
-                        close = "23:59",
-                    ),
+        every { universePort.getExchangeSessions() } returns
+            listOf(
+                ExchangeSession.US.copy(open = LocalTime.of(0, 0), close = LocalTime.of(23, 59)),
             )
 
         val scheduler =
@@ -139,7 +127,7 @@ class SpreadMonitorSchedulerConcurrentTest {
                 spreadManagementService,
                 connectionStatusPort,
                 killSwitch,
-                instrumentsConfig,
+                universePort,
                 Clock.fixed(Instant.parse("2026-07-15T15:00:00Z"), ZoneOffset.UTC),
             )
 
@@ -165,7 +153,7 @@ class SpreadMonitorSchedulerConcurrentTest {
                 spreadManagementService,
                 connectionStatusPort,
                 killSwitch,
-                instrumentsConfig,
+                universePort,
             )
 
         // Should not throw - exception is caught and logged by the scheduler

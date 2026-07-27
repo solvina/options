@@ -24,32 +24,6 @@ spring:
         dialect: org.hibernate.dialect.PostgreSQLDialect
 
 ibkr:
-  exchanges:
-    US:
-      timezone: America/New_York
-      open: "09:30"
-      close: "16:00"
-    EU:
-      timezone: Europe/Berlin
-      open: "09:00"
-      close: "17:30"
-  instruments:
-    ASML:
-      currency: EUR
-      optionExchange: DTB
-      marketExchange: EU
-    SAP:
-      currency: EUR
-      optionExchange: DTB
-      marketExchange: EU
-    SIE:
-      currency: EUR
-      optionExchange: DTB
-      marketExchange: EU
-    ALV:
-      currency: EUR
-      optionExchange: DTB
-      marketExchange: EU
   connection:
     host: 100.65.216.36
     port: 7497

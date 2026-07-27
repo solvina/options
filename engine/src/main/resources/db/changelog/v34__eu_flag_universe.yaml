@@ -1,0 +1,40 @@
+databaseChangeLog:
+  # ---------------------------------------------------------------------------
+  # EU flag universe (2026-07-26): add Xetra-listed STOXX Europe 600 sector ETFs
+  # to the flag watchlist for an EU functional test.
+  #
+  # These are the only real-time EU instruments the account is entitled to
+  # (German-ETF L1 subscription) — the flag strategy needs live 5-sec bars, which
+  # the primary Xetra/Euronext cash-equity feeds (not subscribed) would deny.
+  #
+  # flag_enabled = true  -> appears in getFlagWatchlist()
+  # enabled      = false -> kept OUT of the spread/options scanner (flag-only test)
+  # Market hours + EUR/IBIS routing are set on these rows by v35.
+  # ---------------------------------------------------------------------------
+  - changeSet:
+      id: v34__eu_flag_universe
+      author: solvina
+      changes:
+        - sql:
+            splitStatements: false
+            sql: >
+              INSERT INTO instrument_universe (symbol, enabled, flag_enabled, sector) VALUES
+                ('EXV1', false, true, 'Financials'),
+                ('EXV3', false, true, 'Information Technology'),
+                ('EXV4', false, true, 'Health Care'),
+                ('EXV5', false, true, 'Consumer Discretionary'),
+                ('EXV6', false, true, 'Materials'),
+                ('EXV7', false, true, 'Materials'),
+                ('EXV8', false, true, 'Industrials'),
+                ('EXH1', false, true, 'Energy'),
+                ('EXH9', false, true, 'Utilities'),
+                ('EXSA', false, true, 'Index')
+              ON CONFLICT (symbol) DO UPDATE SET
+                flag_enabled = EXCLUDED.flag_enabled,
+                sector = EXCLUDED.sector;
+      rollback:
+        - sql:
+            splitStatements: false
+            sql: >
+              DELETE FROM instrument_universe
+              WHERE symbol IN ('EXV1','EXV3','EXV4','EXV5','EXV6','EXV7','EXV8','EXH1','EXH9','EXSA');

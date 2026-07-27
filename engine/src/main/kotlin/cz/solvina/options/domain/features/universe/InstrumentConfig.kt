@@ -12,6 +12,13 @@ data class InstrumentConfig(
     // GICS sector label (e.g. "Information Technology"). Backs the per-sector open-spread cap that
     // keeps one theme from dominating the book. Null = unknown (fails open — not counted/limited).
     val sector: String? = null,
+    // IBKR routing — null means use the US default (USD / SMART / SMART / 100 / US). Only EU (and
+    // other non-default) listings need values here; see [InstrumentRouting].
+    val currency: String? = null,
+    val stockExchange: String? = null,
+    val optionExchange: String? = null,
+    val multiplier: String? = null,
+    val marketExchange: String? = null,
     // Entry filter overrides — null means use global ScannerConfig default
     val ivRankThreshold: Double? = null,
     val minDte: Int? = null,

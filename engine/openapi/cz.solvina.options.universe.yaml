@@ -128,6 +128,26 @@ components:
           type: string
           nullable: true
           description: GICS sector label (e.g. "Information Technology"). Backs the per-sector open-spread cap.
+        currency:
+          type: string
+          nullable: true
+          description: IBKR trading currency (e.g. "EUR"). Null = US default "USD".
+        stockExchange:
+          type: string
+          nullable: true
+          description: Exchange for the STK contract (e.g. "IBIS", "AEB"). Null = US default "SMART".
+        optionExchange:
+          type: string
+          nullable: true
+          description: Exchange for OPT contracts and combo legs (e.g. "EUREX"). Null = US default "SMART".
+        multiplier:
+          type: string
+          nullable: true
+          description: Option contract multiplier. Null = US default "100".
+        marketExchange:
+          type: string
+          nullable: true
+          description: Market session governing trading hours — an `exchange_session` name ("US", "EU"). Null = "US".
         ivRankThreshold:
           type: number
           format: double

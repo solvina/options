@@ -1,0 +1,105 @@
+databaseChangeLog:
+  # ---------------------------------------------------------------------------
+  # Move IBKR instrument routing + exchange sessions from application*.yml into
+  # the DB (2026-07-26), so a stock can be added entirely via /universe with no
+  # yaml edit and no redeploy.
+  #
+  # Replaces the `ibkr.instruments` / `ibkr.exchanges` blocks. NULL routing
+  # columns mean "US default" (USD / SMART / SMART / 100 / US), so none of the
+  # US universe needs a row here.
+  #
+  # Backfill values are the *rpi-profile effective* ones (the RPi runs the paper
+  # account against live IBKR): ASML/SAP/SIE/ALV route options to EUREX, not the
+  # base file's DTB, because IBKR returns EUREX for them; ASML's stock leg is
+  # direct-routed to AEB. The Xetra STOXX ETFs are stock-only (IBIS).
+  # ---------------------------------------------------------------------------
+  - changeSet:
+      id: v35__instrument_routing
+      author: solvina
+      changes:
+        - addColumn:
+            tableName: instrument_universe
+            columns:
+              - column:
+                  name: currency
+                  type: VARCHAR(10)
+              - column:
+                  name: stock_exchange
+                  type: VARCHAR(20)
+              - column:
+                  name: option_exchange
+                  type: VARCHAR(20)
+              - column:
+                  name: multiplier
+                  type: VARCHAR(10)
+              - column:
+                  name: market_exchange
+                  type: VARCHAR(10)
+        - sql:
+            splitStatements: true
+            sql: >
+              UPDATE instrument_universe SET currency = 'EUR', option_exchange = 'EUREX', market_exchange = 'EU' WHERE symbol IN ('SAP','SIE','ALV');
+              UPDATE instrument_universe SET currency = 'EUR', stock_exchange = 'AEB', option_exchange = 'EUREX', market_exchange = 'EU' WHERE symbol = 'ASML';
+              UPDATE instrument_universe SET currency = 'EUR', stock_exchange = 'IBIS', market_exchange = 'EU' WHERE symbol IN ('EXV1','EXV3','EXV4','EXV5','EXV6','EXV7','EXV8','EXH1','EXH9','EXSA');
+      rollback:
+        - dropColumn:
+            tableName: instrument_universe
+            columnName: currency
+        - dropColumn:
+            tableName: instrument_universe
+            columnName: stock_exchange
+        - dropColumn:
+            tableName: instrument_universe
+            columnName: option_exchange
+        - dropColumn:
+            tableName: instrument_universe
+            columnName: multiplier
+        - dropColumn:
+            tableName: instrument_universe
+            columnName: market_exchange
+
+  - changeSet:
+      id: v35__exchange_session
+      author: solvina
+      changes:
+        - createTable:
+            tableName: exchange_session
+            columns:
+              - column:
+                  name: name
+                  type: VARCHAR(10)
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: timezone
+                  type: TEXT
+                  constraints:
+                    nullable: false
+              - column:
+                  name: open_time
+                  type: VARCHAR(5)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: close_time
+                  type: VARCHAR(5)
+                  constraints:
+                    nullable: false
+        - insert:
+            tableName: exchange_session
+            columns:
+              - column: { name: name, value: US }
+              - column: { name: timezone, value: America/New_York }
+              - column: { name: open_time, value: "09:30" }
+              - column: { name: close_time, value: "16:00" }
+        - insert:
+            tableName: exchange_session
+            columns:
+              - column: { name: name, value: EU }
+              - column: { name: timezone, value: Europe/Berlin }
+              - column: { name: open_time, value: "09:00" }
+              - column: { name: close_time, value: "17:30" }
+      rollback:
+        - dropTable:
+            tableName: exchange_session

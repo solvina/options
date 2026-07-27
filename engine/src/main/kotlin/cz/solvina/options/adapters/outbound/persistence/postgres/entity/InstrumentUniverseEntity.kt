@@ -19,6 +19,18 @@ class InstrumentUniverseEntity(
     var flagEnabled: Boolean = false,
     @Column(name = "sector", columnDefinition = "TEXT")
     var sector: String? = null,
+    // IBKR routing — NULL means "use the US default" (USD / SMART / SMART / 100 / US), so no US row
+    // needs values here. See InstrumentRouting.
+    @Column(name = "currency", length = 10)
+    var currency: String? = null,
+    @Column(name = "stock_exchange", length = 20)
+    var stockExchange: String? = null,
+    @Column(name = "option_exchange", length = 20)
+    var optionExchange: String? = null,
+    @Column(name = "multiplier", length = 10)
+    var multiplier: String? = null,
+    @Column(name = "market_exchange", length = 10)
+    var marketExchange: String? = null,
     @Column(name = "iv_rank_threshold", precision = 5, scale = 2)
     var ivRankThreshold: BigDecimal? = null,
     @Column(name = "min_dte")

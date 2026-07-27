@@ -2,16 +2,32 @@ package cz.solvina.options.adapters.outbound.ibkr
 
 import com.ib.client.ComboLeg
 import com.ib.client.Contract
+import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.models.OptionContract
 import cz.solvina.options.domain.models.Symbol
 import org.springframework.stereotype.Component
 import java.time.format.DateTimeFormatter
 
+/**
+ * Builds IBKR contracts from the DB-held routing of a symbol ([UniversePort.routingFor]); NULL
+ * routing columns resolve to the US default (USD / SMART / SMART / 100), so only EU listings carry
+ * values. Routing edited through `/universe` takes effect immediately — the persistence adapter
+ * refreshes its cache on save.
+ */
 @Component
 class IbkrContractFactory(
-    private val config: IbkrInstrumentsConfig,
+    private val universePort: UniversePort,
 ) {
-    fun defFor(symbol: Symbol): InstrumentDef = config.instruments[symbol.value] ?: InstrumentDef()
+    fun defFor(symbol: Symbol): InstrumentDef =
+        universePort.routingFor(symbol).let {
+            InstrumentDef(
+                currency = it.currency,
+                exchange = it.stockExchange,
+                optionExchange = it.optionExchange,
+                multiplier = it.multiplier,
+                marketExchange = it.marketExchange,
+            )
+        }
 
     fun stockContract(symbol: Symbol): Contract =
         Contract().apply {
