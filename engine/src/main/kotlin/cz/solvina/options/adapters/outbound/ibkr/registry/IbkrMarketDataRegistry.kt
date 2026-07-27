@@ -1,6 +1,7 @@
 package cz.solvina.options.adapters.outbound.ibkr.registry
 
 import cz.solvina.options.domain.features.bars.RealTimeBar
+import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CompletableDeferred
 import org.springframework.stereotype.Component
@@ -74,6 +75,10 @@ class IbkrMarketDataRegistry(
 
     /** Active reqRealTimeBars subscriptions. */
     internal val pendingRealTimeBars = ConcurrentHashMap<Int, PendingRealTimeBarsRequest>()
+
+    /** reqId → symbol for subscriptions whose owning symbol is known, so the marketDataType
+     *  callback (keyed only by reqId) can be attributed to a symbol. */
+    internal val reqIdToSymbol = ConcurrentHashMap<Int, Symbol>()
 
     fun onRealtimeBar(
         reqId: Int,

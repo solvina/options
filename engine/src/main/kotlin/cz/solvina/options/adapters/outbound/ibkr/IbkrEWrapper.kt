@@ -40,6 +40,7 @@ import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderIdCounter
 import cz.solvina.options.adapters.outbound.ibkr.registry.TickByTickBidAsk
 import cz.solvina.options.domain.features.alert.AlertService
 import cz.solvina.options.domain.features.market.MarketDataHealthTracker
+import cz.solvina.options.domain.features.market.MarketDataTypeTracker
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.stereotype.Component
 import java.time.Instant
@@ -111,6 +112,7 @@ class IbkrEWrapper(
     private val positionsRegistry: IbkrPositionsRegistry,
     private val dividendTickRegistry: IbkrDividendTickRegistry,
     private val marketDataHealthTracker: MarketDataHealthTracker,
+    private val marketDataTypeTracker: MarketDataTypeTracker,
     private val alertService: AlertService,
 ) : EWrapper {
     override fun tickPrice(
@@ -557,6 +559,7 @@ class IbkrEWrapper(
         marketDataType: Int,
     ) {
         logger.debug { "marketDataType: reqId=$reqId, type=$marketDataType" }
+        marketDataRegistry.reqIdToSymbol[reqId]?.let { marketDataTypeTracker.recordType(it, marketDataType) }
     }
 
     override fun commissionReport(commissionReport: CommissionReport) {

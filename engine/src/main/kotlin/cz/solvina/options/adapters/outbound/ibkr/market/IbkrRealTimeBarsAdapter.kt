@@ -8,6 +8,7 @@ import cz.solvina.options.domain.features.alert.AlertLevel
 import cz.solvina.options.domain.features.alert.AlertPort
 import cz.solvina.options.domain.features.bars.RealTimeBar
 import cz.solvina.options.domain.features.bars.RealTimeBarsPort
+import cz.solvina.options.domain.features.market.MarketDataTypeTracker
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CoroutineScope
@@ -28,6 +29,7 @@ class IbkrRealTimeBarsAdapter(
     private val client: EClientSocket,
     private val contractFactory: IbkrContractFactory,
     private val alertPort: AlertPort,
+    private val marketDataTypeTracker: MarketDataTypeTracker,
     // Shared executionCoroutineScope bean: alerts must outlive the (possibly cancelled) flow.
     private val alertScope: CoroutineScope,
 ) : RealTimeBarsPort {
@@ -35,16 +37,23 @@ class IbkrRealTimeBarsAdapter(
         callbackFlow {
             val reqId = registry.nextReqId()
             val contract = contractFactory.stockContract(symbol)
+            registry.reqIdToSymbol[reqId] = symbol
             // One CRITICAL alert per subscription: IBKR may repeat the error (e.g. on farm reconnect)
             // and a rejected subscription must be loud, not spammy.
             val alerted = AtomicBoolean(false)
+            // Record the feed as live once, on the first bar — bars are served only on a live feed.
+            val liveRecorded = AtomicBoolean(false)
 
             // Each real-time bar subscription holds one IBKR market-data line for the session.
             // Always the flag strategy's feed — pays from the FLAG reserve regardless of caller.
             registry.pendingRealTimeBars[reqId] =
                 PendingRealTimeBarsRequest(
-                    onBar = { bar -> trySend(bar) },
+                    onBar = { bar ->
+                        if (liveRecorded.compareAndSet(false, true)) marketDataTypeTracker.recordLiveBars(symbol)
+                        trySend(bar)
+                    },
                     onError = { code, msg ->
+                        marketDataTypeTracker.recordBlind(symbol, "bars rejected (code=$code)")
                         // A bars stream that stops (or never starts) is otherwise indistinguishable
                         // from a quiet market — the flag strategy would be blind with no signal.
                         logger.error {
@@ -74,6 +83,7 @@ class IbkrRealTimeBarsAdapter(
 
             awaitClose {
                 registry.pendingRealTimeBars.remove(reqId)
+                registry.reqIdToSymbol.remove(reqId)
                 runCatching { client.cancelRealTimeBars(reqId) }
                     .onFailure { e -> logger.warn { "[${symbol.value}] cancelRealTimeBars failed: ${e.message}" } }
                 logger.info { "[${symbol.value}] Unsubscribed from real-time bars (reqId=$reqId)" }
