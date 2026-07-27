@@ -43,6 +43,9 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-reactor:1.10.2")
+    // Coroutine dumps for diagnosing hangs (DebugProbes). Installed at startup behind a flag; the
+    // hang watchdog captures a coroutine + thread dump when an order-fill wait is stuck too long.
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-debug:1.10.2")
 
     developmentOnly("org.springframework.boot:spring-boot-devtools")
 

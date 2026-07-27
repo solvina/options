@@ -183,6 +183,16 @@ reconciliation:
   delay-ms: 300000          # run every 5 min
   initial-delay-ms: 120000  # first run 2 min after boot (let positions populate)
 
+# Hang diagnostics: capture a coroutine + thread dump when an order-fill wait is stuck far too long
+# (the "pending in the engine, nothing in TWS" symptom). Evidence-gathering — see HangWatchdogScheduler.
+diagnostics:
+  coroutine-debug:
+    enabled: true           # install DebugProbes so dumps include the coroutine tree; disable once diagnosed
+  hang-watchdog:
+    stuck-wait-minutes: 5   # an order-fill wait outstanding longer than this triggers a dump + CRITICAL alert
+    check-ms: 60000         # watchdog cadence
+    initial-delay-ms: 120000
+
 # Quote age monitoring: detect stale/blind market data during exit decisions (Phase 1 — observability only).
 quote-monitoring:
   stale-seconds: 60         # age ≥ 60s → STALE

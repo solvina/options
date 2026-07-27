@@ -36,8 +36,36 @@ class IbkrOrdersRegistry {
     private val cancelledOrders = ConcurrentHashMap.newKeySet<Int>()
     private val latestUpdates = ConcurrentHashMap<Int, BrokerOrderUpdate>()
     private val terminalWaiters = ConcurrentHashMap<Int, CompletableDeferred<OrderStatus>>()
+
+    // Diagnostic only: when a not-yet-terminal waiter is first created, so the hang watchdog can
+    // spot a fill wait that has been outstanding far too long ("pending in the engine, nothing in
+    // TWS"). Cleared whenever the waiter resolves. Never affects control flow.
+    private val waiterSince = ConcurrentHashMap<Int, Instant>()
     private val _updates = MutableSharedFlow<BrokerOrderUpdate>(extraBufferCapacity = 1_024)
     val updates = _updates.asSharedFlow()
+
+    /** A fill wait that has not yet resolved, with how long it has been outstanding. */
+    data class OutstandingWaiter(
+        val orderId: Int,
+        val since: Instant,
+        val ageMs: Long,
+        val lastStatus: String?,
+        val symbol: String?,
+    )
+
+    /** Snapshot of in-flight order-fill waits, oldest first — for the hang watchdog / dump. */
+    fun outstandingWaiters(now: Instant = Instant.now()): List<OutstandingWaiter> =
+        waiterSince.entries
+            .mapNotNull { (orderId, since) ->
+                if (terminalWaiters[orderId]?.isCompleted != false) return@mapNotNull null
+                OutstandingWaiter(
+                    orderId = orderId,
+                    since = since,
+                    ageMs = now.toEpochMilli() - since.toEpochMilli(),
+                    lastStatus = latestUpdates[orderId]?.orderStatus?.name,
+                    symbol = openOrders[orderId]?.symbol?.takeIf { it.isNotBlank() },
+                )
+            }.sortedByDescending { it.ageMs }
 
     fun getAllOrders(): List<OpenOrder> = openOrders.values.toList()
 
@@ -249,6 +277,7 @@ class IbkrOrdersRegistry {
         }
         if (orderStatus.isTerminal) {
             terminalWaiters.remove(orderId)?.complete(orderStatus)
+            waiterSince.remove(orderId)
         }
         if (filled > BigDecimal.ZERO && remaining > BigDecimal.ZERO && orderStatus.isTerminal) {
             logger.warn {
@@ -286,6 +315,7 @@ class IbkrOrdersRegistry {
     private fun waiterFor(orderId: Int): CompletableDeferred<OrderStatus> =
         terminalWaiters.compute(orderId) { _, existing ->
             terminalStatus(orderId)?.let { return@compute CompletableDeferred(it) }
-            existing?.takeUnless { it.isCompleted } ?: CompletableDeferred()
+            existing?.takeUnless { it.isCompleted }
+                ?: CompletableDeferred<OrderStatus>().also { waiterSince.putIfAbsent(orderId, Instant.now()) }
         } ?: CompletableDeferred(OrderStatus.PENDING)
 }
