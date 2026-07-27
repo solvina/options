@@ -10,7 +10,9 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 
 private val logger = KotlinLogging.logger {}
 
-class FatalLockoutOrderRejectedException(message: String) : RuntimeException(message)
+class FatalLockoutOrderRejectedException(
+    message: String,
+) : RuntimeException(message)
 
 /**
  * The one choke point every outbound call takes to the broker.

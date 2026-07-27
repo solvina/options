@@ -24,8 +24,8 @@ import java.math.RoundingMode
 import java.time.Clock
 import java.time.Instant
 import java.time.temporal.ChronoUnit
-import java.util.concurrent.ConcurrentHashMap
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 private val logger = KotlinLogging.logger {}
 private val tradeLogger = KotlinLogging.logger("FLAG_TRADES")

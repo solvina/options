@@ -18,7 +18,9 @@ class IbkrOpenOrdersAdapter(
             client.reqOpenOrders()
             client.reqAutoOpenOrders(true)
         } else {
-            logger.warn { "IBKR manual-order binding is disabled because clientId=${config.clientId}; use clientId=0 to cancel TWS/manual orders from the API" }
+            logger.warn {
+                "IBKR manual-order binding is disabled because clientId=${config.clientId}; use clientId=0 to cancel TWS/manual orders from the API"
+            }
         }
         client.reqAllOpenOrders()
         logger.info { "Requested open orders" }

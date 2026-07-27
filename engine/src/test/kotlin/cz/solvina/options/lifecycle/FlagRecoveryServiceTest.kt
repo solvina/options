@@ -3,8 +3,8 @@ package cz.solvina.options.lifecycle
 import cz.solvina.options.adapters.inbound.lifecycle.FlagRecoveryService
 import cz.solvina.options.domain.features.account.AccountPort
 import cz.solvina.options.domain.features.account.AccountPosition
-import cz.solvina.options.domain.features.account.EffectiveAccountService
 import cz.solvina.options.domain.features.account.AccountTradingPort
+import cz.solvina.options.domain.features.account.EffectiveAccountService
 import cz.solvina.options.domain.features.account.PositionsPort
 import cz.solvina.options.domain.features.alert.AlertLevel
 import cz.solvina.options.domain.features.alert.AlertPort
@@ -18,8 +18,8 @@ import cz.solvina.options.domain.features.flag.model.FlagPosition
 import cz.solvina.options.domain.features.flag.model.FlagStatus
 import cz.solvina.options.domain.features.order.BrokerOrderUpdate
 import cz.solvina.options.domain.features.order.OrderLifecyclePort
-import cz.solvina.options.domain.models.Symbol
 import cz.solvina.options.domain.models.ConnectionStatus
+import cz.solvina.options.domain.models.Symbol
 import io.mockk.coEvery
 import io.mockk.mockk
 import kotlinx.coroutines.CoroutineScope
@@ -161,7 +161,9 @@ class FlagRecoveryServiceTest {
             openedAt = Instant.parse("2025-06-05T13:00:00Z"),
         )
 
-    private class CapturingFlagPort(initialRows: List<FlagPosition>) : FlagPort {
+    private class CapturingFlagPort(
+        initialRows: List<FlagPosition>,
+    ) : FlagPort {
         val rows = initialRows.toMutableList()
         val updated = mutableListOf<FlagPosition>()
 
@@ -194,23 +196,35 @@ class FlagRecoveryServiceTest {
 
     private object NoopBracketOrderPort : BracketOrderPort {
         override fun reserveBracketOrderIds() = BracketOrderIds(1, 2, 2)
+
         override suspend fun cancelOrder(orderId: Int) {}
+
         override suspend fun submitTrailingStopSell(
             symbol: Symbol,
             shares: Int,
             initialStop: BigDecimal,
             trailAmount: BigDecimal,
         ) = 99
-        override suspend fun submitMarketSell(orderId: Int, symbol: Symbol, shares: Int) = orderId
+
+        override suspend fun submitMarketSell(
+            orderId: Int,
+            symbol: Symbol,
+            shares: Int,
+        ) = orderId
     }
 
     private object NoopOrderLifecyclePort : OrderLifecyclePort {
         override val updates = emptyFlow<BrokerOrderUpdate>()
+
         override fun current(orderId: Int): BrokerOrderUpdate? = null
     }
 
     private object CapturingAlertPort : AlertPort {
-        override suspend fun send(level: AlertLevel, title: String, body: String) {}
+        override suspend fun send(
+            level: AlertLevel,
+            title: String,
+            body: String,
+        ) {}
     }
 
     private object ConnectedStatusPort : ConnectionStatusPort {

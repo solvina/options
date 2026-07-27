@@ -41,8 +41,7 @@ class IbkrOrdersRegistry {
 
     fun getAllOrders(): List<OpenOrder> = openOrders.values.toList()
 
-    fun getOpenOrders(): List<OpenOrder> =
-        openOrders.values.filter { !OrderStatus.fromBrokerStatus(it.status).isTerminal }
+    fun getOpenOrders(): List<OpenOrder> = openOrders.values.filter { !OrderStatus.fromBrokerStatus(it.status).isTerminal }
 
     fun current(orderId: Int): BrokerOrderUpdate? = latestUpdates[orderId]
 
