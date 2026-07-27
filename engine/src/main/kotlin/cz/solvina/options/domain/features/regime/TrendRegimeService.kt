@@ -1,5 +1,6 @@
 package cz.solvina.options.domain.features.regime
 
+import cz.solvina.options.domain.features.bars.RsiCalculator
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.flow.toList
@@ -76,32 +77,17 @@ internal fun classifyRegime(
 }
 
 /**
- * Wilder's RSI over an oldest-first close series. Returns null with fewer than [period]+1 bars.
- * All-gains → 100, all-flat → 50 (neutral). Kept in Double for the smoothing math, scaled to 2dp.
+ * Wilder's RSI over an oldest-first close series, scaled to 2dp. Returns null with fewer than
+ * [period]+1 bars. Delegates to [RsiCalculator] — the single RSI implementation, shared with the
+ * stock strategies, so a regime read and a backtest can never disagree about the same series.
  */
 internal fun computeRsi(
     closes: List<BigDecimal>,
     period: Int,
 ): BigDecimal? {
     if (period < 1 || closes.size < period + 1) return null
-    var avgGain = 0.0
-    var avgLoss = 0.0
-    for (i in 1..period) {
-        val diff = closes[i].toDouble() - closes[i - 1].toDouble()
-        if (diff >= 0) avgGain += diff else avgLoss += -diff
-    }
-    avgGain /= period
-    avgLoss /= period
-    for (i in period + 1 until closes.size) {
-        val diff = closes[i].toDouble() - closes[i - 1].toDouble()
-        val gain = if (diff > 0) diff else 0.0
-        val loss = if (diff < 0) -diff else 0.0
-        avgGain = (avgGain * (period - 1) + gain) / period
-        avgLoss = (avgLoss * (period - 1) + loss) / period
-    }
-    if (avgLoss == 0.0) return if (avgGain == 0.0) BigDecimal("50.00") else BigDecimal("100.00")
-    val rs = avgGain / avgLoss
-    return BigDecimal(100.0 - 100.0 / (1.0 + rs)).setScale(2, RoundingMode.HALF_UP)
+    val rsi = RsiCalculator.last(closes.map { it.toDouble() }, period) ?: return null
+    return BigDecimal(rsi).setScale(2, RoundingMode.HALF_UP)
 }
 
 private fun List<BigDecimal>.average(): BigDecimal =

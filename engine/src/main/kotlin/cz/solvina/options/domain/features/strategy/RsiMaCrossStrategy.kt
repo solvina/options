@@ -6,58 +6,51 @@ import cz.solvina.options.domain.features.bars.Timeframe
 import cz.solvina.options.domain.models.Symbol
 
 /**
- * Long-on-support-bounce: (optional) uptrend filter, price near/above the fast SMA acting as
- * support, RSI oversold and (optionally) turning up.
+ * Long when RSI crosses **above its own moving average** — momentum turning up, measured against
+ * momentum's own recent level rather than a fixed line.
  *
- * Formerly `RuleBacktestStrategy` — same rules, same arithmetic, now expressed against the
- * host-neutral [StockStrategy] seam so the live host can run it unchanged.
- *
- * The instance registered in [StrategyRegistry] is the library template; runs use the copies
- * produced by [withParams].
+ * The entry is a genuine crossing (`prev <= MA(prev) && now > MA(now)`), not a level test. A level
+ * test fires on every bar of an uptrend and turns one idea into a hundred correlated entries; a
+ * cross fires once, on the turn. The oversold gate and the trend filter are independent switches
+ * because whether this cross wants them is a backtest question, not a design decision.
  */
-class SupportBounceStrategy(
+class RsiMaCrossStrategy(
     private val p: Params = Params(),
     private val timeframe: Timeframe = Timeframe.DAILY,
 ) : StockStrategy {
     data class Params(
         val rsiPeriod: Int = 14,
+        /** SMA length applied to the RSI series itself — the line RSI must cross. */
+        val rsiMaPeriod: Int = 14,
+        /** When true, only take crosses that happen below [rsiOversold] (a turn from a dip). */
+        val requireOversold: Boolean = false,
         val rsiOversold: Double = 40.0,
-        val requireRsiRising: Boolean = true,
-        val smaFastPeriod: Int = 50,
-        val smaSlowPeriod: Int = 200,
-        val requireUptrend: Boolean = true, // close > slow SMA (200)
-        val supportProximityPct: Double = 3.0, // close within this % above the fast SMA (support)
+        /** When true, price must be above [smaTrendPeriod] — crosses only in an established uptrend. */
+        val requireUptrend: Boolean = false,
+        val smaTrendPeriod: Int = 200,
         val stopLossPct: Double = 3.0,
         val targetPct: Double = 6.0,
-        /** Wilder ATR lookback (bars of the backtest timeframe) for the ATR-based exits below. */
         val atrPeriod: Int = 14,
-        /** When > 0, stop = entry − ATR × this (volatility-scaled), overriding [stopLossPct]. */
         val stopAtrMultiple: Double = 0.0,
-        /** When > 0, target = entry + ATR × this, overriding [targetPct]. */
         val targetAtrMultiple: Double = 0.0,
         val riskPerTrade: Double = 200.0,
-        /** When > 0, overrides [riskPerTrade]: dollar risk = current capital × this / 100. */
         val riskPerTradePct: Double = 0.0,
         val maxOpenPositions: Int = 1,
-        /** Optional buying-power ceiling: cap a position's notional at capital × this. 0 = uncapped
-         *  (pure risk sizing). A cash/1× cap clamps tight-stop, high-priced names to a few shares
-         *  regardless of risk, so it's opt-in, not a silent default. */
         val maxLeverage: Double = 0.0,
     )
 
     override val id = ID
 
-    override val displayName = "Support bounce (SMA + RSI)"
+    override val displayName = "RSI / MA cross"
 
     override val params =
         listOf(
             ParamDescriptor("rsiPeriod", ParamType.INT, 14, min = 1.0, group = "Entry", help = "Wilder RSI lookback."),
-            ParamDescriptor("rsiOversold", ParamType.DOUBLE, 40.0, 0.0, 100.0, "Entry", "Enter only below this RSI."),
-            ParamDescriptor("requireRsiRising", ParamType.BOOLEAN, true, group = "Entry", help = "RSI must be turning up."),
-            ParamDescriptor("smaFastPeriod", ParamType.INT, 50, min = 1.0, group = "Entry", help = "Fast SMA = support level."),
-            ParamDescriptor("smaSlowPeriod", ParamType.INT, 200, min = 1.0, group = "Entry", help = "Slow SMA = trend filter."),
-            ParamDescriptor("requireUptrend", ParamType.BOOLEAN, true, group = "Entry", help = "Close must be above the slow SMA."),
-            ParamDescriptor("supportProximityPct", ParamType.DOUBLE, 3.0, 0.0, group = "Entry", help = "Max % above the fast SMA."),
+            ParamDescriptor("rsiMaPeriod", ParamType.INT, 14, min = 1.0, group = "Entry", help = "SMA length applied to the RSI itself."),
+            ParamDescriptor("requireOversold", ParamType.BOOLEAN, false, group = "Entry", help = "Only cross below the oversold level."),
+            ParamDescriptor("rsiOversold", ParamType.DOUBLE, 40.0, 0.0, 100.0, "Entry", "The oversold level, when gated."),
+            ParamDescriptor("requireUptrend", ParamType.BOOLEAN, false, group = "Entry", help = "Only cross above the trend SMA."),
+            ParamDescriptor("smaTrendPeriod", ParamType.INT, 200, min = 1.0, group = "Entry", help = "Trend SMA, when gated."),
             ParamDescriptor("stopLossPct", ParamType.DOUBLE, 3.0, 0.0, group = "Exit", help = "Stop distance when no ATR stop."),
             ParamDescriptor("targetPct", ParamType.DOUBLE, 6.0, 0.0, group = "Exit", help = "Target distance when no ATR target."),
             ParamDescriptor("atrPeriod", ParamType.INT, 14, min = 1.0, group = "Exit", help = "Wilder ATR lookback."),
@@ -68,8 +61,9 @@ class SupportBounceStrategy(
     override val inputs =
         StrategyInputs(
             timeframes = listOf(timeframe),
-            // The slow SMA is the binding constraint; a host must not have to guess that.
-            warmupBars = maxOf(p.smaSlowPeriod, p.smaFastPeriod, p.rsiPeriod + 1, p.atrPeriod + 1),
+            // The RSI MA only starts rsiMaPeriod bars after RSI itself does, so the two stack; the
+            // trend SMA is usually the binding constraint but must not be assumed to be.
+            warmupBars = maxOf(p.smaTrendPeriod, p.rsiPeriod + p.rsiMaPeriod + 1, p.atrPeriod + 1),
         )
 
     override fun validate(params: StrategyParams): String? = validationError(from(params))
@@ -77,7 +71,7 @@ class SupportBounceStrategy(
     override fun withParams(
         params: StrategyParams,
         timeframe: Timeframe,
-    ): StockStrategy = SupportBounceStrategy(from(params), timeframe)
+    ): StockStrategy = RsiMaCrossStrategy(from(params), timeframe)
 
     private val ind = mutableMapOf<Symbol, RollingIndicators>()
     private val recentBars = mutableMapOf<Symbol, ArrayDeque<Candle>>() // ATR window (atrPeriod+1)
@@ -94,52 +88,47 @@ class SupportBounceStrategy(
     }
 
     override fun decide(ctx: StrategyContext): Decision? {
-        val symbol = ctx.symbol
         val bar = ctx.candle
         // State advances on EVERY bar, before any early return: an indicator that only updated on
         // tradeable bars would drift apart between a capped and an uncapped run of the same data.
-        val i = ind.getOrPut(symbol) { RollingIndicators(p.rsiPeriod) }
+        val i = ind.getOrPut(ctx.symbol) { RollingIndicators(p.rsiPeriod) }
         i.update(bar.close)
-        val window = recentBars.getOrPut(symbol) { ArrayDeque() }
+        val window = recentBars.getOrPut(ctx.symbol) { ArrayDeque() }
         window.addLast(bar)
         while (window.size > p.atrPeriod + 1) window.removeFirst()
 
         if (ctx.exposureCount >= p.maxOpenPositions) return null
 
         val rsi = i.rsi ?: return null
-        val smaFast = i.sma(p.smaFastPeriod) ?: return null
-        val smaSlow = i.sma(p.smaSlowPeriod) ?: return null
-        val close = bar.close
+        val prevRsi = i.prevRsi ?: return null
+        val rsiMa = i.rsiSma(p.rsiMaPeriod) ?: return null
+        // Both sides of the comparison move: the previous bar is tested against the MA *as it stood
+        // then*, otherwise a rising MA alone could manufacture a cross that never happened.
+        val prevRsiMa = i.prevRsiSma(p.rsiMaPeriod) ?: return null
 
-        val uptrendOk = !p.requireUptrend || close > smaSlow
-        val nearSupport = close >= smaFast && close <= smaFast * (1.0 + p.supportProximityPct / 100.0)
-        val rsiOk = rsi < p.rsiOversold
-        val risingOk = !p.requireRsiRising || (i.prevRsi != null && rsi > i.prevRsi!!)
-        if (!(uptrendOk && nearSupport && rsiOk && risingOk)) return null
+        val crossedUp = prevRsi <= prevRsiMa && rsi > rsiMa
+        if (!crossedUp) return null
+        if (p.requireOversold && rsi >= p.rsiOversold) return null
+        if (p.requireUptrend) {
+            val trendSma = i.sma(p.smaTrendPeriod) ?: return null
+            if (bar.close <= trendSma) return null
+        }
 
-        // ATR-scaled exits when requested: same multiple = wider stops in volatile regimes, tighter
-        // in calm ones. Placement and sizing belong to the shared [EntrySizer], not to a strategy.
         val frame = frame(p)
         val atr = if (frame.needsAtr) AtrCalculator.atr(window.toList(), p.atrPeriod) else Double.NaN
-        return EntrySizer.size(entry = close, atr = atr, equity = ctx.equity.toDouble(), f = frame)
+        return EntrySizer.size(entry = bar.close, atr = atr, equity = ctx.equity.toDouble(), f = frame)
     }
 
     companion object {
-        const val ID = "support_bounce"
+        const val ID = "rsi_ma_cross"
 
-        /**
-         * Returns why [p] is not runnable, or null when it is. A zero/negative period silently
-         * yields 0 trades (NaN-free but meaningless), so every caller — API controller, sweep
-         * runner — must reject up front; browser form constraints protect nobody else.
-         */
+        /** Returns why [p] is not runnable, or null when it is. */
         fun validationError(p: Params): String? =
             when {
                 p.rsiPeriod < 1 -> "rsiPeriod must be >= 1"
-                p.smaFastPeriod < 1 -> "smaFastPeriod must be >= 1"
-                p.smaSlowPeriod < 1 -> "smaSlowPeriod must be >= 1"
+                p.rsiMaPeriod < 1 -> "rsiMaPeriod must be >= 1"
+                p.smaTrendPeriod < 1 -> "smaTrendPeriod must be >= 1"
                 p.rsiOversold <= 0.0 || p.rsiOversold > 100.0 -> "rsiOversold must be in (0, 100]"
-                p.supportProximityPct < 0.0 -> "supportProximityPct must be >= 0"
-                // Exit and money-management rules are shared, so their messages are too.
                 else ->
                     EntrySizer.validationError(
                         stopLossPct = p.stopLossPct,
@@ -165,16 +154,14 @@ class SupportBounceStrategy(
                 maxLeverage = p.maxLeverage,
             )
 
-        /** Builds typed [Params] from a resolved param blob — the Phase-2 registry entry point. */
         fun from(sp: StrategyParams) =
             Params(
                 rsiPeriod = sp.int("rsiPeriod"),
+                rsiMaPeriod = sp.int("rsiMaPeriod"),
+                requireOversold = sp.boolean("requireOversold"),
                 rsiOversold = sp.double("rsiOversold"),
-                requireRsiRising = sp.boolean("requireRsiRising"),
-                smaFastPeriod = sp.int("smaFastPeriod"),
-                smaSlowPeriod = sp.int("smaSlowPeriod"),
                 requireUptrend = sp.boolean("requireUptrend"),
-                supportProximityPct = sp.double("supportProximityPct"),
+                smaTrendPeriod = sp.int("smaTrendPeriod"),
                 stopLossPct = sp.double("stopLossPct"),
                 targetPct = sp.double("targetPct"),
                 atrPeriod = sp.int("atrPeriod"),

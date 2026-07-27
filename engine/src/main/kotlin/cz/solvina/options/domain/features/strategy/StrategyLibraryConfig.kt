@@ -14,4 +14,7 @@ import org.springframework.context.annotation.Configuration
 class StrategyLibraryConfig {
     @Bean
     fun supportBounceStrategy(): StockStrategy = SupportBounceStrategy()
+
+    @Bean
+    fun rsiMaCrossStrategy(): StockStrategy = RsiMaCrossStrategy()
 }
