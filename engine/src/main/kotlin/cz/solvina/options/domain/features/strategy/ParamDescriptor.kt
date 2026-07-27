@@ -40,6 +40,9 @@ class StrategyParams(
 
     fun string(name: String): String = values[name]?.toString() ?: error("Param '$name' is missing")
 
+    /** For host-side conventions a strategy may or may not declare, e.g. a position cap. */
+    fun intOrNull(name: String): Int? = if (values[name] == null) null else int(name)
+
     fun asMap(): Map<String, Any?> = values
 
     private fun num(name: String): Number =

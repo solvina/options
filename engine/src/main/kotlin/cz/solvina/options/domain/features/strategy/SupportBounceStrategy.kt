@@ -14,9 +14,12 @@ import kotlin.math.floor
  *
  * Formerly `RuleBacktestStrategy` — same rules, same arithmetic, now expressed against the
  * host-neutral [StockStrategy] seam so the live host can run it unchanged.
+ *
+ * The instance registered in [StrategyRegistry] is the library template; runs use the copies
+ * produced by [withParams].
  */
 class SupportBounceStrategy(
-    private val p: Params,
+    private val p: Params = Params(),
     private val timeframe: Timeframe = Timeframe.DAILY,
 ) : StockStrategy {
     data class Params(
@@ -84,6 +87,11 @@ class SupportBounceStrategy(
         )
 
     override fun validate(params: StrategyParams): String? = validationError(from(params))
+
+    override fun withParams(
+        params: StrategyParams,
+        timeframe: Timeframe,
+    ): StockStrategy = SupportBounceStrategy(from(params), timeframe)
 
     private val ind = mutableMapOf<Symbol, RollingIndicators>()
     private val recentBars = mutableMapOf<Symbol, ArrayDeque<Candle>>() // ATR window (atrPeriod+1)

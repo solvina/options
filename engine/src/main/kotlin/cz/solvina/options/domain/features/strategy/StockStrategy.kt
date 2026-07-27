@@ -40,6 +40,18 @@ interface StockStrategy {
     fun validate(params: StrategyParams): String?
 
     /**
+     * Returns a fresh instance configured with [params] on [timeframe].
+     *
+     * The registered bean is a **template**: it answers [id], [displayName], [params], [validate]
+     * and nothing else. Only instances handed out here carry rolling state and may [decide] — a
+     * strategy is stateful per run, so a shared singleton would mix two runs' indicator state.
+     */
+    fun withParams(
+        params: StrategyParams,
+        timeframe: Timeframe,
+    ): StockStrategy
+
+    /**
      * Seeds rolling state from pre-period bars. Must not produce decisions — warm-up bars are
      * history, not tradeable.
      */
