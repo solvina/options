@@ -5,8 +5,8 @@ import com.ib.client.EClientSocket
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrHistoricalDataRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.PendingRawBarsRequest
+import cz.solvina.options.domain.features.bars.Candle
 import cz.solvina.options.domain.features.bars.EquityHistoricalBarsPort
-import cz.solvina.options.domain.features.bars.FiveMinuteBar
 import cz.solvina.options.domain.features.bars.Timeframe
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -51,16 +51,16 @@ class IbkrEquityHistoricalBarsAdapter(
     override suspend fun fetch5MinBars(
         symbol: Symbol,
         days: Int,
-    ): List<FiveMinuteBar> = fetchBarsRaw(symbol, endDateTime = "", durationStr = "$days D", barSize = Timeframe.FIVE_MIN.ibkrBarSize)
+    ): List<Candle> = fetchBarsRaw(symbol, endDateTime = "", durationStr = "$days D", barSize = Timeframe.FIVE_MIN.ibkrBarSize)
 
     override suspend fun fetch5MinBarsForRange(
         symbol: Symbol,
         from: LocalDate,
         to: LocalDate,
         timeframe: Timeframe,
-        onChunk: suspend (List<FiveMinuteBar>) -> Unit,
-    ): List<FiveMinuteBar> {
-        val allBars = mutableListOf<FiveMinuteBar>()
+        onChunk: suspend (List<Candle>) -> Unit,
+    ): List<Candle> {
+        val allBars = mutableListOf<Candle>()
         var chunkTo = to
         while (!chunkTo.isBefore(from)) {
             val chunkFrom = maxOf(from, chunkTo.minusDays(timeframe.maxChunkDays - 1))
@@ -92,7 +92,7 @@ class IbkrEquityHistoricalBarsAdapter(
         endDateTime: String,
         durationStr: String,
         barSize: String,
-    ): List<FiveMinuteBar> {
+    ): List<Candle> {
         val reqId = registry.nextReqId()
         val contract = contractFactory.stockContract(symbol)
         try {
@@ -140,7 +140,7 @@ class IbkrEquityHistoricalBarsAdapter(
         }
     }
 
-    private fun parseBar(bar: Bar): FiveMinuteBar? =
+    private fun parseBar(bar: Bar): Candle? =
         runCatching {
             val raw = bar.time().trim()
             // IBKR returns DAILY (and larger) bars as "yyyyMMdd" even with formatDate=2 — only
@@ -158,7 +158,7 @@ class IbkrEquityHistoricalBarsAdapter(
                     raw.toLongOrNull() != null -> Instant.ofEpochSecond(raw.toLong())
                     else -> LocalDateTime.parse(raw.take(17), BAR_TIME_FORMAT).atZone(ET).toInstant()
                 }
-            FiveMinuteBar(
+            Candle(
                 time = time,
                 open = bar.open(),
                 high = bar.high(),

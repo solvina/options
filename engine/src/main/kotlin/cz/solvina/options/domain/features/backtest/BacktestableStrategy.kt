@@ -1,6 +1,6 @@
 package cz.solvina.options.domain.features.backtest
 
-import cz.solvina.options.domain.features.bars.FiveMinuteBar
+import cz.solvina.options.domain.features.bars.Candle
 import cz.solvina.options.domain.models.Symbol
 import java.math.BigDecimal
 import java.time.Instant
@@ -12,7 +12,7 @@ interface BacktestableStrategy {
      */
     fun initialize(
         symbols: List<Symbol>,
-        warmupBars: Map<Symbol, List<FiveMinuteBar>>,
+        warmupBars: Map<Symbol, List<Candle>>,
     )
 
     /**
@@ -21,7 +21,7 @@ interface BacktestableStrategy {
      */
     fun onBar(
         symbol: Symbol,
-        bar: FiveMinuteBar,
+        bar: Candle,
         account: BacktestAccountView,
     ): List<BacktestSignal>
 

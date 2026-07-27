@@ -3,7 +3,7 @@ package cz.solvina.options.domain.features.bars
 /** Wilder's Average True Range over the last [period] completed 5-minute candles. */
 object AtrCalculator {
     fun atr(
-        bars: List<FiveMinuteBar>,
+        bars: List<Candle>,
         period: Int = 14,
     ): Double {
         if (bars.size < period + 1) return Double.NaN

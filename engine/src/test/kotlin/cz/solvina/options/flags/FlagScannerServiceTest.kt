@@ -5,8 +5,8 @@ import ch.qos.logback.classic.Logger
 import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.read.ListAppender
 import cz.solvina.options.domain.features.bars.BarStorePort
+import cz.solvina.options.domain.features.bars.Candle
 import cz.solvina.options.domain.features.bars.EquityHistoricalBarsPort
-import cz.solvina.options.domain.features.bars.FiveMinuteBar
 import cz.solvina.options.domain.features.bars.RealTimeBarsPort
 import cz.solvina.options.domain.features.flag.FlagExecutionService
 import cz.solvina.options.domain.features.flag.FlagManagementService
@@ -326,7 +326,7 @@ class FlagScannerServiceTest {
                 low: Double,
                 close: Double,
                 volume: Long = 1_000,
-            ) = FiveMinuteBar(time = t.also { t = t.plusSeconds(300) }, open = open, high = high, low = low, close = close, volume = volume)
+            ) = Candle(time = t.also { t = t.plusSeconds(300) }, open = open, high = high, low = low, close = close, volume = volume)
 
             fun flat() = bar(100.0, 101.0, 100.0, 100.0)
 

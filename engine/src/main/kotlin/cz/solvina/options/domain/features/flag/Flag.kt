@@ -1,10 +1,10 @@
 package cz.solvina.options.domain.features.flag
 
-import cz.solvina.options.domain.features.bars.FiveMinuteBar
+import cz.solvina.options.domain.features.bars.Candle
 import cz.solvina.options.domain.features.bars.LinearRegression
 
 data class Flag(
-    val bars: List<FiveMinuteBar>,
+    val bars: List<Candle>,
     /** Lowest low across all flag bars — used as the stop-loss anchor */
     val lowestLow: Double,
     /** Regression line fitted through candle highs */

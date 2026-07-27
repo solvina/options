@@ -5,7 +5,7 @@ import cz.solvina.options.domain.features.backtest.BacktestEngine
 import cz.solvina.options.domain.features.backtest.BacktestSignal
 import cz.solvina.options.domain.features.backtest.BacktestableStrategy
 import cz.solvina.options.domain.features.bars.BarStorePort
-import cz.solvina.options.domain.features.bars.FiveMinuteBar
+import cz.solvina.options.domain.features.bars.Candle
 import cz.solvina.options.domain.features.bars.Timeframe
 import cz.solvina.options.domain.models.Symbol
 import io.mockk.coEvery
@@ -35,7 +35,7 @@ class BacktestEngineDailyTest {
         high: Double,
         low: Double,
         close: Double,
-    ) = FiveMinuteBar(
+    ) = Candle(
         // 16:00 New York close-stamp, matching how daily bars group into one trading day.
         time = date.atTime(16, 0).atZone(ny).toInstant(),
         open = open,
@@ -54,12 +54,12 @@ class BacktestEngineDailyTest {
 
         override fun initialize(
             symbols: List<Symbol>,
-            warmupBars: Map<Symbol, List<FiveMinuteBar>>,
+            warmupBars: Map<Symbol, List<Candle>>,
         ) {}
 
         override fun onBar(
             symbol: Symbol,
-            bar: FiveMinuteBar,
+            bar: Candle,
             account: BacktestAccountView,
         ): List<BacktestSignal> {
             if (emitted) return emptyList()
@@ -102,7 +102,7 @@ class BacktestEngineDailyTest {
         override fun trades(): List<*> = closed
     }
 
-    private fun engineOver(bars: List<FiveMinuteBar>): BacktestEngine {
+    private fun engineOver(bars: List<Candle>): BacktestEngine {
         val store = mockk<BarStorePort>()
         coEvery { store.readBars(symbol, any(), any(), Timeframe.DAILY) } returns bars
         return BacktestEngine(store)

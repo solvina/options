@@ -2,7 +2,7 @@ package cz.solvina.options.domain.features.flag
 
 import cz.solvina.options.domain.features.bars.AtrCalculator
 import cz.solvina.options.domain.features.bars.BarBuffer
-import cz.solvina.options.domain.features.bars.FiveMinuteBar
+import cz.solvina.options.domain.features.bars.Candle
 import cz.solvina.options.domain.features.bars.LinearRegression
 import cz.solvina.options.domain.features.bars.VolumeAnalysis
 import cz.solvina.options.domain.features.flag.config.FlagStrategyConfig
@@ -29,7 +29,7 @@ class PatternDetector(
      * Evaluate the [newBar] (already appended to [buffer]) against the current state.
      * Returns the updated [PatternState].
      */
-    fun onNewBar(newBar: FiveMinuteBar): PatternState {
+    fun onNewBar(newBar: Candle): PatternState {
         val bars = buffer.snapshot()
 
         state =
@@ -55,7 +55,7 @@ class PatternDetector(
     // Phase 1: Flagpole detection
     // -------------------------------------------------------------------------
 
-    private fun detectPole(bars: List<FiveMinuteBar>): PatternState {
+    private fun detectPole(bars: List<Candle>): PatternState {
         if (bars.size < config.atrPeriod + config.poleMinBars + 1) return PatternState.Idle
 
         val atr = AtrCalculator.atr(bars, config.atrPeriod)
@@ -93,7 +93,7 @@ class PatternDetector(
     // -------------------------------------------------------------------------
 
     private fun detectFlag(
-        bars: List<FiveMinuteBar>,
+        bars: List<Candle>,
         pole: Flagpole,
     ): PatternState {
         // Collect bars after the pole top
@@ -170,10 +170,10 @@ class PatternDetector(
     }
 
     private fun checkBreakout(
-        bars: List<FiveMinuteBar>,
+        bars: List<Candle>,
         pole: Flagpole,
         flag: Flag,
-        newBar: FiveMinuteBar,
+        newBar: Candle,
     ): PatternState {
         val barIndex = flag.bars.size
         val resistance = flag.upperResistance.valueAt(barIndex)

@@ -2,7 +2,7 @@ package cz.solvina.options.domain.features.backtest
 
 import cz.solvina.options.domain.features.bars.AtrCalculator
 import cz.solvina.options.domain.features.bars.BarBuffer
-import cz.solvina.options.domain.features.bars.FiveMinuteBar
+import cz.solvina.options.domain.features.bars.Candle
 import cz.solvina.options.domain.features.bars.VolumeAnalysis
 import cz.solvina.options.domain.features.flag.PatternDetector
 import cz.solvina.options.domain.features.flag.PatternState
@@ -63,7 +63,7 @@ class FlagBacktestStrategy(
 
     override fun initialize(
         symbols: List<Symbol>,
-        warmupBars: Map<Symbol, List<FiveMinuteBar>>,
+        warmupBars: Map<Symbol, List<Candle>>,
     ) {
         for (symbol in symbols) {
             val buffer = BarBuffer()
@@ -80,7 +80,7 @@ class FlagBacktestStrategy(
 
     override fun onBar(
         symbol: Symbol,
-        bar: FiveMinuteBar,
+        bar: Candle,
         account: BacktestAccountView,
     ): List<BacktestSignal> {
         val buffer = buffers[symbol] ?: return emptyList()
@@ -199,7 +199,7 @@ class FlagBacktestStrategy(
 
     private fun buildSignal(
         symbol: Symbol,
-        bar: FiveMinuteBar,
+        bar: Candle,
         state: PatternState.BreakoutReady,
         buffer: BarBuffer,
         session: String,

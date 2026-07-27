@@ -2,7 +2,7 @@ package cz.solvina.options.domain.features.bars
 
 /**
  * Bar timeframe for the store + historical fetch. The timeframe is a property of the *series*, not
- * of an individual [FiveMinuteBar] (which is just OHLCV + time), so it's threaded through the ports
+ * of an individual [Candle] (which is just OHLCV + time), so it's threaded through the ports
  * rather than baked into the bar type. Defaults keep every existing 5-min caller byte-for-byte
  * unchanged; only the multi-timeframe backtest paths pass DAILY / FOUR_HOUR.
  */

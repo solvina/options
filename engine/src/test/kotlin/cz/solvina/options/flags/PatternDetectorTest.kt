@@ -1,7 +1,7 @@
 package cz.solvina.options.flags
 
 import cz.solvina.options.domain.features.bars.BarBuffer
-import cz.solvina.options.domain.features.bars.FiveMinuteBar
+import cz.solvina.options.domain.features.bars.Candle
 import cz.solvina.options.domain.features.flag.PatternDetector
 import cz.solvina.options.domain.features.flag.PatternState
 import cz.solvina.options.domain.features.flag.config.FlagStrategyConfig
@@ -56,7 +56,7 @@ class PatternDetectorTest {
         low: Double,
         close: Double,
         volume: Long = 1_000,
-    ) = FiveMinuteBar(time = next(), open = open, high = high, low = low, close = close, volume = volume)
+    ) = Candle(time = next(), open = open, high = high, low = low, close = close, volume = volume)
 
     /** Flat candle: range [price, price+1], neutral volume (low=open so wide windows don't lower pole height). */
     private fun flat(
@@ -74,7 +74,7 @@ class PatternDetectorTest {
     private fun feed(
         detector: PatternDetector,
         buffer: BarBuffer,
-        bars: List<FiveMinuteBar>,
+        bars: List<Candle>,
     ): PatternState {
         var state: PatternState = PatternState.Idle
         for (bar in bars) {

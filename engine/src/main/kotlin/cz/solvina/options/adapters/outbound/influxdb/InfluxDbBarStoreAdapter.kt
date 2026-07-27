@@ -5,7 +5,7 @@ import com.influxdb.client.kotlin.InfluxDBClientKotlin
 import com.influxdb.client.write.Point
 import com.influxdb.query.FluxRecord
 import cz.solvina.options.domain.features.bars.BarStorePort
-import cz.solvina.options.domain.features.bars.FiveMinuteBar
+import cz.solvina.options.domain.features.bars.Candle
 import cz.solvina.options.domain.features.bars.SeriesSummary
 import cz.solvina.options.domain.features.bars.Timeframe
 import cz.solvina.options.domain.models.Symbol
@@ -42,7 +42,7 @@ class InfluxDbBarStoreAdapter(
     )
 
     private class CachedRead(
-        val bars: List<FiveMinuteBar>,
+        val bars: List<Candle>,
         val at: Long = System.currentTimeMillis(),
     )
 
@@ -51,7 +51,7 @@ class InfluxDbBarStoreAdapter(
             override fun removeEldestEntry(eldest: Map.Entry<ReadKey, CachedRead>): Boolean = size > CACHE_MAX_ENTRIES
         }
 
-    private fun cacheGet(key: ReadKey): List<FiveMinuteBar>? =
+    private fun cacheGet(key: ReadKey): List<Candle>? =
         synchronized(readCache) {
             val hit = readCache[key] ?: return null
             if (System.currentTimeMillis() - hit.at > CACHE_TTL_MS) {
@@ -64,7 +64,7 @@ class InfluxDbBarStoreAdapter(
 
     private fun cachePut(
         key: ReadKey,
-        bars: List<FiveMinuteBar>,
+        bars: List<Candle>,
     ) = synchronized(readCache) {
         readCache[key] = CachedRead(bars)
         while (readCache.values.sumOf { it.bars.size } > CACHE_MAX_TOTAL_BARS && readCache.size > 1) {
@@ -82,7 +82,7 @@ class InfluxDbBarStoreAdapter(
 
     override suspend fun writeBar(
         symbol: Symbol,
-        bar: FiveMinuteBar,
+        bar: Candle,
         timeframe: Timeframe,
     ) {
         try {
@@ -95,7 +95,7 @@ class InfluxDbBarStoreAdapter(
 
     override suspend fun writeBars(
         symbol: Symbol,
-        bars: List<FiveMinuteBar>,
+        bars: List<Candle>,
         timeframe: Timeframe,
     ) {
         if (bars.isEmpty()) return
@@ -112,7 +112,7 @@ class InfluxDbBarStoreAdapter(
         from: Instant,
         to: Instant,
         timeframe: Timeframe,
-    ): List<FiveMinuteBar> {
+    ): List<Candle> {
         val key = ReadKey(symbol.value, from, to, timeframe.label)
         cacheGet(key)?.let { return it }
         val flux =
@@ -126,7 +126,7 @@ class InfluxDbBarStoreAdapter(
               |> sort(columns: ["_time"])
             """.trimIndent()
         return try {
-            val result = mutableListOf<FiveMinuteBar>()
+            val result = mutableListOf<Candle>()
             client.getQueryKotlinApi().query(flux).consumeEach { record ->
                 parseBar(record)?.let { result.add(it) }
             }
@@ -251,7 +251,7 @@ class InfluxDbBarStoreAdapter(
 
     private fun toPoint(
         symbol: Symbol,
-        bar: FiveMinuteBar,
+        bar: Candle,
         timeframe: Timeframe,
     ): Point =
         Point
@@ -265,9 +265,9 @@ class InfluxDbBarStoreAdapter(
             .addField("volume", bar.volume)
             .time(bar.time, WritePrecision.S)
 
-    private fun parseBar(record: FluxRecord): FiveMinuteBar? {
+    private fun parseBar(record: FluxRecord): Candle? {
         return try {
-            FiveMinuteBar(
+            Candle(
                 time = record.getTime() ?: return null,
                 open = record.getValueByKey("open") as? Double ?: return null,
                 high = record.getValueByKey("high") as? Double ?: return null,

@@ -7,13 +7,13 @@ import java.time.LocalDate
 interface BarStorePort {
     suspend fun writeBar(
         symbol: Symbol,
-        bar: FiveMinuteBar,
+        bar: Candle,
         timeframe: Timeframe = Timeframe.FIVE_MIN,
     )
 
     suspend fun writeBars(
         symbol: Symbol,
-        bars: List<FiveMinuteBar>,
+        bars: List<Candle>,
         timeframe: Timeframe = Timeframe.FIVE_MIN,
     )
 
@@ -22,7 +22,7 @@ interface BarStorePort {
         from: Instant,
         to: Instant,
         timeframe: Timeframe = Timeframe.FIVE_MIN,
-    ): List<FiveMinuteBar>
+    ): List<Candle>
 
     /** Returns the timestamp of the most recent stored bar for [symbol], or null if none. */
     suspend fun lastBarTime(

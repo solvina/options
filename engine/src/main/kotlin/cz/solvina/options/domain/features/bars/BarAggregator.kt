@@ -4,7 +4,7 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 
 private val logger = KotlinLogging.logger {}
 
-/** Aggregates exactly 60 × 5-second bars into one [FiveMinuteBar].
+/** Aggregates exactly 60 × 5-second bars into one [Candle].
  *  Emits a complete bar aligned to 5-minute UTC boundaries.
  *
  *  All market open times (9:30 ET, 9:00 Berlin) are multiples of 300 s from the epoch, so
@@ -22,10 +22,10 @@ class BarAggregator(
     private var awaitingBoundary = true
 
     /**
-     * Accepts a 5-second bar. Returns a completed [FiveMinuteBar] when the 60th bar arrives
+     * Accepts a 5-second bar. Returns a completed [Candle] when the 60th bar arrives
      * after a 5-min boundary, or `null` if still accumulating / waiting to align.
      */
-    fun add(bar: RealTimeBar): FiveMinuteBar? {
+    fun add(bar: RealTimeBar): Candle? {
         // Gap detection: warn if bar arrived more than 6 seconds after the previous one
         lastBarTime?.let { prev ->
             val gapSec = bar.time.epochSecond - prev
@@ -56,13 +56,13 @@ class BarAggregator(
         }
     }
 
-    private fun buildCandle(): FiveMinuteBar {
+    private fun buildCandle(): Candle {
         val open = buffer.first().open
         val high = buffer.maxOf { it.high }
         val low = buffer.minOf { it.low }
         val close = buffer.last().close
         val volume = buffer.sumOf { it.volume }
-        return FiveMinuteBar(
+        return Candle(
             time = buffer.last().time,
             open = open,
             high = high,

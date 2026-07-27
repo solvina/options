@@ -1,7 +1,7 @@
 package cz.solvina.options.domain.features.backtest
 
 import cz.solvina.options.domain.features.bars.AtrCalculator
-import cz.solvina.options.domain.features.bars.FiveMinuteBar
+import cz.solvina.options.domain.features.bars.Candle
 import cz.solvina.options.domain.models.Symbol
 import java.math.BigDecimal
 import java.math.RoundingMode
@@ -86,7 +86,7 @@ class RuleBacktestStrategy(
     )
 
     private val ind = mutableMapOf<Symbol, Indicators>()
-    private val recentBars = mutableMapOf<Symbol, ArrayDeque<FiveMinuteBar>>() // ATR window (atrPeriod+1)
+    private val recentBars = mutableMapOf<Symbol, ArrayDeque<Candle>>() // ATR window (atrPeriod+1)
     private val pending = mutableMapOf<String, PendingInfo>() // tradeId → symbol+shares, set at emit
     private val open = mutableMapOf<String, OpenTrade>()
     private val completed = mutableListOf<RuleTrade>()
@@ -106,7 +106,7 @@ class RuleBacktestStrategy(
 
     override fun initialize(
         symbols: List<Symbol>,
-        warmupBars: Map<Symbol, List<FiveMinuteBar>>,
+        warmupBars: Map<Symbol, List<Candle>>,
     ) {
         for (symbol in symbols) {
             val i = Indicators(p.rsiPeriod)
@@ -118,7 +118,7 @@ class RuleBacktestStrategy(
 
     override fun onBar(
         symbol: Symbol,
-        bar: FiveMinuteBar,
+        bar: Candle,
         account: BacktestAccountView,
     ): List<BacktestSignal> {
         val i = ind.getOrPut(symbol) { Indicators(p.rsiPeriod) }

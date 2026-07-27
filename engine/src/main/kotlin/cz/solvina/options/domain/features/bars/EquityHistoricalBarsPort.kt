@@ -8,7 +8,7 @@ interface EquityHistoricalBarsPort {
     suspend fun fetch5MinBars(
         symbol: Symbol,
         days: Int,
-    ): List<FiveMinuteBar>
+    ): List<Candle>
 
     /**
      * Fetches completed 5-minute RTH candles for an explicit date range.
@@ -24,6 +24,6 @@ interface EquityHistoricalBarsPort {
         from: LocalDate,
         to: LocalDate,
         timeframe: Timeframe = Timeframe.FIVE_MIN,
-        onChunk: suspend (List<FiveMinuteBar>) -> Unit = {},
-    ): List<FiveMinuteBar>
+        onChunk: suspend (List<Candle>) -> Unit = {},
+    ): List<Candle>
 }

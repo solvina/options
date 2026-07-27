@@ -3,7 +3,7 @@ package cz.solvina.options.flags
 import cz.solvina.options.domain.features.backtest.BacktestAccountView
 import cz.solvina.options.domain.features.backtest.BacktestSignal
 import cz.solvina.options.domain.features.backtest.FlagBacktestStrategy
-import cz.solvina.options.domain.features.bars.FiveMinuteBar
+import cz.solvina.options.domain.features.bars.Candle
 import cz.solvina.options.domain.features.flag.config.FlagStrategyConfig
 import cz.solvina.options.domain.features.flag.config.FlagTradingConfig
 import cz.solvina.options.domain.models.Symbol
@@ -44,7 +44,7 @@ class FlagBacktestStrategySizingTest {
         )
     private val trading = FlagTradingConfig(maxOpenPositions = 3, entryBlockMinutesBeforeClose = 0)
 
-    private fun breakoutBars(): List<FiveMinuteBar> {
+    private fun breakoutBars(): List<Candle> {
         // 2024-01-03 (Wed) 10:00 ET onward — mid-RTH, past skip-first, well before the close.
         val start =
             LocalDate
@@ -55,16 +55,16 @@ class FlagBacktestStrategySizingTest {
 
         fun t(i: Int) = start.plusSeconds(300L * i)
         return listOf(
-            FiveMinuteBar(t(0), 100.0, 101.0, 100.0, 100.0, 1_000),
-            FiveMinuteBar(t(1), 100.0, 101.0, 100.0, 100.0, 1_000),
-            FiveMinuteBar(t(2), 100.0, 101.0, 100.0, 100.0, 1_000),
-            FiveMinuteBar(t(3), 100.0, 101.0, 100.0, 100.0, 1_000),
-            FiveMinuteBar(t(4), 100.0, 103.0, 100.0, 103.0, 3_000),
-            FiveMinuteBar(t(5), 103.0, 107.0, 103.0, 107.0, 3_000),
-            FiveMinuteBar(t(6), 107.0, 107.5, 106.0, 106.5, 1_000),
-            FiveMinuteBar(t(7), 106.5, 107.0, 106.0, 106.2, 1_000),
-            FiveMinuteBar(t(8), 106.2, 106.8, 105.8, 106.0, 1_000),
-            FiveMinuteBar(t(9), 106.0, 108.5, 105.9, 108.0, 1_000), // breakout bar
+            Candle(t(0), 100.0, 101.0, 100.0, 100.0, 1_000),
+            Candle(t(1), 100.0, 101.0, 100.0, 100.0, 1_000),
+            Candle(t(2), 100.0, 101.0, 100.0, 100.0, 1_000),
+            Candle(t(3), 100.0, 101.0, 100.0, 100.0, 1_000),
+            Candle(t(4), 100.0, 103.0, 100.0, 103.0, 3_000),
+            Candle(t(5), 103.0, 107.0, 103.0, 107.0, 3_000),
+            Candle(t(6), 107.0, 107.5, 106.0, 106.5, 1_000),
+            Candle(t(7), 106.5, 107.0, 106.0, 106.2, 1_000),
+            Candle(t(8), 106.2, 106.8, 105.8, 106.0, 1_000),
+            Candle(t(9), 106.0, 108.5, 105.9, 108.0, 1_000), // breakout bar
         )
     }
 

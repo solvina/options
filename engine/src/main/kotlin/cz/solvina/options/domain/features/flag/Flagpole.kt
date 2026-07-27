@@ -1,10 +1,10 @@
 package cz.solvina.options.domain.features.flag
 
-import cz.solvina.options.domain.features.bars.FiveMinuteBar
+import cz.solvina.options.domain.features.bars.Candle
 
 data class Flagpole(
-    val startBar: FiveMinuteBar,
-    val endBar: FiveMinuteBar,
+    val startBar: Candle,
+    val endBar: Candle,
     /** Vertical height of the pole = endBar.high − startBar.low */
     val height: Double,
     /** Average volume across the pole bars */

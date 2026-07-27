@@ -1,8 +1,8 @@
 package cz.solvina.options.adapters.outbound.ibkr.market
 
 import cz.solvina.options.domain.features.bars.BarStorePort
+import cz.solvina.options.domain.features.bars.Candle
 import cz.solvina.options.domain.features.bars.EquityHistoricalBarsPort
-import cz.solvina.options.domain.features.bars.FiveMinuteBar
 import cz.solvina.options.domain.features.bars.Timeframe
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -25,7 +25,7 @@ class CachingEquityHistoricalBarsAdapter(
     override suspend fun fetch5MinBars(
         symbol: Symbol,
         days: Int,
-    ): List<FiveMinuteBar> {
+    ): List<Candle> {
         val now = Instant.now()
         val from = now.minus(days.toLong(), ChronoUnit.DAYS)
 
@@ -69,8 +69,8 @@ class CachingEquityHistoricalBarsAdapter(
         from: LocalDate,
         to: LocalDate,
         timeframe: Timeframe,
-        onChunk: suspend (List<FiveMinuteBar>) -> Unit,
-    ): List<FiveMinuteBar> {
+        onChunk: suspend (List<Candle>) -> Unit,
+    ): List<Candle> {
         logger.info { "[${symbol.value}] Fetching ${timeframe.label} range $from..$to from IBKR" }
         var written = 0
         // Persist each chunk as it arrives (durable progress), then fan the chunk out to any caller-

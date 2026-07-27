@@ -1,7 +1,7 @@
 package cz.solvina.options.domain.features.backtest
 
 import cz.solvina.options.domain.features.bars.BarStorePort
-import cz.solvina.options.domain.features.bars.FiveMinuteBar
+import cz.solvina.options.domain.features.bars.Candle
 import cz.solvina.options.domain.features.bars.Timeframe
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -103,7 +103,7 @@ class BacktestEngine(
      * early curve). Carries the last close forward across per-symbol gaps.
      */
     private fun buyHoldCurve(
-        backtestBars: Map<Symbol, List<FiveMinuteBar>>,
+        backtestBars: Map<Symbol, List<Candle>>,
         initialCapital: BigDecimal,
         nyZone: ZoneId,
     ): List<CurvePoint> {
@@ -160,7 +160,7 @@ class BacktestEngine(
         val warmupFrom = request.from.minusDays(request.warmupDays)
 
         // Fetch full range (warmup + backtest) for all symbols
-        val allBars = mutableMapOf<Symbol, List<FiveMinuteBar>>()
+        val allBars = mutableMapOf<Symbol, List<Candle>>()
         for (symbol in request.symbols) {
             val fromInstant = warmupFrom.atStartOfDay(ZoneOffset.UTC).toInstant()
             val toInstant =
@@ -230,7 +230,7 @@ class BacktestEngine(
 
         for ((day, dayBars) in byDay) {
             val sorted = dayBars.sortedBy { it.second.time }
-            val lastBarBySymbol = mutableMapOf<Symbol, FiveMinuteBar>()
+            val lastBarBySymbol = mutableMapOf<Symbol, Candle>()
 
             for ((symbol, bar) in sorted) {
                 lastBarBySymbol[symbol] = bar
@@ -484,9 +484,9 @@ class BacktestEngine(
     /** Aggregates 5-min bars into clock-aligned [barMinutes]-minute OHLCV bars (no-op if 5).
      *  10/15/… min are exact multiples of 5-min, so this is lossless vs natively-fetched bars. */
     private fun aggregateBars(
-        bars: List<FiveMinuteBar>,
+        bars: List<Candle>,
         barMinutes: Int,
-    ): List<FiveMinuteBar> {
+    ): List<Candle> {
         if (barMinutes <= 5 || bars.isEmpty()) return bars
         val bucketSec = barMinutes * 60L
         return bars
@@ -494,7 +494,7 @@ class BacktestEngine(
             .toSortedMap()
             .map { (bucket, group) ->
                 val sorted = group.sortedBy { it.time }
-                FiveMinuteBar(
+                Candle(
                     time = Instant.ofEpochSecond(bucket * bucketSec),
                     open = sorted.first().open,
                     high = sorted.maxOf { it.high },
@@ -506,7 +506,7 @@ class BacktestEngine(
     }
 
     private fun simulateEntry(
-        bar: FiveMinuteBar,
+        bar: Candle,
         signal: BacktestSignal.OpenBracket,
     ): BigDecimal? {
         val ep = signal.entryPrice.toDouble()
@@ -522,7 +522,7 @@ class BacktestEngine(
     }
 
     private fun simulateExit(
-        bar: FiveMinuteBar,
+        bar: Candle,
         op: OpenPosition,
         peakBeforeBar: BigDecimal,
         trailStopRMultiple: Double?,
