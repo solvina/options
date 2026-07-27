@@ -41,7 +41,7 @@ class ScannerService(
     // Observational: per-symbol status of the latest scan pass, surfaced by the UI table.
     private val scanStatusRegistry: ScanStatusRegistry = ScanStatusRegistry(),
     // Observe-only: logs each symbol's trend regime alongside scan decisions; does NOT gate trading.
-    private val regimeService: TrendRegimeService? = null,
+    private val regimeService: TrendRegimeService,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
 ) : ScannerPort {
     private val ivRanksSnapshot = ConcurrentHashMap<String, Double>()
@@ -109,9 +109,9 @@ class ScannerService(
         // Directional gate: when regime gating is on, the symbol's trend+RSI bias decides which
         // strategy is eligible, so bull put and bear call each fire on their own signal instead of
         // bull put always winning by position. BULLISH → bull put only; BEARISH → bear call only;
-        // NEUTRAL (or gating off / regime unavailable) → both eligible, bull-put-first fallback.
-        val gating = regimeService?.gatingEnabled() == true
-        val bias = if (gating) regimeService!!.biasFor(symbol) else null
+        // NEUTRAL (or gating off / regime unavailable) → both are eligible, bull-put-first fallback.
+        val gating = regimeService.gatingEnabled()
+        val bias = if (gating) regimeService.biasFor(symbol) else null
         val bullAllowed = bias == null || bias == DirectionalBias.BULLISH || bias == DirectionalBias.NEUTRAL
         val bearAllowed = bias == null || bias == DirectionalBias.BEARISH || bias == DirectionalBias.NEUTRAL
 
@@ -160,7 +160,7 @@ class ScannerService(
     /**
      * Builds and stores one status row, merging the selector's [detail] with the cached directional
      * regime and the option-chain greek coverage. Coverage is only attached when a chain was actually
-     * fetched this evaluation (detail has an expiry), so IV-gated rows don't show stale coverage.
+     * fetched this evaluation (detail has expiry), so IV-gated rows don't show stale coverage.
      */
     private fun recordStatus(
         symbol: Symbol,
@@ -171,7 +171,7 @@ class ScannerService(
         detail: ScanDetail?,
         bias: DirectionalBias? = null,
     ) {
-        val rs = regimeService?.regimeFor(symbol)
+        val rs = regimeService.regimeFor(symbol)
         val coverage = if (detail?.expiry != null) optionChainPort.lastCoverage(symbol) else null
         scanStatusRegistry.record(
             SymbolScanStatus(
@@ -182,9 +182,9 @@ class ScannerService(
                 strategyId = strategyId,
                 rejectReason = rejectReason,
                 detail = detail,
-                regime = rs?.regime,
-                rsi = rs?.rsi?.toDouble(),
-                bias = bias ?: rs?.bias,
+                regime = rs.regime,
+                rsi = rs.rsi?.toDouble(),
+                bias = bias ?: rs.bias,
                 strikesRequested = coverage?.strikesRequested,
                 strikesWithGreeks = coverage?.strikesWithGreeks,
             ),
@@ -194,15 +194,15 @@ class ScannerService(
     fun getScanStatus(): List<SymbolScanStatus> = scanStatusRegistry.snapshot()
 
     /**
-     * Logs the cached market regime alongside a trade decision, flagged aligned vs OPPOSITE to the
-     * strategy's directional bias, with the RSI and combined bias. Cache read only — no fetch.
+     * Logs the cached market regime alongside a trade decision, flagged aligned errorDuringvs OPPOSITE to the
+     * strategy's directional bias, with the RSI and combined bias. Cache read-only — no fetch.
      */
     private fun logRegimeAtDecision(
         symbol: Symbol,
         strategy: String,
         bias: DirectionalBias,
     ) {
-        val rs = regimeService?.regimeFor(symbol) ?: return
+        val rs = regimeService.regimeFor(symbol)
         tradeLogger.info {
             "REGIME $symbol  $strategy candidate  market=${rs.regime} (${alignment(rs.regime, bias)})  " +
                 "rsi=${rs.rsi}  bias=${rs.bias}  close=${rs.lastClose}"

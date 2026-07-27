@@ -1,6 +1,7 @@
 package cz.solvina.options.adapters.outbound.ibkr.cache
 
 import com.ib.client.EClientSocket
+import com.sun.tools.javac.tree.TreeInfo.symbol
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOptionParamsRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderIdCounter
@@ -28,7 +29,6 @@ class IbkrOptionParamsCache(
     private val store: OptionParamsStorePort,
 ) {
     private val cache = ConcurrentHashMap<Symbol, OptionParams>()
-    private val optionParamsReqIds = ConcurrentHashMap<Symbol, Int>()
 
     /** Warm the in-memory cache from the persistent store so a restart near the open does not
      *  re-issue reqSecDefOptParams for every symbol. Mirrors the IV-rank warm-load. */
@@ -53,22 +53,15 @@ class IbkrOptionParamsCache(
 
         val configuredExchange = contractFactory.defFor(symbol).optionExchange
 
-        val reqId =
-            optionParamsReqIds[symbol]
-                ?: run {
-                    val newReqId = idCounter.nextOrderId()
-                    val existing = optionParamsReqIds.putIfAbsent(symbol, newReqId)
-                    existing ?: newReqId.also {
-                        registry.startRequest(it, symbol.value, configuredExchange)
-                        client.reqSecDefOptParams(it, symbol.value, "", "STK", underlyingConId)
-                    }
-                }
+        val reqId = idCounter.nextOrderId()
+        registry.startRequest(reqId, symbol.value, configuredExchange)
+        client.reqSecDefOptParams(reqId, symbol.value, "", "STK", underlyingConId)
 
         val params =
             runCatching { registry.awaitEnd(reqId, 30.seconds) }
                 .getOrElse { e ->
                     if (e !is kotlinx.coroutines.TimeoutCancellationException && e !is kotlinx.coroutines.CancellationException) {
-                        optionParamsReqIds.remove(symbol, reqId)
+                        logger.error(e) { "[$symbol] Option params lookup failed: ${e.message}" }
                     }
                     throw e
                 }
