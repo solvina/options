@@ -29,6 +29,15 @@ class HangDiagnostics(
     fun captureAndLog(reason: String): String = buildReport(reason).also { logger.warn { "\n$it" } }
 
     @OptIn(ExperimentalCoroutinesApi::class)
+    fun buildCoroutineDump(): String =
+        if (DebugProbes.isInstalled) {
+            runCatching { dumpCoroutines() }
+                .getOrElse { "(coroutine dump failed: ${it.message})" }
+        } else {
+            "(DebugProbes not installed — set diagnostics.coroutine-debug.enabled=true and restart)"
+        }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
     fun buildReport(reason: String): String {
         val now = Instant.now()
         return buildString {
@@ -52,12 +61,7 @@ class HangDiagnostics(
             appendLine()
 
             appendLine("---- Coroutine dump ----")
-            if (DebugProbes.isInstalled) {
-                runCatching { appendLine(dumpCoroutines()) }
-                    .onFailure { appendLine("(coroutine dump failed: ${it.message})") }
-            } else {
-                appendLine("(DebugProbes not installed — set diagnostics.coroutine-debug.enabled=true and restart)")
-            }
+            appendLine(buildCoroutineDump())
             appendLine()
 
             appendLine("---- Thread dump ----")

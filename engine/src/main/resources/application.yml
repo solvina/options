@@ -200,13 +200,14 @@ diagnostics:
 
 # Actuator endpoints for live JVM investigation. Behind Tailscale/LAN only — do NOT expose publicly.
 #   GET /actuator/threaddump    -> JVM thread dump (native threads, monitors, deadlock detection)
+#   GET /actuator/coroutines    -> coroutine tree only
 #   GET /actuator/coroutinedump -> full hang report (coroutine tree + threads + stuck fill waits)
 # For a heap dump, prefer jcmd over SSH (writes locally, nothing sensitive over HTTP) — see runbook.
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,threaddump,coroutinedump
+        include: health,info,threaddump,coroutines,coroutinedump
 
 # Quote age monitoring: detect stale/blind market data during exit decisions (Phase 1 — observability only).
 quote-monitoring:
