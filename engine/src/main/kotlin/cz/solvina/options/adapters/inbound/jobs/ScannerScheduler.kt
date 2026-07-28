@@ -4,9 +4,8 @@ import cz.solvina.options.adapters.inbound.diagnostics.HangDiagnostics
 import cz.solvina.options.domain.features.connection.status.ConnectionStatusPort
 import cz.solvina.options.domain.features.scanner.ScannerPort
 import cz.solvina.options.domain.features.scanner.TradingKillSwitch
+import cz.solvina.options.shared.scheduling.runScheduled
 import io.github.oshai.kotlinlogging.KotlinLogging
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeoutOrNull
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
@@ -31,7 +30,7 @@ class ScannerScheduler(
     // later invocation ever started. The timeout below is what actually protects the schedule.
     private val scanInProgress = AtomicBoolean(false)
 
-    @Scheduled(cron = "\${scanner.cron:0 */15 9-22 * * MON-FRI}", zone = "Europe/Berlin")
+    @Scheduled(cron = "\${scanner.cron:0 */15 9-22 * * MON-FRI}", zone = "Europe/Berlin", scheduler = "backgroundTaskScheduler")
     fun runScan() {
         if (killSwitch.scannerPaused) {
             logger.info { "Scanner skipped: paused by kill switch" }
@@ -47,21 +46,13 @@ class ScannerScheduler(
         }
         try {
             logger.info { "Scheduled scanner run triggered" }
-            runBlocking {
-                // A bounded scan is the difference between losing one run and losing the rest of the
-                // session. Every individual IBKR await downstream is already bounded, so blowing
-                // this budget means something unbounded slipped in — capture the evidence before
-                // cancelling, because by the next run the stuck coroutine is gone.
-                val completed =
-                    withTimeoutOrNull(runTimeoutMinutes.minutes) {
-                        runCatching { scannerPort.scan() }
-                            .onFailure { e -> logger.error(e) { "Scanner run failed: ${e.message}" } }
-                    }
-                if (completed == null) {
-                    logger.error { "Scanner run exceeded ${runTimeoutMinutes}m and was cancelled — capturing hang diagnostics" }
-                    runCatching { hangDiagnostics.captureAndLog("scanner run exceeded ${runTimeoutMinutes}m") }
-                        .onFailure { logger.warn { "Hang diagnostics capture failed: ${it.message}" } }
-                }
+            runScheduled(
+                name = "Scanner",
+                timeout = runTimeoutMinutes.minutes,
+                expectedPeriod = 15.minutes,
+                onTimeout = { hangDiagnostics.captureAndLog("Scanner exceeded ${runTimeoutMinutes}m") },
+            ) {
+                scannerPort.scan()
             }
         } finally {
             scanInProgress.set(false)

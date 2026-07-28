@@ -1,10 +1,11 @@
 package cz.solvina.options.domain.features.universe
 
+import cz.solvina.options.shared.scheduling.runScheduled
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.delay
-import cz.solvina.options.adapters.inbound.jobs.runScheduled
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
+import kotlin.time.Duration.Companion.hours
 
 private val logger = KotlinLogging.logger {}
 
@@ -24,11 +25,11 @@ class EarningsRefreshService(
     private val universePort: UniversePort,
 ) {
     /** Daily pre-market refresh, after the dividend refresh. */
-    @Scheduled(cron = "\${earnings.refresh-cron:0 45 6 * * *}")
-    fun scheduledRefresh() = runScheduled("Earnings refresh (daily)") { refresh() }
+    @Scheduled(cron = "\${earnings.refresh-cron:0 45 6 * * *}", scheduler = "backgroundTaskScheduler")
+    fun scheduledRefresh() = runScheduled("Earnings refresh (daily)", expectedPeriod = 24.hours) { refresh() }
 
     /** One-shot after startup so a fresh deploy populates without waiting for the cron. */
-    @Scheduled(initialDelay = 300_000, fixedDelay = Long.MAX_VALUE)
+    @Scheduled(initialDelay = 300_000, fixedDelay = Long.MAX_VALUE, scheduler = "backgroundTaskScheduler")
     fun startupRefresh() = runScheduled("Earnings refresh (startup)") { refresh() }
 
     suspend fun refresh() {

@@ -7,6 +7,8 @@ import `cz.solvina.options.diagnostic`.dto.DataHealthDto
 import `cz.solvina.options.diagnostic`.dto.HistoricalDataDto
 import `cz.solvina.options.diagnostic`.dto.OptionMidSampleDto
 import `cz.solvina.options.diagnostic`.dto.OptionParamsDto
+import `cz.solvina.options.diagnostic`.dto.ScheduledTaskDto
+import `cz.solvina.options.diagnostic`.dto.ScheduledTasksDto
 import `cz.solvina.options.diagnostic`.dto.SpotDto
 import `cz.solvina.options.diagnostic`.dto.SymbolHealthDto
 import `cz.solvina.options.diagnostic`.dto.TickStreamDto
@@ -14,6 +16,8 @@ import cz.solvina.options.domain.features.diagnostic.AccountHealthReport
 import cz.solvina.options.domain.features.diagnostic.DiagnosticPort
 import cz.solvina.options.domain.features.diagnostic.SymbolHealthReport
 import cz.solvina.options.domain.models.Symbol
+import cz.solvina.options.shared.scheduling.ScheduledTaskRegistry
+import cz.solvina.options.shared.scheduling.ScheduledTaskSnapshot
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
@@ -23,6 +27,7 @@ import java.time.ZoneOffset
 @RequestMapping
 class DiagnosticApiImpl(
     private val diagnosticPort: DiagnosticPort,
+    private val scheduledTaskRegistry: ScheduledTaskRegistry,
 ) : DiagnosticApi {
     override suspend fun getDataHealth(): ResponseEntity<DataHealthDto> =
         ResponseEntity.ok(
@@ -30,6 +35,13 @@ class DiagnosticApiImpl(
                 symbols = diagnosticPort.latestSymbolReports().map { it.toDto() },
                 account = diagnosticPort.latestAccountReport()?.toDto(),
                 watchlist = diagnosticPort.watchlistSymbols().map { it.value },
+            ),
+        )
+
+    override suspend fun getScheduledTasks(): ResponseEntity<ScheduledTasksDto> =
+        ResponseEntity.ok(
+            ScheduledTasksDto(
+                tasks = scheduledTaskRegistry.snapshots().map { it.toDto() },
             ),
         )
 
@@ -112,5 +124,19 @@ class DiagnosticApiImpl(
             positionsError = positionsError,
             openOrderCount = openOrderCount,
             openOrdersError = openOrdersError,
+        )
+
+    private fun ScheduledTaskSnapshot.toDto() =
+        ScheduledTaskDto(
+            name = name,
+            status = ScheduledTaskDto.Status.forValue(status.name),
+            lastStartedAt = lastStartedAt?.atOffset(ZoneOffset.UTC),
+            lastFinishedAt = lastFinishedAt?.atOffset(ZoneOffset.UTC),
+            lastDurationMs = lastDurationMs,
+            consecutiveFailures = consecutiveFailures,
+            runCount = runCount,
+            expectedPeriodMs = expectedPeriod?.toMillis(),
+            budgetMs = budget.toMillis(),
+            lastError = lastError,
         )
 }

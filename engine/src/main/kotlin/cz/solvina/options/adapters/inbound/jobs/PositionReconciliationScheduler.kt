@@ -51,6 +51,7 @@ class PositionReconciliationScheduler(
     @Scheduled(
         fixedDelayString = "\${reconciliation.delay-ms:300000}",
         initialDelayString = "\${reconciliation.initial-delay-ms:120000}",
+        scheduler = "criticalTaskScheduler",
     )
     fun reconcile() {
         if (!connectionStatusPort.isConnected()) {

@@ -45,6 +45,7 @@ class TradingHoursWarmupScheduler(
     @Scheduled(
         fixedDelayString = "\${trading-hours.refresh-ms:900000}",
         initialDelayString = "\${trading-hours.initial-delay-ms:45000}",
+        scheduler = "backgroundTaskScheduler",
     )
     fun refresh() {
         if (Duration.between(lastSuccessfulWarm, Instant.now()) < staleAfter) {

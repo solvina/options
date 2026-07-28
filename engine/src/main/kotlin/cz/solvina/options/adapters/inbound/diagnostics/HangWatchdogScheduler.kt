@@ -38,6 +38,7 @@ class HangWatchdogScheduler(
     @Scheduled(
         fixedDelayString = "\${diagnostics.hang-watchdog.check-ms:60000}",
         initialDelayString = "\${diagnostics.hang-watchdog.initial-delay-ms:120000}",
+        scheduler = "criticalTaskScheduler",
     )
     fun check() {
         val thresholdMs = stuckWaitMinutes * 60_000

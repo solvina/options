@@ -13,6 +13,23 @@ export type DataHealthDto = {
     watchlist?: Array<string>;
 };
 
+export type ScheduledTasksDto = {
+    tasks?: Array<ScheduledTaskDto>;
+};
+
+export type ScheduledTaskDto = {
+    name?: string;
+    status?: 'IDLE' | 'RUNNING' | 'FAILED' | 'TIMED_OUT';
+    lastStartedAt?: string | null;
+    lastFinishedAt?: string | null;
+    lastDurationMs?: number | null;
+    consecutiveFailures?: number;
+    runCount?: number;
+    expectedPeriodMs?: number | null;
+    budgetMs?: number;
+    lastError?: string | null;
+};
+
 export type SymbolHealthDto = {
     symbol?: string;
     probedAt?: string | null;
@@ -133,3 +150,19 @@ export type ProbeAccountResponses = {
 };
 
 export type ProbeAccountResponse = ProbeAccountResponses[keyof ProbeAccountResponses];
+
+export type GetScheduledTasksData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/diagnostic/scheduled-tasks';
+};
+
+export type GetScheduledTasksResponses = {
+    /**
+     * Current scheduler task health
+     */
+    200: ScheduledTasksDto;
+};
+
+export type GetScheduledTasksResponse = GetScheduledTasksResponses[keyof GetScheduledTasksResponses];

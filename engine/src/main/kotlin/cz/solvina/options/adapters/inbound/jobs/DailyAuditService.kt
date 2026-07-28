@@ -63,7 +63,7 @@ class DailyAuditService(
 ) {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
-    @Scheduled(cron = "\${audit.pre-open-cron:0 45 8 * * MON-FRI}", zone = "Europe/Prague")
+    @Scheduled(cron = "\${audit.pre-open-cron:0 45 8 * * MON-FRI}", zone = "Europe/Prague", scheduler = "backgroundTaskScheduler")
     fun preOpenAudit() {
         scope.launch {
             runCatching { runPreOpen() }
@@ -71,7 +71,7 @@ class DailyAuditService(
         }
     }
 
-    @Scheduled(cron = "\${audit.post-close-cron:0 15 22 * * MON-FRI}", zone = "Europe/Prague")
+    @Scheduled(cron = "\${audit.post-close-cron:0 15 22 * * MON-FRI}", zone = "Europe/Prague", scheduler = "backgroundTaskScheduler")
     fun postCloseAudit() {
         scope.launch {
             runCatching { runPostClose() }
