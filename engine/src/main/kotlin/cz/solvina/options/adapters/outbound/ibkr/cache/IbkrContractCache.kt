@@ -9,6 +9,7 @@ import cz.solvina.options.adapters.outbound.ibkr.TradingHoursCache
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrContractDetailsRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketRuleRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderIdCounter
+import cz.solvina.options.adapters.outbound.ibkr.registry.UnknownContractDetailsRequest
 import cz.solvina.options.domain.models.OptionType
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -550,6 +551,13 @@ class IbkrContractCache(
     ): List<ContractDetails>? =
         try {
             contractDetailsRegistry.awaitEnd(reqId, timeout)
+        } catch (e: UnknownContractDetailsRequest) {
+            // A reqId cached by an earlier pass whose registry state has since been evicted. That is
+            // a cache miss, not a broker failure: drop the stale mapping and return null so the
+            // caller falls through and re-requests. Rethrowing here failed the whole symbol scan.
+            logger.debug { "[$reqId] Contract details state evicted — re-requesting" }
+            onBrokerFailure()
+            null
         } catch (_: TimeoutCancellationException) {
             logger.warn { "[$reqId] Contract details timeout (IBKR not responding)" }
             null

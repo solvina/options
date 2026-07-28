@@ -14,6 +14,18 @@ import kotlin.time.Duration as KotlinDuration
 
 private val logger = KotlinLogging.logger {}
 
+/**
+ * The registry has no state for [reqId] — it was never started, or its terminal state aged past the
+ * eviction TTL.
+ *
+ * Distinct from a request *failure* on purpose: callers that cached a reqId from an earlier pass
+ * must treat this as a cache miss and re-request, not as a broker error. Conflating the two turned
+ * every reuse-after-eviction into a failed symbol scan.
+ */
+class UnknownContractDetailsRequest(
+    val reqId: Int,
+) : IllegalStateException("Unknown contract details request $reqId")
+
 sealed interface ContractDetailsRegistryUpdate {
     val id: Int
 
@@ -36,7 +48,17 @@ sealed interface ContractDetailsRegistryUpdate {
 @Component
 class IbkrContractDetailsRegistry {
     private val requests = ConcurrentHashMap<Int, ContractDetailsRequestState>()
-    private val terminalStateTtl: Duration = Duration.ofMinutes(10)
+
+    /**
+     * How long a completed/failed request stays queryable so a later pass can reuse its result.
+     *
+     * Must exceed the longest interval between two lookups of the same reqId, or the reuse path is
+     * guaranteed to miss. At 10 minutes against a 15-minute scanner cadence it missed *every* time,
+     * turning each cached reqId into one failed symbol scan. Callers now treat a miss as a
+     * cache miss rather than an error, so this is no longer a correctness dependency — but keeping
+     * it above the cadence is what makes the caching worth having.
+     */
+    private val terminalStateTtl: Duration = Duration.ofMinutes(30)
     private val updateBus = MutableSharedFlow<ContractDetailsRegistryUpdate>(replay = 4096, extraBufferCapacity = 4096)
 
     val rows: Flow<ContractDetailsRegistryUpdate.Row> = updateBus.filterIsInstance()
@@ -107,7 +129,7 @@ class IbkrContractDetailsRegistry {
         }
     }
 
-    private fun requireState(reqId: Int): ContractDetailsRequestState = current(reqId) ?: error("Unknown contract details request $reqId")
+    private fun requireState(reqId: Int): ContractDetailsRequestState = current(reqId) ?: throw UnknownContractDetailsRequest(reqId)
 
     private fun <T> ContractDetailsRequestState.terminalResult(value: (ContractDetailsRequestState) -> T): T? =
         when (status) {

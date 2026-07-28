@@ -94,7 +94,15 @@ class ScannerService(
             runCatching { scanSymbol(symbol, totalCapital, runId) }
                 .onFailure { e ->
                     logger.error(e) { "[$symbol] Error during scan: ${e.message}" }
-                    recordStatus(symbol, runId, ScanOutcome.ERROR, null, null, null)
+                    recordStatus(
+                        symbol,
+                        runId,
+                        ScanOutcome.ERROR,
+                        null,
+                        null,
+                        null,
+                        errorMessage = "${e::class.simpleName}: ${e.message}",
+                    )
                 }
         }
 
@@ -170,6 +178,7 @@ class ScannerService(
         rejectReason: RejectReason?,
         detail: ScanDetail?,
         bias: DirectionalBias? = null,
+        errorMessage: String? = null,
     ) {
         val rs = regimeService.regimeFor(symbol)
         val coverage = if (detail?.expiry != null) optionChainPort.lastCoverage(symbol) else null
@@ -187,6 +196,7 @@ class ScannerService(
                 bias = bias ?: rs.bias,
                 strikesRequested = coverage?.strikesRequested,
                 strikesWithGreeks = coverage?.strikesWithGreeks,
+                errorMessage = errorMessage,
             ),
         )
     }

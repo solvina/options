@@ -5,9 +5,12 @@ import cz.solvina.options.domain.features.scanner.TradingKillSwitch
 import cz.solvina.options.domain.features.strategy.live.StockStrategyRunner
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.time.Duration.Companion.minutes
 
 private val logger = KotlinLogging.logger {}
 
@@ -25,6 +28,7 @@ class StockStrategyScheduler(
     private val runner: StockStrategyRunner,
     private val connectionStatusPort: ConnectionStatusPort,
     private val killSwitch: TradingKillSwitch,
+    @Value("\${stock-strategies.run-timeout-minutes:10}") private val runTimeoutMinutes: Long,
 ) {
     private val runInProgress = AtomicBoolean(false)
 
@@ -43,7 +47,15 @@ class StockStrategyScheduler(
             return
         }
         try {
-            runBlocking { runner.runOnce() }
+            runBlocking {
+                // Bounded for the same reason as ScannerScheduler: a cron @Scheduled method that
+                // never returns is never re-triggered, so one wedged run silently ends the schedule
+                // for the rest of the session rather than costing a single pass.
+                val completed = withTimeoutOrNull(runTimeoutMinutes.minutes) { runner.runOnce() }
+                if (completed == null) {
+                    logger.error { "Stock strategy run exceeded ${runTimeoutMinutes}m and was cancelled" }
+                }
+            }
         } catch (e: Exception) {
             logger.error(e) { "Stock strategy run failed: ${e.message}" }
         } finally {

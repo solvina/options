@@ -115,4 +115,11 @@ data class SymbolScanStatus(
     val bias: DirectionalBias?,
     val strikesRequested: Int?,
     val strikesWithGreeks: Int?,
+    /**
+     * Exception text when [outcome] is [ScanOutcome.ERROR]. [rejectReason] is an enum of *expected*
+     * rejections and has no member for "something threw", so an ERROR row previously carried no
+     * reason at all and the only way to learn why a symbol failed was to grep journald for the
+     * matching timestamp.
+     */
+    val errorMessage: String? = null,
 )
