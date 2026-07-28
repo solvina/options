@@ -1,10 +1,11 @@
 package cz.solvina.options.domain.features.regime
 
 import cz.solvina.options.domain.features.universe.UniversePort
+import cz.solvina.options.shared.scheduling.runScheduled
 import io.github.oshai.kotlinlogging.KotlinLogging
-import cz.solvina.options.adapters.inbound.jobs.runScheduled
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
+import kotlin.time.Duration.Companion.hours
 
 private val logger = KotlinLogging.logger {}
 
@@ -20,12 +21,12 @@ class RegimeWarmupService(
     private val universePort: UniversePort,
 ) {
     /** One-shot after startup (delayed so the IV-rank warmup finishes first). */
-    @Scheduled(initialDelay = 600_000, fixedDelay = Long.MAX_VALUE)
+    @Scheduled(initialDelay = 600_000, fixedDelay = Long.MAX_VALUE, scheduler = "backgroundTaskScheduler")
     fun warmAtStartup() = runScheduled("Regime warmup (startup)") { warm() }
 
     /** Daily pre-market refresh. */
-    @Scheduled(cron = "0 0 7 * * *")
-    fun warmDaily() = runScheduled("Regime warmup (daily)") { warm() }
+    @Scheduled(cron = "0 0 7 * * *", scheduler = "backgroundTaskScheduler")
+    fun warmDaily() = runScheduled("Regime warmup (daily)", expectedPeriod = 24.hours) { warm() }
 
     suspend fun warm() {
         val symbols = universePort.getWatchlist()

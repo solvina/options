@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { GetDataHealthData, GetDataHealthResponses, ProbeAccountData, ProbeAccountResponses, ProbeSymbolData, ProbeSymbolResponses } from './types.gen';
+import type { GetDataHealthData, GetDataHealthResponses, GetScheduledTasksData, GetScheduledTasksResponses, ProbeAccountData, ProbeAccountResponses, ProbeSymbolData, ProbeSymbolResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean> = Options2<TData, ThrowOnError> & {
     /**
@@ -32,3 +32,8 @@ export const probeSymbol = <ThrowOnError extends boolean = false>(options: Optio
  * Run account/positions/orders probe (hits TWS live)
  */
 export const probeAccount = <ThrowOnError extends boolean = false>(options?: Options<ProbeAccountData, ThrowOnError>) => (options?.client ?? client).post<ProbeAccountResponses, unknown, ThrowOnError>({ url: '/diagnostic/probe-account', ...options });
+
+/**
+ * Scheduled task liveness snapshot
+ */
+export const getScheduledTasks = <ThrowOnError extends boolean = false>(options?: Options<GetScheduledTasksData, ThrowOnError>) => (options?.client ?? client).get<GetScheduledTasksResponses, unknown, ThrowOnError>({ url: '/diagnostic/scheduled-tasks', ...options });

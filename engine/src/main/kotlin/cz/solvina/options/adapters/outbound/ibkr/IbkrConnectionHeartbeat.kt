@@ -18,7 +18,7 @@ class IbkrConnectionHeartbeat(
 
     @Volatile private var downTicks: Int = 0
 
-    @Scheduled(fixedDelayString = "\${ibkr.heartbeat.interval-ms:5000}")
+    @Scheduled(fixedDelayString = "\${ibkr.heartbeat.interval-ms:5000}", scheduler = "criticalTaskScheduler")
     fun logConnectionStatus() {
         val status = connectionStatusPort.getConnectionStatus()
         val was = lastConnected

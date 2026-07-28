@@ -103,17 +103,17 @@ class FlagScannerService(
 
     // Runs just after EU open (09:01 Berlin) and just after US open (15:31 CEST = 09:31 ET).
     // Resubscribes any watchlist symbols whose stream ended at the previous day's close.
-    @Scheduled(cron = "0 1 9 * * MON-FRI", zone = "Europe/Berlin")
+    @Scheduled(cron = "0 1 9 * * MON-FRI", zone = "Europe/Berlin", scheduler = "backgroundTaskScheduler")
     fun onEuMarketOpen() = resubscribeWatchlist(flagSymbolsForSession("EU"), "EU open resubscription")
 
-    @Scheduled(cron = "0 31 9 * * MON-FRI", zone = "America/New_York")
+    @Scheduled(cron = "0 31 9 * * MON-FRI", zone = "America/New_York", scheduler = "backgroundTaskScheduler")
     fun onUsMarketOpen() = resubscribeWatchlist(flagSymbolsForSession("US"), "US open resubscription")
 
     // Just after EU close (17:31 Berlin, EU close is 17:30). Real-time bar lines are held until
     // cancelled, so releasing EU subscriptions here frees market-data lines for the US session that
     // is still open. onEuMarketOpen re-subscribes the next morning. Open EU positions stay protected
     // by their broker-side GTC trailing stop; unsubscribing only stops local watermark updates.
-    @Scheduled(cron = "\${flag.eu-unsubscribe-cron:0 31 17 * * MON-FRI}", zone = "Europe/Berlin")
+    @Scheduled(cron = "\${flag.eu-unsubscribe-cron:0 31 17 * * MON-FRI}", zone = "Europe/Berlin", scheduler = "backgroundTaskScheduler")
     fun onEuMarketClose() = unsubscribeSession("EU")
 
     /** Cancel and drop every active flag subscription for [session]'s symbols (frees their IBKR lines). */
@@ -141,7 +141,7 @@ class FlagScannerService(
 
     // Runs every 5 minutes. Detects symbols whose last bar is older than STALE_BAR_MINUTES during
     // market hours and resubscribes them — handles silent IBKR subscription drops.
-    @Scheduled(fixedDelay = 5 * 60 * 1000)
+    @Scheduled(fixedDelay = 5 * 60 * 1000, scheduler = "backgroundTaskScheduler")
     fun watchdogCheck() {
         if (!connectionStatusPort.isConnected()) return
         val anyMarketOpen = subscriptions.keys.any { universePort.isMarketOpen(it) }

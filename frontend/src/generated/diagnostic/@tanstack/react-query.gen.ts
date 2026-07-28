@@ -3,8 +3,8 @@
 import { type DefaultError, queryOptions, type UseMutationOptions } from '@tanstack/react-query';
 
 import { client } from '../client.gen';
-import { getDataHealth, type Options, probeAccount, probeSymbol } from '../sdk.gen';
-import type { GetDataHealthData, GetDataHealthResponse, ProbeAccountData, ProbeAccountResponse, ProbeSymbolData, ProbeSymbolResponse } from '../types.gen';
+import { getDataHealth, getScheduledTasks, type Options, probeAccount, probeSymbol } from '../sdk.gen';
+import type { GetDataHealthData, GetDataHealthResponse, GetScheduledTasksData, GetScheduledTasksResponse, ProbeAccountData, ProbeAccountResponse, ProbeSymbolData, ProbeSymbolResponse } from '../types.gen';
 
 export type QueryKey<TOptions extends Options> = [
     Pick<TOptions, 'baseUrl' | 'body' | 'headers' | 'path' | 'query'> & {
@@ -90,3 +90,21 @@ export const probeAccountMutation = (options?: Partial<Options<ProbeAccountData>
     };
     return mutationOptions;
 };
+
+export const getScheduledTasksQueryKey = (options?: Options<GetScheduledTasksData>) => createQueryKey('getScheduledTasks', options);
+
+/**
+ * Scheduled task liveness snapshot
+ */
+export const getScheduledTasksOptions = (options?: Options<GetScheduledTasksData>) => queryOptions<GetScheduledTasksResponse, DefaultError, GetScheduledTasksResponse, ReturnType<typeof getScheduledTasksQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await getScheduledTasks({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: getScheduledTasksQueryKey(options)
+});

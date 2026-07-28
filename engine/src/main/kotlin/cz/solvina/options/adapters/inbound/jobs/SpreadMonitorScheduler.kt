@@ -37,7 +37,7 @@ class SpreadMonitorScheduler(
     // PositionReconciliationScheduler.
     private val monitorMutex = Mutex()
 
-    @Scheduled(fixedDelayString = "\${scanner.monitor-delay-ms:60000}")
+    @Scheduled(fixedDelayString = "\${scanner.monitor-delay-ms:60000}", scheduler = "criticalTaskScheduler")
     fun monitorSpreads() {
         if (killSwitch.monitorPaused) {
             logger.debug { "Spread monitor skipped: paused by kill switch" }

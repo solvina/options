@@ -65,7 +65,7 @@ class ReferenceDataWarmupScheduler(
     private val mutex = Mutex()
 
     /** Pre-open daily warmup. Cron is Europe/Berlin (the RPi's zone); 14:30 sits before the 15:30 US open. */
-    @Scheduled(cron = "\${reference-warmup.cron:0 30 14 * * MON-FRI}", zone = "Europe/Berlin")
+    @Scheduled(cron = "\${reference-warmup.cron:0 30 14 * * MON-FRI}", zone = "Europe/Berlin", scheduler = "backgroundTaskScheduler")
     fun scheduledWarmup() = trigger("pre-open schedule")
 
     /** After every restart — warm from IBKR whatever the DB warm-load didn't already make fresh. */

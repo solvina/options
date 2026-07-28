@@ -42,6 +42,7 @@ class CompetingSessionAlertScheduler(
     @Scheduled(
         fixedDelayString = "\${competing-session.check-ms:60000}",
         initialDelayString = "\${competing-session.initial-delay-ms:90000}",
+        scheduler = "backgroundTaskScheduler",
     )
     fun check() {
         val competing = healthTracker.snapshot().competingSession

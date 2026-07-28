@@ -69,6 +69,7 @@ class FlagRecoveryService(
     @Scheduled(
         fixedDelayString = "\${flag-recovery.delay-ms:300000}",
         initialDelayString = "\${flag-recovery.initial-delay-ms:180000}",
+        scheduler = "criticalTaskScheduler",
     )
     fun scheduledRecover() {
         if (!connectionStatusPort.isConnected()) {

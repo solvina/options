@@ -70,6 +70,7 @@ class StartupRecoveryService(
     @Scheduled(
         fixedDelayString = "\${spread-recovery.delay-ms:300000}",
         initialDelayString = "\${spread-recovery.initial-delay-ms:240000}",
+        scheduler = "criticalTaskScheduler",
     )
     fun scheduledRecoverPending() {
         if (!connectionStatusPort.isConnected()) {

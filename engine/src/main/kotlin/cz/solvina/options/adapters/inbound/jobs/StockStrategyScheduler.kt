@@ -3,13 +3,13 @@ package cz.solvina.options.adapters.inbound.jobs
 import cz.solvina.options.domain.features.connection.status.ConnectionStatusPort
 import cz.solvina.options.domain.features.scanner.TradingKillSwitch
 import cz.solvina.options.domain.features.strategy.live.StockStrategyRunner
+import cz.solvina.options.shared.scheduling.runScheduled
 import io.github.oshai.kotlinlogging.KotlinLogging
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeoutOrNull
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 
 private val logger = KotlinLogging.logger {}
@@ -32,7 +32,7 @@ class StockStrategyScheduler(
 ) {
     private val runInProgress = AtomicBoolean(false)
 
-    @Scheduled(cron = "\${stock-strategies.cron:0 5 9,15 * * MON-FRI}", zone = "Europe/Berlin")
+    @Scheduled(cron = "\${stock-strategies.cron:0 5 9,15 * * MON-FRI}", zone = "Europe/Berlin", scheduler = "backgroundTaskScheduler")
     fun run() {
         if (killSwitch.scannerPaused) {
             logger.info { "Stock strategy run skipped: paused by kill switch" }
@@ -47,14 +47,12 @@ class StockStrategyScheduler(
             return
         }
         try {
-            runBlocking {
-                // Bounded for the same reason as ScannerScheduler: a cron @Scheduled method that
-                // never returns is never re-triggered, so one wedged run silently ends the schedule
-                // for the rest of the session rather than costing a single pass.
-                val completed = withTimeoutOrNull(runTimeoutMinutes.minutes) { runner.runOnce() }
-                if (completed == null) {
-                    logger.error { "Stock strategy run exceeded ${runTimeoutMinutes}m and was cancelled" }
-                }
+            runScheduled(
+                name = "Stock strategy",
+                timeout = runTimeoutMinutes.minutes,
+                expectedPeriod = 6.hours,
+            ) {
+                runner.runOnce()
             }
         } catch (e: Exception) {
             logger.error(e) { "Stock strategy run failed: ${e.message}" }

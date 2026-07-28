@@ -37,7 +37,7 @@ class FlagMonitorScheduler(
      * Runs every minute. Triggers EOD liquidation for each market session once we enter the
      * configured window before that session's close.
      */
-    @Scheduled(fixedDelay = 60_000)
+    @Scheduled(fixedDelay = 60_000, scheduler = "criticalTaskScheduler")
     fun checkEodLiquidation() {
         if (!connectionStatusPort.isConnected()) {
             logger.debug { "Flag EOD check skipped: IBKR not connected" }
