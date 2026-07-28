@@ -1,0 +1,31 @@
+{
+  "name": "eu-broad",
+  "outputDir": "/home/solvina/projects/options/scripts/sweeps/eu-broad",
+  "baseUrl": "http://localhost:8082/options",
+  "jobs": 3,
+  "request": {
+    "symbols": ["EXV1","EXV3","EXV4","EXV5","EXV6","EXV7","EXV8","EXH1","EXH9","EXSA"],
+    "from": "2016-01-01",
+    "to": "2026-07-21",
+    "timeframe": "1d",
+    "initialCapital": 20000,
+    "holdOvernight": true,
+    "strategy": "rsi_ma_cross",
+    "costs": {
+      "commissionPctOfNotional": 0.05,
+      "minCommissionPerOrder": 4.00,
+      "slippageBps": 10
+    },
+    "params": {
+      "requireUptrend": false, "smaTrendPeriod": 200, "rsiOversold": 40,
+      "atrPeriod": 14, "riskPerTradePct": 1.0, "maxOpenPositions": 3, "maxLeverage": 0
+    }
+  },
+  "sweep": {
+    "rsiPeriod": [7, 14, 21],
+    "rsiMaPeriod": [7, 14, 21],
+    "requireOversold": [false, true],
+    "stopAtrMultiple": [1.0, 1.5, 2.0],
+    "targetAtrMultiple": [2.0, 3.0, 4.0]
+  }
+}

@@ -59,3 +59,5 @@ databaseChangeLog:
       file: db/changelog/v34__eu_flag_universe.yaml
   - include:
       file: db/changelog/v35__instrument_routing_and_sessions.yaml
+  - include:
+      file: db/changelog/v36__strategy_assignment.yaml

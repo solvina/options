@@ -1,0 +1,140 @@
+package cz.solvina.options.adapters.inbound.api
+
+import cz.solvina.options.domain.features.bars.Timeframe
+import cz.solvina.options.domain.features.strategy.StrategyParams
+import cz.solvina.options.domain.features.strategy.StrategyRegistry
+import cz.solvina.options.domain.features.strategy.assignment.StrategyAssignment
+import cz.solvina.options.domain.features.strategy.assignment.StrategyAssignmentPort
+import cz.solvina.options.domain.models.Symbol
+import io.github.oshai.kotlinlogging.KotlinLogging
+import org.springframework.http.HttpStatus
+import org.springframework.http.ResponseEntity
+import org.springframework.web.bind.annotation.DeleteMapping
+import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.PathVariable
+import org.springframework.web.bind.annotation.PostMapping
+import org.springframework.web.bind.annotation.PutMapping
+import org.springframework.web.bind.annotation.RequestBody
+import org.springframework.web.bind.annotation.RequestMapping
+import org.springframework.web.bind.annotation.RestController
+import java.time.Instant
+import java.util.UUID
+
+private val logger = KotlinLogging.logger {}
+
+/**
+ * CRUD for strategy assignments — the managed layer: which strategy trades which symbol, and with
+ * which parameter overrides.
+ *
+ * Overrides are validated against the strategy's own descriptors on write, not on read. An
+ * assignment that reaches the live runner has therefore already been checked; the runner never has
+ * to decide what to do with a parameter that does not exist.
+ *
+ * Path has no /api prefix — both proxies rewrite /api/X to /options/X (see StockBacktestApiController).
+ */
+@RestController
+@RequestMapping("/strategy-assignments")
+class StrategyAssignmentApiController(
+    private val assignments: StrategyAssignmentPort,
+    private val strategies: StrategyRegistry,
+) {
+    data class AssignmentDto(
+        val id: UUID?,
+        val strategyId: String,
+        val symbol: String,
+        val timeframe: String?,
+        val params: Map<String, Any?>?,
+        val enabled: Boolean?,
+        val createdAt: Instant?,
+        val updatedAt: Instant?,
+    )
+
+    @GetMapping
+    fun list(): List<AssignmentDto> = assignments.findAll().map { it.toDto() }
+
+    @GetMapping("/{id}")
+    fun get(
+        @PathVariable id: UUID,
+    ): ResponseEntity<AssignmentDto> = assignments.findById(id)?.let { ResponseEntity.ok(it.toDto()) } ?: ResponseEntity.notFound().build()
+
+    @PostMapping
+    fun create(
+        @RequestBody dto: AssignmentDto,
+    ): ResponseEntity<Any> = upsert(dto, UUID.randomUUID(), HttpStatus.CREATED)
+
+    @PutMapping("/{id}")
+    fun update(
+        @PathVariable id: UUID,
+        @RequestBody dto: AssignmentDto,
+    ): ResponseEntity<Any> {
+        if (assignments.findById(id) == null) return ResponseEntity.notFound().build()
+        return upsert(dto, id, HttpStatus.OK)
+    }
+
+    @DeleteMapping("/{id}")
+    fun delete(
+        @PathVariable id: UUID,
+    ): ResponseEntity<Any> = if (assignments.delete(id)) ResponseEntity.noContent().build() else ResponseEntity.notFound().build()
+
+    private fun upsert(
+        dto: AssignmentDto,
+        id: UUID,
+        okStatus: HttpStatus,
+    ): ResponseEntity<Any> {
+        val strategy = strategies.find(dto.strategyId) ?: return reject("unknown strategy '${dto.strategyId}'")
+        val symbol = dto.symbol.trim().uppercase()
+        if (symbol.isEmpty()) return reject("symbol is required")
+
+        val timeframe =
+            runCatching { Timeframe.fromLabel(dto.timeframe ?: Timeframe.DAILY.label) }
+                .getOrElse { return reject("unknown timeframe '${dto.timeframe}'") }
+        if (timeframe !in strategy.inputs.timeframes) {
+            return reject(
+                "${strategy.id} declares ${strategy.inputs.timeframes.map { it.label }}, not ${timeframe.label}",
+            )
+        }
+
+        // Resolve the overrides through the descriptors: an unknown name or an out-of-range value
+        // fails here, where a human is watching, instead of at 09:05 in the runner.
+        dto.params?.let { overrides ->
+            val resolved =
+                runCatching { StrategyParams.resolve(strategy.params, overrides) }
+                    .getOrElse { return reject("${strategy.id}: ${it.message}") }
+            strategy.validate(resolved)?.let { return reject("${strategy.id}: $it") }
+        }
+
+        val saved =
+            runCatching {
+                assignments.save(
+                    StrategyAssignment(
+                        id = id,
+                        strategyId = strategy.id,
+                        symbol = Symbol(symbol),
+                        timeframe = timeframe,
+                        paramOverrides = dto.params,
+                        enabled = dto.enabled ?: false,
+                        createdAt = Instant.now(),
+                        updatedAt = Instant.now(),
+                    ),
+                )
+            }.getOrElse { return reject(it.message ?: "could not save assignment") }
+        return ResponseEntity.status(okStatus).body(saved.toDto())
+    }
+
+    private fun reject(reason: String): ResponseEntity<Any> {
+        logger.warn { "Assignment rejected: $reason" }
+        return ResponseEntity.badRequest().body<Any>(mapOf("error" to reason))
+    }
+
+    private fun StrategyAssignment.toDto() =
+        AssignmentDto(
+            id = id,
+            strategyId = strategyId,
+            symbol = symbol.value,
+            timeframe = timeframe.label,
+            params = paramOverrides,
+            enabled = enabled,
+            createdAt = createdAt,
+            updatedAt = updatedAt,
+        )
+}

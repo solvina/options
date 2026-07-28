@@ -1,0 +1,82 @@
+databaseChangeLog:
+  # ---------------------------------------------------------------------------
+  # Strategy assignments (2026-07-28): which stock strategy runs on which symbol,
+  # on which timeframe, with which parameter overrides.
+  #
+  # This is the managed layer of the strategy platform — enable/disable per
+  # strategy per symbol, and per-symbol parameter overrides. Resolution order is
+  # assignment params -> strategy defaults, the pattern instrument_universe
+  # already uses for spreads (inst?.ivRankThreshold ?: config.ivRankThreshold),
+  # generalised from fixed columns to a params blob.
+  #
+  # params_json NULL means "use the strategy's own descriptor defaults" — not
+  # "no params". An empty object would mean the same thing here, but NULL keeps
+  # the distinction visible in the UI: nothing has been overridden yet.
+  #
+  # The (strategy_id, symbol, timeframe) uniqueness is deliberate: the same
+  # strategy may legitimately run on one symbol at two timeframes, but running
+  # it twice on the same pair is a configuration mistake, not a portfolio.
+  # ---------------------------------------------------------------------------
+  - changeSet:
+      id: v36__strategy_assignment
+      author: claude
+      changes:
+        - createTable:
+            tableName: strategy_assignment
+            columns:
+              - column:
+                  name: id
+                  type: UUID
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: strategy_id
+                  type: TEXT
+                  constraints:
+                    nullable: false
+              - column:
+                  name: symbol
+                  type: TEXT
+                  constraints:
+                    nullable: false
+              - column:
+                  name: timeframe
+                  type: TEXT
+                  constraints:
+                    nullable: false
+              # NULL = strategy descriptor defaults. See header.
+              - column:
+                  name: params_json
+                  type: TEXT
+              - column:
+                  name: enabled
+                  type: BOOLEAN
+                  defaultValueBoolean: false
+                  constraints:
+                    nullable: false
+              - column:
+                  name: created_at
+                  type: TIMESTAMP WITH TIME ZONE
+                  constraints:
+                    nullable: false
+              - column:
+                  name: updated_at
+                  type: TIMESTAMP WITH TIME ZONE
+                  constraints:
+                    nullable: false
+        - addUniqueConstraint:
+            tableName: strategy_assignment
+            columnNames: strategy_id, symbol, timeframe
+            constraintName: uq_strategy_assignment_strategy_symbol_timeframe
+        # The live runner asks "what is enabled right now?" every scheduled pass;
+        # that is the only hot read on this table.
+        - createIndex:
+            tableName: strategy_assignment
+            indexName: idx_strategy_assignment_enabled
+            columns:
+              - column:
+                  name: enabled
+      rollback:
+        - dropTable:
+            tableName: strategy_assignment
