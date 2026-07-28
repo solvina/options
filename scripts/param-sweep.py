@@ -27,6 +27,15 @@ Config example (sweep any request fields, not just these):
       }
     }
 
+Naming a library strategy switches the request to the params blob — fixed params go under
+"request.params", and swept params are merged into the same blob rather than sent flat:
+
+    "request": { "symbols": [...], "strategy": "rsi_ma_cross", "params": {"maxOpenPositions": 3} },
+    "sweep":   { "rsiMaPeriod": [7, 14, 21] }
+
+Every swept and fixed param name is checked against GET /backtest/strategies before the run
+starts, because an unknown field on a strategy request is dropped silently rather than rejected.
+
 Outputs in the run directory:
     config.json   copy of the config (provenance)
     results.csv   one row per combo: swept params + summary metrics
@@ -65,7 +74,7 @@ METRICS = [
     "tradeCount", "winCount", "lossCount", "eodCount", "winRate",
     "totalPnl", "totalPnlPct", "profitFactor", "maxDrawdownPct",
     "annualizedReturnPct", "avgRMultiple", "avgWinR", "avgLossR",
-    "finalCapital", "buyHoldPnlPct", "buyHoldAnnualizedPct",
+    "finalCapital", "totalCosts", "buyHoldPnlPct", "buyHoldAnnualizedPct",
 ]
 REQUEST_TIMEOUT_S = 900
 RETRIES = 2
@@ -96,6 +105,19 @@ def cell(value) -> str:
     if value is None:
         return ""
     return str(value)
+
+
+def strategy_param_names(base_url: str, strategy_id: str) -> set:
+    """The descriptor param names of [strategy_id], so a typo fails here instead of silently."""
+    try:
+        with urllib.request.urlopen(f"{base_url}/backtest/strategies", timeout=REQUEST_TIMEOUT_S) as resp:
+            catalog = json.load(resp)
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as e:
+        sys.exit(f"cannot read the strategy catalog from {base_url}: {e}")
+    for s in catalog:
+        if s["id"] == strategy_id:
+            return {p["name"] for p in s["params"]}
+    sys.exit(f"unknown strategy '{strategy_id}' — available: {sorted(s['id'] for s in catalog)}")
 
 
 def run_one(base_url: str, payload: dict) -> dict:
@@ -130,6 +152,23 @@ def main() -> None:
     if "symbols" not in request:
         sys.exit('request.symbols is required')
 
+    # A named strategy takes its params in a "params" blob; without one the request keeps the flat
+    # legacy support_bounce fields. Swept values must follow the same shape — a flat "rsiMaPeriod"
+    # on a strategy request is an unknown property, which Jackson drops silently, so the axis would
+    # run every combo at the strategy default and the CSV would show one result under many labels.
+    strategy_id = request.get("strategy")
+    fixed_params: dict = request.get("params") or {}
+
+    def fixed_param(name, default=0):
+        return (fixed_params if strategy_id else request).get(name, default)
+
+    if strategy_id:
+        known = strategy_param_names(base_url, strategy_id)
+        unknown = sorted((set(sweep) | set(fixed_params)) - known)
+        if unknown:
+            sys.exit(f"{strategy_id} has no param(s) {unknown} — known: {sorted(known)}")
+        print(f"Strategy {strategy_id}: params travel in request.params")
+
     # The grid is never materialized: counts are computed arithmetically and combos stream
     # lazily through a bounded window of in-flight requests, so grid size is limited by
     # patience, not memory.
@@ -145,7 +184,7 @@ def main() -> None:
     # Redundancy check by tuple index (runs once per generated combo — keep it dict-free).
     idx = {p: i for i, p in enumerate(sweep_params)}
     checks = [
-        (idx.get(atr_p), request.get(atr_p, 0), idx[pct_p], values_by_param[pct_p][0])
+        (idx.get(atr_p), fixed_param(atr_p), idx[pct_p], values_by_param[pct_p][0])
         for atr_p, pct_p in ATR_OVERRIDES.items()
         if pct_p in idx
     ]
@@ -169,7 +208,7 @@ def main() -> None:
             factor *= pos + (len(values_by_param[atr_p]) - pos) * n_pct
             consumed |= {atr_p, pct_p}
         else:
-            factor *= 1 if positive(request.get(atr_p, 0)) else n_pct
+            factor *= 1 if positive(fixed_param(atr_p)) else n_pct
             consumed.add(pct_p)
     survivors = factor * math.prod(len(v) for p, v in values_by_param.items() if p not in consumed)
     if survivors < total:
@@ -212,8 +251,10 @@ def main() -> None:
     start = time.time()
 
     def run_combo(combo):
-        payload = {**request, **dict(zip(sweep_params, combo))}
-        return run_one(base_url, payload)
+        swept = dict(zip(sweep_params, combo))
+        if strategy_id:
+            return run_one(base_url, {**request, "params": {**fixed_params, **swept}})
+        return run_one(base_url, {**request, **swept})
 
     def progress():
         elapsed = time.time() - start

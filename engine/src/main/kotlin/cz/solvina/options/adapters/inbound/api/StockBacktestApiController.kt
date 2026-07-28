@@ -1,6 +1,7 @@
 package cz.solvina.options.adapters.inbound.api
 
 import cz.solvina.options.domain.features.backtest.BacktestEngine
+import cz.solvina.options.domain.features.backtest.CostModel
 import cz.solvina.options.domain.features.backtest.StrategyBacktestAdapter
 import cz.solvina.options.domain.features.bars.BarStorePort
 import cz.solvina.options.domain.features.bars.FetchJobStatus
@@ -64,6 +65,12 @@ class StockBacktestApiController(
         val params: Map<String, Any?>? = null,
         /** Swing default: positions hold to stop/target instead of being liquidated at day end. */
         val holdOvernight: Boolean? = null,
+        /**
+         * Commission + slippage. Absent → [CostModel.IBKR_US_STOCK], because a gross-P&L answer is
+         * actively misleading at the profit factors these strategies produce. Send an explicit
+         * all-zero model to get the old gross numbers back.
+         */
+        val costs: CostModel? = null,
         /** When set, exits trail this ×R below the running peak instead of using a fixed target. */
         val trailStopRMultiple: Double? = null,
         // Legacy flat support_bounce params (null → strategy defaults). Superseded by [params].
@@ -247,6 +254,7 @@ class StockBacktestApiController(
                     trailStopRMultiple = req.trailStopRMultiple,
                     timeframe = timeframe,
                     benchmarkSymbols = benchmarkSymbols,
+                    costs = req.costs ?: CostModel.IBKR_US_STOCK,
                 ),
                 StrategyBacktestAdapter(strategy),
             )

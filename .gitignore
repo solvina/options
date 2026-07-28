@@ -34,3 +34,5 @@ data/
 # param-sweep output (results.csv can be huge; regenerate from config)
 sweeps/
 scripts/sweeps/
+
+__pycache__/

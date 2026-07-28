@@ -43,6 +43,9 @@ class BacktestEngine(
         /** Bar timeframe read from the store. FIVE_MIN → intraday (optionally aggregated to
          *  [barMinutes]); DAILY / FOUR_HOUR are read natively (no aggregation). */
         val timeframe: Timeframe = Timeframe.FIVE_MIN,
+        /** Commission + slippage charged per round trip. Defaults to [CostModel.NONE] so runs made
+         *  before costs existed reproduce byte-identically; callers judging an edge should set it. */
+        val costs: CostModel = CostModel.NONE,
     )
 
     data class Summary(
@@ -53,6 +56,8 @@ class BacktestEngine(
         val finalCapital: BigDecimal,
         val totalPnl: BigDecimal,
         val totalPnlPct: BigDecimal,
+        /** Commission + slippage already deducted from [totalPnl]. Zero under [CostModel.NONE]. */
+        val totalCosts: BigDecimal,
         val tradeCount: Int,
         val winCount: Int,
         val lossCount: Int,
@@ -215,6 +220,7 @@ class BacktestEngine(
         var capital = request.initialCapital
         var peakCapital = capital
         var maxDrawdown = BigDecimal.ZERO
+        var totalCosts = BigDecimal.ZERO
         val pending = mutableListOf<PendingEntry>()
         val open = mutableListOf<OpenPosition>()
 
@@ -261,10 +267,13 @@ class BacktestEngine(
                     op.lowestSeen = op.lowestSeen.min(BigDecimal.valueOf(bar.low))
 
                     val (closePrice, reason) = simulateExit(bar, op, peakBeforeBar, request.trailStopRMultiple) ?: continue
+                    val cost = request.costs.roundTrip(op.signal.shares, op.actualEntryPrice, closePrice)
+                    totalCosts = totalCosts.add(cost)
                     val pnl =
                         closePrice
                             .subtract(op.actualEntryPrice)
                             .multiply(BigDecimal(op.signal.shares))
+                            .subtract(cost)
                             .setScale(2, RoundingMode.HALF_UP)
                     capital = capital.add(pnl)
                     val (newPeak, drawdown) = updateDrawdown(capital, peakCapital)
@@ -306,10 +315,13 @@ class BacktestEngine(
                     op.highestSeen = op.highestSeen.max(BigDecimal.valueOf(lastBar.high))
                     op.lowestSeen = op.lowestSeen.min(BigDecimal.valueOf(lastBar.low))
                     val closePrice = BigDecimal.valueOf(lastBar.close)
+                    val cost = request.costs.roundTrip(op.signal.shares, op.actualEntryPrice, closePrice)
+                    totalCosts = totalCosts.add(cost)
                     val pnl =
                         closePrice
                             .subtract(op.actualEntryPrice)
                             .multiply(BigDecimal(op.signal.shares))
+                            .subtract(cost)
                             .setScale(2, RoundingMode.HALF_UP)
                     capital = capital.add(pnl)
                     val (newPeak, drawdown) = updateDrawdown(capital, peakCapital)
@@ -345,10 +357,13 @@ class BacktestEngine(
                 op.highestSeen = op.highestSeen.max(BigDecimal.valueOf(lastBar.high))
                 op.lowestSeen = op.lowestSeen.min(BigDecimal.valueOf(lastBar.low))
                 val closePrice = BigDecimal.valueOf(lastBar.close)
+                val cost = request.costs.roundTrip(op.signal.shares, op.actualEntryPrice, closePrice)
+                totalCosts = totalCosts.add(cost)
                 val pnl =
                     closePrice
                         .subtract(op.actualEntryPrice)
                         .multiply(BigDecimal(op.signal.shares))
+                        .subtract(cost)
                         .setScale(2, RoundingMode.HALF_UP)
                 capital = capital.add(pnl)
                 val (newPeak, drawdown) = updateDrawdown(capital, peakCapital)
@@ -392,7 +407,18 @@ class BacktestEngine(
                 null
             } else {
                 val slice = request.initialCapital.toDouble() / holdRatios.size
-                BigDecimal.valueOf(holdRatios.sumOf { it * slice }).setScale(2, RoundingMode.HALF_UP)
+                // Hold pays costs too — one round trip per symbol. Tiny against a strategy's
+                // hundreds of trips, which is exactly the asymmetry the comparison must show
+                // rather than hide by charging only one side.
+                val gross = BigDecimal.valueOf(holdRatios.sumOf { it * slice })
+                val holdCosts =
+                    request.symbols.mapNotNull { sym -> backtestBars[sym]?.takeIf { it.isNotEmpty() } }.sumOf { bars ->
+                        val entry = BigDecimal.valueOf(bars.first().open)
+                        val exit = BigDecimal.valueOf(bars.last().close)
+                        val shares = if (entry > BigDecimal.ZERO) (slice / entry.toDouble()).toInt() else 0
+                        request.costs.roundTrip(shares, entry, exit).toDouble()
+                    }
+                gross.subtract(BigDecimal.valueOf(holdCosts)).setScale(2, RoundingMode.HALF_UP)
             }
         val buyHoldPnl = buyHoldFinal?.subtract(request.initialCapital)
         val buyHoldPnlPct =
@@ -443,6 +469,7 @@ class BacktestEngine(
                 finalCapital = capital,
                 totalPnl = totalPnl,
                 totalPnlPct = totalPnlPct,
+                totalCosts = totalCosts.setScale(2, RoundingMode.HALF_UP),
                 tradeCount = winCount + lossCount + eodCount,
                 winCount = winCount,
                 lossCount = lossCount,
