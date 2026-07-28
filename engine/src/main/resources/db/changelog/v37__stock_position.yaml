@@ -1,0 +1,150 @@
+databaseChangeLog:
+  # ---------------------------------------------------------------------------
+  # Live stock-strategy positions (2026-07-28), Phase 7 of the strategy platform.
+  #
+  # strategy_id AND assignment_id are here from the first migration — the plan's
+  # one irreversible decision. Which strategy and which parameter set produced a
+  # past order cannot be reconstructed after the fact, and assignment_id is what
+  # ties a fill back to the exact override blob in force when it was emitted.
+  # params_json snapshots that blob at entry: the assignment row can be edited
+  # afterwards, so the pointer alone would not reproduce the decision.
+  #
+  # ENTRY_UNFILLED is a first-class terminal status, not a discarded case. The
+  # backtest fills every emitted entry at the next bar's open; a live day limit
+  # does not. Fill rate is therefore the honest measure of how far live has
+  # drifted from the simulation, and it can only be computed if the misses are
+  # stored. The flag strategy learned this the hard way — 51 ENTRY_TIMEOUT out
+  # of ~173 positions, none of them modelled in its backtest.
+  # ---------------------------------------------------------------------------
+  - changeSet:
+      id: v37__stock_position
+      author: claude
+      changes:
+        - createTable:
+            tableName: stock_position
+            columns:
+              - column:
+                  name: id
+                  type: UUID
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              # ---- attribution (never nullable, never retrofittable) ----
+              - column:
+                  name: strategy_id
+                  type: TEXT
+                  constraints:
+                    nullable: false
+              - column:
+                  name: assignment_id
+                  type: UUID
+                  constraints:
+                    nullable: false
+              # The resolved params in force at entry, snapshotted — the assignment may be edited later.
+              - column:
+                  name: params_json
+                  type: TEXT
+                  constraints:
+                    nullable: false
+              - column:
+                  name: symbol
+                  type: TEXT
+                  constraints:
+                    nullable: false
+              - column:
+                  name: timeframe
+                  type: TEXT
+                  constraints:
+                    nullable: false
+              - column:
+                  name: status
+                  type: TEXT
+                  constraints:
+                    nullable: false
+              # ---- order ids ----
+              - column:
+                  name: entry_order_id
+                  type: INTEGER
+              - column:
+                  name: stop_order_id
+                  type: INTEGER
+              - column:
+                  name: target_order_id
+                  type: INTEGER
+              - column:
+                  name: close_order_id
+                  type: INTEGER
+              # ---- intent, as decided ----
+              - column:
+                  name: signal_price
+                  type: NUMERIC(18, 4)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: limit_price
+                  type: NUMERIC(18, 4)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: stop_price
+                  type: NUMERIC(18, 4)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: target_price
+                  type: NUMERIC(18, 4)
+              - column:
+                  name: shares
+                  type: INTEGER
+                  constraints:
+                    nullable: false
+              - column:
+                  name: risk_amount
+                  type: NUMERIC(18, 2)
+              # ---- outcome ----
+              - column:
+                  name: actual_entry_price
+                  type: NUMERIC(18, 4)
+              - column:
+                  name: close_price
+                  type: NUMERIC(18, 4)
+              - column:
+                  name: realized_pnl
+                  type: NUMERIC(18, 2)
+              - column:
+                  name: close_reason
+                  type: TEXT
+              - column:
+                  name: highest_price_seen
+                  type: NUMERIC(18, 4)
+              - column:
+                  name: lowest_price_seen
+                  type: NUMERIC(18, 4)
+              # ---- lifecycle ----
+              - column:
+                  name: signalled_at
+                  type: TIMESTAMP WITH TIME ZONE
+                  constraints:
+                    nullable: false
+              - column:
+                  name: opened_at
+                  type: TIMESTAMP WITH TIME ZONE
+              - column:
+                  name: closed_at
+                  type: TIMESTAMP WITH TIME ZONE
+        # The runner asks "what is live right now?" every pass; reconciliation asks the same.
+        - createIndex:
+            tableName: stock_position
+            indexName: idx_stock_position_status
+            columns:
+              - column:
+                  name: status
+        - createIndex:
+            tableName: stock_position
+            indexName: idx_stock_position_strategy
+            columns:
+              - column:
+                  name: strategy_id
+      rollback:
+        - dropTable:
+            tableName: stock_position

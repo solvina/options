@@ -12,6 +12,7 @@ import cz.solvina.options.domain.features.strategy.StockStrategy
 import cz.solvina.options.domain.features.strategy.StrategyParams
 import cz.solvina.options.domain.features.strategy.StrategyRegistry
 import cz.solvina.options.domain.features.strategy.StrategyTrade
+import cz.solvina.options.domain.features.strategy.StrategyWarmup
 import cz.solvina.options.domain.features.strategy.SupportBounceStrategy
 import cz.solvina.options.domain.features.universe.SectorEtf
 import cz.solvina.options.domain.features.universe.UniversePort
@@ -27,7 +28,6 @@ import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
 import java.math.BigDecimal
 import java.time.LocalDate
-import kotlin.math.ceil
 
 private val logger = KotlinLogging.logger {}
 
@@ -272,25 +272,10 @@ class StockBacktestApiController(
         private const val MAX_WAIT_SECONDS = 600
         private const val DEFAULT_MAX_OPEN_POSITIONS = 3
 
-        /**
-         * Warm-up bars → calendar days to fetch before the window, via trading days (~5 per 7
-         * calendar) with a 2× safety factor for holidays and thin history. Counting in bars keeps
-         * intraday timeframes honest: 200 five-minute bars is three sessions, not 200 days.
-         */
+        /** Delegates to [StrategyWarmup] so both hosts warm on an identical span. */
         fun warmupCalendarDays(
             warmupBars: Int,
             timeframe: Timeframe,
-        ): Long {
-            val barsPerTradingDay =
-                when (timeframe) {
-                    Timeframe.DAILY -> 1.0
-                    Timeframe.FOUR_HOUR -> 2.0 // RTH session ≈ 6.5h → 2 four-hour bars
-                    Timeframe.FIVE_MIN -> 78.0 // 6.5h RTH / 5 min
-                }
-            val tradingDays = ceil(warmupBars / barsPerTradingDay).toLong()
-            return (tradingDays * 2L).coerceAtLeast(MIN_WARMUP_CALENDAR_DAYS)
-        }
-
-        private const val MIN_WARMUP_CALENDAR_DAYS = 30L
+        ): Long = StrategyWarmup.calendarDays(warmupBars, timeframe)
     }
 }

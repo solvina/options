@@ -266,3 +266,12 @@ server:
 springdoc:
   packagesToScan: cz.solvina.options
   use-management-port: false
+
+# Live stock-strategy host (Phase 7). Ships DARK: enabled=false means the runner
+# evaluates nothing and places no orders, however many assignments exist.
+# Flipping enabled to true is the only step that makes a stock strategy trade.
+stock-strategies:
+  enabled: false
+  max-open-positions: 3
+  limit-tolerance-atr-multiple: 0.25
+  cron: "0 5 9,15 * * MON-FRI"   # just after the EU and US opening auctions print

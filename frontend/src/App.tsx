@@ -8,6 +8,7 @@ import { ScannerPage } from './pages/ScannerPage'
 import { DiagnosticPage } from './pages/DiagnosticPage'
 import { UniversePage } from './pages/UniversePage'
 import { StrategyAssignmentsPage } from './pages/StrategyAssignmentsPage'
+import { StockPositionsPage } from './pages/StockPositionsPage'
 import { AnalyticsPage } from './pages/AnalyticsPage'
 import { FlagsPage } from './pages/FlagsPage'
 import { FlagAnalyticsPage } from './pages/FlagAnalyticsPage'
@@ -36,7 +37,9 @@ function App() {
           <Route path="/account" element={<AccountPage />} />
           <Route path="/scanner" element={<ScannerPage />} />
           <Route path="/universe" element={<UniversePage />} />
-          <Route path="/strategies" element={<StrategyAssignmentsPage />} />
+          <Route path="/strategies" element={<Navigate to="/strategies/assignments" replace />} />
+          <Route path="/strategies/assignments" element={<StrategyAssignmentsPage />} />
+          <Route path="/strategies/positions" element={<StockPositionsPage />} />
           <Route path="/diagnostic" element={<DiagnosticPage />} />
           <Route path="/flags/positions" element={<FlagsPage />} />
           <Route path="/flags" element={<Navigate to="/flags/positions" replace />} />

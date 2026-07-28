@@ -61,3 +61,5 @@ databaseChangeLog:
       file: db/changelog/v35__instrument_routing_and_sessions.yaml
   - include:
       file: db/changelog/v36__strategy_assignment.yaml
+  - include:
+      file: db/changelog/v37__stock_position.yaml

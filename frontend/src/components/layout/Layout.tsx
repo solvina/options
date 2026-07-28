@@ -46,7 +46,8 @@ const navGroups = [
   {
     label: 'Strategies',
     items: [
-      { to: '/strategies', label: 'Assignments' },
+      { to: '/strategies/positions', label: 'Positions' },
+      { to: '/strategies/assignments', label: 'Assignments' },
     ],
   },
   {
