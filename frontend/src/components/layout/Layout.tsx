@@ -55,7 +55,8 @@ const navGroups = [
     items: [
       { to: '/universe', label: 'Universe' },
       { to: '/account', label: 'Account' },
-      { to: '/diagnostic', label: 'Diagnostics' },
+      { to: '/diagnostic', label: 'Diagnostics', end: true },
+      { to: '/diagnostic/dumps', label: 'Hang Dumps' },
       { to: '/historical', label: 'Historical' },
       { to: '/changelog', label: 'Changelog' },
     ],

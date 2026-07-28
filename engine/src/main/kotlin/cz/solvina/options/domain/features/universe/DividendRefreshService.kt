@@ -1,7 +1,7 @@
 package cz.solvina.options.domain.features.universe
 
 import io.github.oshai.kotlinlogging.KotlinLogging
-import kotlinx.coroutines.runBlocking
+import cz.solvina.options.adapters.inbound.jobs.runScheduled
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 
@@ -21,11 +21,11 @@ class DividendRefreshService(
     /** Daily pre-market refresh. Paper deployments relaying from prod (dividends.remote) should
      *  schedule this after prod's own refresh, e.g. "0 0 7 * * *". */
     @Scheduled(cron = "\${dividends.refresh-cron:0 30 6 * * *}")
-    fun scheduledRefresh() = runBlocking { refresh() }
+    fun scheduledRefresh() = runScheduled("Dividend refresh (daily)") { refresh() }
 
     /** One-shot a few minutes after startup so a fresh deploy populates without waiting for the cron. */
     @Scheduled(initialDelay = 240_000, fixedDelay = Long.MAX_VALUE)
-    fun startupRefresh() = runBlocking { refresh() }
+    fun startupRefresh() = runScheduled("Dividend refresh (startup)") { refresh() }
 
     suspend fun refresh() {
         val usInstruments =

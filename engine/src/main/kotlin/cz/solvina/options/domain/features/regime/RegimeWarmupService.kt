@@ -2,7 +2,7 @@ package cz.solvina.options.domain.features.regime
 
 import cz.solvina.options.domain.features.universe.UniversePort
 import io.github.oshai.kotlinlogging.KotlinLogging
-import kotlinx.coroutines.runBlocking
+import cz.solvina.options.adapters.inbound.jobs.runScheduled
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 
@@ -21,11 +21,11 @@ class RegimeWarmupService(
 ) {
     /** One-shot after startup (delayed so the IV-rank warmup finishes first). */
     @Scheduled(initialDelay = 600_000, fixedDelay = Long.MAX_VALUE)
-    fun warmAtStartup() = runBlocking { warm() }
+    fun warmAtStartup() = runScheduled("Regime warmup (startup)") { warm() }
 
     /** Daily pre-market refresh. */
     @Scheduled(cron = "0 0 7 * * *")
-    fun warmDaily() = runBlocking { warm() }
+    fun warmDaily() = runScheduled("Regime warmup (daily)") { warm() }
 
     suspend fun warm() {
         val symbols = universePort.getWatchlist()

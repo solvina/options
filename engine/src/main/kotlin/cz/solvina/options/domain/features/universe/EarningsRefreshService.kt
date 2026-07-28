@@ -2,7 +2,7 @@ package cz.solvina.options.domain.features.universe
 
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.runBlocking
+import cz.solvina.options.adapters.inbound.jobs.runScheduled
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 
@@ -25,11 +25,11 @@ class EarningsRefreshService(
 ) {
     /** Daily pre-market refresh, after the dividend refresh. */
     @Scheduled(cron = "\${earnings.refresh-cron:0 45 6 * * *}")
-    fun scheduledRefresh() = runBlocking { refresh() }
+    fun scheduledRefresh() = runScheduled("Earnings refresh (daily)") { refresh() }
 
     /** One-shot after startup so a fresh deploy populates without waiting for the cron. */
     @Scheduled(initialDelay = 300_000, fixedDelay = Long.MAX_VALUE)
-    fun startupRefresh() = runBlocking { refresh() }
+    fun startupRefresh() = runScheduled("Earnings refresh (startup)") { refresh() }
 
     suspend fun refresh() {
         val usInstruments =

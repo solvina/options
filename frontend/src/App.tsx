@@ -9,6 +9,7 @@ import { DiagnosticPage } from './pages/DiagnosticPage'
 import { UniversePage } from './pages/UniversePage'
 import { StrategyAssignmentsPage } from './pages/StrategyAssignmentsPage'
 import { StockPositionsPage } from './pages/StockPositionsPage'
+import { DumpViewerPage } from './pages/DumpViewerPage'
 import { AnalyticsPage } from './pages/AnalyticsPage'
 import { FlagsPage } from './pages/FlagsPage'
 import { FlagAnalyticsPage } from './pages/FlagAnalyticsPage'
@@ -41,6 +42,7 @@ function App() {
           <Route path="/strategies/assignments" element={<StrategyAssignmentsPage />} />
           <Route path="/strategies/positions" element={<StockPositionsPage />} />
           <Route path="/diagnostic" element={<DiagnosticPage />} />
+          <Route path="/diagnostic/dumps" element={<DumpViewerPage />} />
           <Route path="/flags/positions" element={<FlagsPage />} />
           <Route path="/flags" element={<Navigate to="/flags/positions" replace />} />
           <Route path="/flags/analytics" element={<FlagAnalyticsPage />} />
