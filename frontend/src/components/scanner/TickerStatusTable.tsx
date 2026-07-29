@@ -83,10 +83,54 @@ const COLS: Col[] = [
 const DEFAULT_VISIBLE = COLS.filter((c) => c.defaultVisible).map((c) => c.key)
 const COL_BY_KEY = Object.fromEntries(COLS.map((c) => [c.key, c]))
 
+/**
+ * One row's filter key: the reject reason when it has one, otherwise the outcome.
+ *
+ * Rejections are the interesting axis — "hide the low-IV-rank ones" is the actual question — but a
+ * symbol that never reached a selector has no reason, so the outcome stands in for it. That keeps
+ * the checklist flat instead of making you filter outcome and reason separately.
+ */
+function filterKey(r: Row): string {
+  return r.rejectReason ?? r.outcome
+}
+
+function filterLabel(key: string): string {
+  return key.replace(/_/g, ' ').toLowerCase().replace(/^./, (c) => c.toUpperCase())
+}
+
+/**
+ * Known keys in funnel order, so the checklist reads like the path a symbol takes rather than
+ * alphabetically. Mirrors ScanOutcome and RejectReason on the server; anything the server adds later
+ * still appears, appended from the live data (see FILTER_OPTIONS below).
+ */
+const KNOWN_FILTER_KEYS = [
+  'ENTERED',
+  'ALREADY_OPEN',
+  'COOLDOWN',
+  'GATE_SUPPRESSED',
+  'ERROR',
+  'IV_BELOW_THRESHOLD',
+  'EARNINGS_BEFORE_EXPIRY',
+  'EX_DIVIDEND_BUFFER',
+  'NO_EXPIRY_IN_DTE',
+  'NO_VALID_STRIKES',
+  'NO_DELTA_IN_BAND',
+  'NO_BOUGHT_LEG',
+  'CREDIT_BELOW_MIN',
+  'CREDIT_EXCEEDS_WIDTH',
+  'CRASH_PRICED',
+  'RISK_EXCEEDS_BUDGET',
+  'COMBO_BID_BELOW_FLOOR',
+]
+
 export function TickerStatusTable() {
   const { sort, toggle } = usePersistentSortable('scanner-table', 'symbol', 'asc')
   const [visible, setVisible] = useLocalStorage<string[]>('scanner.visibleColumns', DEFAULT_VISIBLE)
+  // Stores what is HIDDEN, not what is shown. Everything is checked by default, and a reason the
+  // server adds later is visible immediately — a stored "visible" list would silently swallow it.
+  const [hidden, setHidden] = useLocalStorage<string[]>('scanner.hiddenReasons', [])
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [filterOpen, setFilterOpen] = useState(false)
 
   const { data, isLoading, isError } = useQuery({
     ...getTickerStatusOptions(),
@@ -94,11 +138,25 @@ export function TickerStatusTable() {
   })
 
   const rows = (data as Row[] | undefined) ?? []
+
+  // Counts come from the unfiltered rows so unchecking one option does not renumber the others.
+  const counts = rows.reduce<Record<string, number>>((acc, r) => {
+    const k = filterKey(r)
+    acc[k] = (acc[k] ?? 0) + 1
+    return acc
+  }, {})
+  const filterOptions = [...KNOWN_FILTER_KEYS, ...Object.keys(counts).filter((k) => !KNOWN_FILTER_KEYS.includes(k))]
+
+  const filteredRows = rows.filter((r) => !hidden.includes(filterKey(r)))
   const visibleCols = COLS.filter((c) => visible.includes(c.key))
-  const sortedRows = sorted(rows, sort, (r, k) => COL_BY_KEY[k]?.sortValue(r) ?? null)
+  const sortedRows = sorted(filteredRows, sort, (r, k) => COL_BY_KEY[k]?.sortValue(r) ?? null)
 
   function toggleCol(key: string) {
     setVisible((v) => (v.includes(key) ? v.filter((x) => x !== key) : [...v, key]))
+  }
+
+  function toggleFilter(key: string) {
+    setHidden((h) => (h.includes(key) ? h.filter((x) => x !== key) : [...h, key]))
   }
 
   const thClass = 'px-3 py-2 text-left'
@@ -106,7 +164,49 @@ export function TickerStatusTable() {
   return (
     <section>
       <div className="flex items-center justify-between mb-3">
-        <h2 className="text-base font-semibold">Ticker Status <span className="text-muted-foreground font-normal text-sm">({rows.length})</span></h2>
+        <h2 className="text-base font-semibold">
+          Ticker Status{' '}
+          <span className="text-muted-foreground font-normal text-sm">
+            ({hidden.length > 0 ? `${filteredRows.length} of ${rows.length}` : rows.length})
+          </span>
+        </h2>
+        <div className="flex items-center gap-2">
+        <div className="relative">
+          <button
+            onClick={() => setFilterOpen((o) => !o)}
+            className={`px-3 py-1.5 text-xs rounded border border-border ${
+              hidden.length > 0
+                ? 'bg-amber-500/10 text-amber-700 dark:text-amber-300'
+                : 'bg-muted text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            Filter{hidden.length > 0 ? ` (${hidden.length} hidden)` : ''} ▾
+          </button>
+          {filterOpen && (
+            <div className="absolute right-0 mt-1 z-10 w-64 max-h-96 overflow-y-auto rounded-lg border border-border bg-card p-2 shadow-lg">
+              <div className="flex items-center justify-between px-2 pb-1 mb-1 border-b border-border">
+                <span className="text-xs text-muted-foreground">Outcome / reason</span>
+                <button
+                  onClick={() => setHidden([])}
+                  disabled={hidden.length === 0}
+                  className="text-xs text-muted-foreground hover:text-foreground disabled:opacity-40"
+                >
+                  Show all
+                </button>
+              </div>
+              {filterOptions.map((key) => (
+                <label
+                  key={key}
+                  className="flex items-center gap-2 px-2 py-1 text-sm rounded hover:bg-muted/60 cursor-pointer"
+                >
+                  <input type="checkbox" checked={!hidden.includes(key)} onChange={() => toggleFilter(key)} />
+                  <span className="flex-1 truncate" title={key}>{filterLabel(key)}</span>
+                  <span className="text-xs text-muted-foreground tabular-nums">{counts[key] ?? 0}</span>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
         <div className="relative">
           <button
             onClick={() => setPickerOpen((o) => !o)}
@@ -125,6 +225,7 @@ export function TickerStatusTable() {
             </div>
           )}
         </div>
+        </div>
       </div>
 
       {isLoading && <p className="text-muted-foreground text-sm">Loading…</p>}
@@ -133,7 +234,13 @@ export function TickerStatusTable() {
         <p className="text-muted-foreground text-sm">No scan has run yet, or the last scan evaluated no symbols.</p>
       )}
 
-      {rows.length > 0 && (
+      {rows.length > 0 && filteredRows.length === 0 && (
+        <p className="text-muted-foreground text-sm">
+          Every row is filtered out — open Filter and re-check an outcome to see them.
+        </p>
+      )}
+
+      {filteredRows.length > 0 && (
         <div className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full text-sm">
             <thead>
