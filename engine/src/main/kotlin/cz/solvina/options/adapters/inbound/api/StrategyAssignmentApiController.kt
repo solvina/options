@@ -5,6 +5,7 @@ import cz.solvina.options.domain.features.strategy.StrategyParams
 import cz.solvina.options.domain.features.strategy.StrategyRegistry
 import cz.solvina.options.domain.features.strategy.assignment.StrategyAssignment
 import cz.solvina.options.domain.features.strategy.assignment.StrategyAssignmentPort
+import cz.solvina.options.domain.features.strategy.tuning.StrategySymbolParamsPort
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.http.HttpStatus
@@ -30,6 +31,11 @@ private val logger = KotlinLogging.logger {}
  * assignment that reaches the live runner has therefore already been checked; the runner never has
  * to decide what to do with a parameter that does not exist.
  *
+ * Since v38 the overrides themselves are stored in `strategy_symbol_params`, not on the assignment
+ * row: the flag strategy is tuned per symbol without ever having an assignment, and two storage
+ * paths for one concept is what made "which parameters is this actually running with" hard to
+ * answer. The DTO still carries `params` so the screen is unchanged — only where they land moved.
+ *
  * Path has no /api prefix — both proxies rewrite /api/X to /options/X (see StockBacktestApiController).
  */
 @RestController
@@ -37,6 +43,7 @@ private val logger = KotlinLogging.logger {}
 class StrategyAssignmentApiController(
     private val assignments: StrategyAssignmentPort,
     private val strategies: StrategyRegistry,
+    private val symbolParams: StrategySymbolParamsPort,
 ) {
     data class AssignmentDto(
         val id: UUID?,
@@ -50,20 +57,21 @@ class StrategyAssignmentApiController(
     )
 
     @GetMapping
-    fun list(): List<AssignmentDto> = assignments.findAll().map { it.toDto() }
+    suspend fun list(): List<AssignmentDto> = assignments.findAll().map { it.toDto(overridesOf(it)) }
 
     @GetMapping("/{id}")
-    fun get(
+    suspend fun get(
         @PathVariable id: UUID,
-    ): ResponseEntity<AssignmentDto> = assignments.findById(id)?.let { ResponseEntity.ok(it.toDto()) } ?: ResponseEntity.notFound().build()
+    ): ResponseEntity<AssignmentDto> =
+        assignments.findById(id)?.let { ResponseEntity.ok(it.toDto(overridesOf(it))) } ?: ResponseEntity.notFound().build()
 
     @PostMapping
-    fun create(
+    suspend fun create(
         @RequestBody dto: AssignmentDto,
     ): ResponseEntity<Any> = upsert(dto, UUID.randomUUID(), HttpStatus.CREATED)
 
     @PutMapping("/{id}")
-    fun update(
+    suspend fun update(
         @PathVariable id: UUID,
         @RequestBody dto: AssignmentDto,
     ): ResponseEntity<Any> {
@@ -76,7 +84,7 @@ class StrategyAssignmentApiController(
         @PathVariable id: UUID,
     ): ResponseEntity<Any> = if (assignments.delete(id)) ResponseEntity.noContent().build() else ResponseEntity.notFound().build()
 
-    private fun upsert(
+    private suspend fun upsert(
         dto: AssignmentDto,
         id: UUID,
         okStatus: HttpStatus,
@@ -111,14 +119,17 @@ class StrategyAssignmentApiController(
                         strategyId = strategy.id,
                         symbol = Symbol(symbol),
                         timeframe = timeframe,
-                        paramOverrides = dto.params,
                         enabled = dto.enabled ?: false,
                         createdAt = Instant.now(),
                         updatedAt = Instant.now(),
                     ),
                 )
             }.getOrElse { return reject(it.message ?: "could not save assignment") }
-        return ResponseEntity.status(okStatus).body(saved.toDto())
+        // Params are written after the assignment so a rejected assignment cannot leave orphaned
+        // tuning behind. A null params field means "leave whatever is stored alone", not "clear it" —
+        // clearing is the explicit DELETE on the tuning endpoint.
+        dto.params?.let { symbolParams.upsert(strategy.id, symbol, it, timeframe.label) }
+        return ResponseEntity.status(okStatus).body(saved.toDto(overridesOf(saved)))
     }
 
     private fun reject(reason: String): ResponseEntity<Any> {
@@ -126,13 +137,16 @@ class StrategyAssignmentApiController(
         return ResponseEntity.badRequest().body<Any>(mapOf("error" to reason))
     }
 
-    private fun StrategyAssignment.toDto() =
+    private suspend fun overridesOf(assignment: StrategyAssignment): Map<String, Any?>? =
+        symbolParams.get(assignment.strategyId, assignment.symbol.value, assignment.timeframe.label)
+
+    private fun StrategyAssignment.toDto(overrides: Map<String, Any?>?) =
         AssignmentDto(
             id = id,
             strategyId = strategyId,
             symbol = symbol.value,
             timeframe = timeframe.label,
-            params = paramOverrides,
+            params = overrides,
             enabled = enabled,
             createdAt = createdAt,
             updatedAt = updatedAt,

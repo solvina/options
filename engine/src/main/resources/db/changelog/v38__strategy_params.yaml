@@ -1,0 +1,125 @@
+databaseChangeLog:
+  # ---------------------------------------------------------------------------
+  # Strategy parameter tuning (2026-07-29). Three resolution layers, one path:
+  #
+  #   ParamDescriptor.default  ->  strategy_default_params  ->  strategy_symbol_params
+  #
+  # The descriptor default is the *absolute* default and lives only in code, so
+  # "reset" is a DELETE rather than a second copy of the values. That is what
+  # removes today's triplication, where the Kotlin data-class defaults,
+  # application.yml and the frontend's hardcoded DEFAULTS object all disagreed.
+  #
+  # Neither table has per-parameter columns. A strategy declares its tunable
+  # surface via ParamDescriptor and the blob follows it, so adding a parameter —
+  # or a whole strategy — costs no migration. This is the pattern v36 introduced
+  # for stock strategies, generalised to every strategy family.
+  #
+  # An ABSENT row means "inherit the layer above"; it never means "no params".
+  # ---------------------------------------------------------------------------
+  - changeSet:
+      id: v38__strategy_params
+      author: claude
+      changes:
+        # Tuned baseline for one strategy, applying to every symbol that has no
+        # override of its own. Absent = the strategy's descriptor defaults.
+        - createTable:
+            tableName: strategy_default_params
+            columns:
+              - column:
+                  name: strategy_id
+                  type: TEXT
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: params_json
+                  type: TEXT
+                  constraints:
+                    nullable: false
+              - column:
+                  name: updated_at
+                  type: TIMESTAMP WITH TIME ZONE
+                  constraints:
+                    nullable: false
+
+        # Per-symbol override. Deliberately separate from strategy_assignment:
+        # an assignment answers "does this strategy RUN here", which for the flag
+        # strategy is instrument_universe.flag_enabled and not an assignment at
+        # all. Keeping the two apart lets a strategy be tuned per symbol without
+        # inventing an assignment row for it.
+        #
+        # timeframe '*' = applies to every timeframe. A stock strategy legitimately
+        # runs on one symbol at two timeframes (see v36) and may want distinct
+        # params for each; '*' rather than NULL keeps the unique constraint honest,
+        # since Postgres treats NULLs as distinct.
+        - createTable:
+            tableName: strategy_symbol_params
+            columns:
+              - column:
+                  name: id
+                  type: UUID
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: strategy_id
+                  type: TEXT
+                  constraints:
+                    nullable: false
+              - column:
+                  name: symbol
+                  type: TEXT
+                  constraints:
+                    nullable: false
+              - column:
+                  name: timeframe
+                  type: TEXT
+                  defaultValue: '*'
+                  constraints:
+                    nullable: false
+              - column:
+                  name: params_json
+                  type: TEXT
+                  constraints:
+                    nullable: false
+              - column:
+                  name: created_at
+                  type: TIMESTAMP WITH TIME ZONE
+                  constraints:
+                    nullable: false
+              - column:
+                  name: updated_at
+                  type: TIMESTAMP WITH TIME ZONE
+                  constraints:
+                    nullable: false
+        - addUniqueConstraint:
+            tableName: strategy_symbol_params
+            columnNames: strategy_id, symbol, timeframe
+            constraintName: uq_strategy_symbol_params_strategy_symbol_timeframe
+        # The scanner resolves params per symbol on every (re)subscribe and the
+        # UI badges every row of the Candle Scanner; both read by strategy_id.
+        - createIndex:
+            tableName: strategy_symbol_params
+            indexName: idx_strategy_symbol_params_strategy
+            columns:
+              - column:
+                  name: strategy_id
+
+        # strategy_assignment.params_json is superseded by strategy_symbol_params:
+        # two override paths for one concept is exactly the fuzziness this change
+        # exists to remove. Safe to drop outright — the stock strategy platform is
+        # still undeployed and the table is empty in production.
+        - dropColumn:
+            tableName: strategy_assignment
+            columnName: params_json
+      rollback:
+        - addColumn:
+            tableName: strategy_assignment
+            columns:
+              - column:
+                  name: params_json
+                  type: TEXT
+        - dropTable:
+            tableName: strategy_symbol_params
+        - dropTable:
+            tableName: strategy_default_params

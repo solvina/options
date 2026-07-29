@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useLocalStorage } from '../lib/useLocalStorage'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
@@ -11,6 +12,8 @@ import {
   closeFlagPositionMutation,
 } from '../generated/flags/@tanstack/react-query.gen'
 import type { FlagPositionDto, FlagTradingConfigDto } from '../generated/flags/types.gen'
+import { StrategyParamsPanel } from '../components/strategy/StrategyParamsPanel'
+import { FLAG_STRATEGY_ID, paramPrefill, strategyParamsApi } from '../components/strategy/params'
 
 // ─────────────────────────────────────────────
 // Types
@@ -154,6 +157,10 @@ type SymbolScannerStatus = {
   poleHeightPct: number | null
   flagBars: number | null
   flagRetracementPct: number | null
+  /** True when this symbol runs parameters that differ from the saved global baseline. */
+  customParams: boolean
+  /** Only the differing parameters, as `name -> "custom (default X)"`. */
+  customParamDetail: Record<string, string>
 }
 
 function staleness(lastCandleAt: string | null): 'fresh' | 'stale' | 'none' {
@@ -173,7 +180,7 @@ function StateChip({ state }: { state: string }) {
   return <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs ${cls}`}>{state}</span>
 }
 
-function ScannerStatusPanel() {
+function ScannerStatusPanel({ onTune }: { onTune: (symbol: string) => void }) {
   const [statuses, setStatuses] = useState<SymbolScannerStatus[]>([])
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null)
   const [error, setError] = useState(false)
@@ -217,6 +224,7 @@ function ScannerStatusPanel() {
                 <th className="pb-1 text-right">Pole %</th>
                 <th className="pb-1 text-right">Flag bars</th>
                 <th className="pb-1 text-right">Retrace %</th>
+                <th className="pb-1 text-right pl-4">Params</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -225,7 +233,19 @@ function ScannerStatusPanel() {
                 const dot = !s.subscriptionActive ? '🔴' : stale !== 'fresh' ? '🟡' : '🟢'
                 return (
                   <tr key={s.symbol} className="hover:bg-muted/30 transition-colors">
-                    <td className="py-1.5 font-medium">{s.symbol}</td>
+                    <td className="py-1.5 font-medium">
+                      {s.symbol}
+                      {s.customParams && (
+                        <span
+                          className="ml-1 cursor-help text-amber-600 dark:text-amber-400"
+                          title={`Custom parameters:\n${Object.entries(s.customParamDetail)
+                            .map(([name, detail]) => `${name}: ${detail}`)
+                            .join('\n')}`}
+                        >
+                          !
+                        </span>
+                      )}
+                    </td>
                     <td className="py-1.5">{dot}</td>
                     <td className="py-1.5 text-right tabular-nums">{s.candlesBuffered}</td>
                     <td className="py-1.5 pl-4 text-muted-foreground tabular-nums">
@@ -235,6 +255,17 @@ function ScannerStatusPanel() {
                     <td className="py-1.5 text-right tabular-nums text-muted-foreground">{s.poleHeightPct != null ? `${s.poleHeightPct}%` : '—'}</td>
                     <td className="py-1.5 text-right tabular-nums text-muted-foreground">{s.flagBars ?? '—'}</td>
                     <td className="py-1.5 text-right tabular-nums text-muted-foreground">{s.flagRetracementPct != null ? `${s.flagRetracementPct}%` : '—'}</td>
+                    <td className="py-1.5 pl-4 text-right">
+                      {/* Hands the current form values to the Universe page, which prefills this
+                          symbol's override and waits for you to save. */}
+                      <button
+                        onClick={() => onTune(s.symbol)}
+                        className="text-xs px-2 py-0.5 rounded border border-border hover:bg-accent transition-colors"
+                        title="Open this symbol in Universe, prefilled with the current strategy values"
+                      >
+                        Tune →
+                      </button>
+                    </td>
                   </tr>
                 )
               })}
@@ -598,6 +629,7 @@ type HistoryFilter = (typeof HISTORY_FILTERS)[number]
 // ─────────────────────────────────────────────
 
 export function FlagsPage() {
+  const navigate = useNavigate()
   const [statusFilter, setStatusFilter] = useLocalStorage<HistoryFilter>('flags.statusFilter', 'ALL')
   const [sort, setSort] = useState<SortField>('openedAt')
   const [sortDir, setSortDir] = useState<SortDir>('DESC')
@@ -650,6 +682,17 @@ export function FlagsPage() {
 
   const positions = pagedData?.content ?? []
 
+  // "Tune" on a Candle Scanner row: carry the strategy's current values over to the Universe page,
+  // which prefills this symbol's override form. Nothing is written until you save it there.
+  const tuneSymbol = useCallback(
+    async (symbol: string) => {
+      const meta = await strategyParamsApi.get(FLAG_STRATEGY_ID).catch(() => null)
+      if (meta) paramPrefill.set({ symbol, values: meta.values })
+      navigate(`/universe?symbol=${symbol}&prefill=flag`)
+    },
+    [navigate],
+  )
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -659,8 +702,9 @@ export function FlagsPage() {
 
       {configLoading && <p className="text-muted-foreground text-sm">Loading config…</p>}
       {config && <ConfigPanel config={config} />}
+      <StrategyParamsPanel strategyId={FLAG_STRATEGY_ID} />
 
-      <ScannerStatusPanel />
+      <ScannerStatusPanel onTune={tuneSymbol} />
       <SubscribeSymbolPanel />
 
       {/* Live positions — always visible */}

@@ -9,11 +9,14 @@ import cz.solvina.options.domain.features.bars.RealTimeBarsPort
 import cz.solvina.options.domain.features.bars.VolumeAnalysis
 import cz.solvina.options.domain.features.connection.status.ConnectionStatusPort
 import cz.solvina.options.domain.features.flag.FlagExecutionService.ExecutionRequest
+import cz.solvina.options.domain.features.flag.config.FLAG_STRATEGY_ID
 import cz.solvina.options.domain.features.flag.config.FlagStrategyConfig
 import cz.solvina.options.domain.features.flag.config.FlagTradingConfig
 import cz.solvina.options.domain.features.flag.config.FlagTradingConfigPort
+import cz.solvina.options.domain.features.flag.config.from
 import cz.solvina.options.domain.features.flag.model.FlagStatus
 import cz.solvina.options.domain.features.market.MarketDataTypeTracker
+import cz.solvina.options.domain.features.strategy.tuning.StrategyParamsResolver
 import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -53,7 +56,7 @@ class FlagScannerService(
     private val flagManagementService: FlagManagementService,
     private val flagTradingConfigPort: FlagTradingConfigPort,
     private val barStorePort: BarStorePort,
-    private val strategyConfig: FlagStrategyConfig,
+    private val paramsResolver: StrategyParamsResolver,
     private val connectionStatusPort: ConnectionStatusPort,
     private val universePort: UniversePort,
     private val scope: CoroutineScope,
@@ -68,6 +71,11 @@ class FlagScannerService(
 
     // When each symbol was last (re)subscribed — bounds watchdog resubscribe frequency (anti-leak).
     private val lastSubscribeAt = ConcurrentHashMap<Symbol, Instant>()
+
+    // Effective (descriptor -> global -> per-symbol) parameters each subscription is running with.
+    // Cached per symbol so the entry filters in maybeEnter cannot hit the DB on a breakout, and
+    // refreshed only by (re)subscribe and applyParams.
+    private val effectiveConfigs = ConcurrentHashMap<Symbol, FlagStrategyConfig>()
 
     // Serialises the open-position count check and order submission so two concurrent breakout
     // signals cannot both read below maxOpenPositions before either one persists PENDING.
@@ -206,18 +214,87 @@ class FlagScannerService(
         return !barLocal.isBefore(schedule.close.minusMinutes(config.entryBlockMinutesBeforeClose.toLong()))
     }
 
+    /**
+     * Re-resolves parameters and rebuilds the pattern detector for [symbols] (all subscribed symbols
+     * when null). This is what the UI's Apply button drives.
+     *
+     * The IBKR subscription is deliberately left alone — resubscribing would churn a market-data line
+     * and cost 5–10 minutes of blind time while [BarAggregator] waits for the next 5-minute boundary
+     * and then fills 60 bars. Only the detector is replaced, and the candle history is replayed into
+     * it so pattern state is re-derived under the new parameters rather than restarting from Idle.
+     *
+     * Returns the number of symbols rebuilt.
+     */
+    suspend fun applyParams(symbols: Collection<Symbol>? = null): Int {
+        val targets = (symbols ?: subscriptions.keys.toList()).filter { buffers.containsKey(it) }
+        targets.forEach { rebuildDetector(it) }
+        logger.info { "Flag scanner: applied parameters to ${targets.size} symbol(s): ${targets.map { it.value }}" }
+        return targets.size
+    }
+
+    /**
+     * Swaps in a detector built from freshly resolved parameters, replaying the existing candles.
+     *
+     * The buffer is rebuilt alongside it and fed incrementally, for the same reason the historical
+     * bootstrap does: replaying into an already-full buffer would make every onNewBar() see the same
+     * complete window and re-detect the same pole on every bar.
+     */
+    private suspend fun rebuildDetector(symbol: Symbol) {
+        val history = buffers[symbol]?.snapshot().orEmpty()
+        val config = resolveConfig(symbol)
+        val buffer = BarBuffer()
+        val detector = PatternDetector(symbol.value, buffer, config)
+        history.forEach { bar ->
+            buffer.add(bar)
+            detector.onNewBar(bar)
+        }
+        buffers[symbol] = buffer
+        detectors[symbol] = detector
+        logger.info {
+            "[${symbol.value}] Parameters applied over ${history.size} candles — pattern state: ${detector.state.label()}"
+        }
+    }
+
+    /**
+     * This symbol's effective parameters, cached for the entry filters.
+     *
+     * Falls back to the descriptor defaults if the tuning tables cannot be read. A transient DB blip
+     * must not stop the scanner, and the descriptor defaults are the vetted baseline rather than an
+     * arbitrary one — but it is logged at WARN, because trading on different parameters than the UI
+     * displays is exactly the confusion this layer exists to prevent.
+     */
+    private suspend fun resolveConfig(symbol: Symbol): FlagStrategyConfig {
+        val config =
+            runCatching { FlagStrategyConfig.from(paramsResolver.effectiveParams(FLAG_STRATEGY_ID, symbol.value)) }
+                .getOrElse { e ->
+                    logger.warn(e) { "[${symbol.value}] Could not resolve flag params (${e.message}) — using descriptor defaults" }
+                    FlagStrategyConfig.defaults()
+                }
+        effectiveConfigs[symbol] = config
+        return config
+    }
+
+    /** Parameters a subscribed symbol is currently running with; descriptor defaults if unsubscribed. */
+    internal fun configFor(symbol: Symbol): FlagStrategyConfig = effectiveConfigs[symbol] ?: FlagStrategyConfig.defaults()
+
     private fun subscribe(symbol: Symbol) {
         lastSubscribeAt[symbol] = Instant.now(clock)
         val aggregator = BarAggregator(symbol.value)
         val buffer = BarBuffer()
-        val detector = PatternDetector(symbol.value, buffer, strategyConfig)
 
         aggregators[symbol] = aggregator
         buffers[symbol] = buffer
-        detectors[symbol] = detector
 
         val job =
             scope.launch {
+                // Resolve this symbol's effective parameters first: the detector is built from them
+                // and every entry filter below reads them, so nothing may observe the symbol before
+                // they exist. Resolving here (not at construction) is what lets two symbols run the
+                // same strategy with different tuning.
+                val strategyConfig = resolveConfig(symbol)
+                val detector = PatternDetector(symbol.value, buffer, strategyConfig)
+                detectors[symbol] = detector
+
                 // Bootstrap with historical 5-min bars and replay through detector
                 runCatching {
                     val historical = equityHistoricalBarsPort.fetch5MinBars(symbol, strategyConfig.historicalBootstrapDays)
@@ -245,12 +322,18 @@ class FlagScannerService(
                         // Update high/low watermarks for any open position on this symbol
                         flagManagementService.updateWatermarksForSymbol(symbol, BigDecimal.valueOf(bar.close))
 
+                        // Read the detector and buffer from the maps rather than the locals captured
+                        // when this job started: applying new parameters swaps both (see
+                        // [rebuildDetector]) and a captured reference would keep feeding bars into
+                        // the discarded detector — the change would appear to save and do nothing.
+                        val liveDetector = detectors[symbol] ?: return@collect
+
                         // 1. Check for 5-min candle completion
                         val completed = aggregator.add(bar)
                         if (completed != null) {
                             barStorePort.writeBar(symbol, completed)
-                            buffer.add(completed)
-                            val state = detector.onNewBar(completed)
+                            buffers[symbol]?.add(completed)
+                            val state = liveDetector.onNewBar(completed)
                             if (state is PatternState.BreakoutReady) {
                                 maybeEnter(symbol, state, "FIVE_MIN", completed.time)
                             }
@@ -258,9 +341,9 @@ class FlagScannerService(
 
                         // 2. Also check breakout on live 5-sec bar close (sub-candle precision).
                         // Read state snapshot first — checkBreakoutOnLiveBar is pure (no mutation).
-                        val currentState = detector.state
+                        val currentState = liveDetector.state
                         if (currentState is PatternState.FlagForming) {
-                            val breakout = detector.checkBreakoutOnLiveBar(bar.close, currentState.pole, currentState.flag)
+                            val breakout = liveDetector.checkBreakoutOnLiveBar(bar.close, currentState.pole, currentState.flag)
                             if (breakout != null) {
                                 maybeEnter(symbol, breakout, "LIVE_BAR", bar.time)
                             }
@@ -284,6 +367,7 @@ class FlagScannerService(
     ) {
         scope.launch {
             val config = flagTradingConfigPort.get()
+            val strategyConfig = configFor(symbol)
 
             if (!config.enabled) {
                 logger.info { "[${symbol.value}] Breakout detected but scanner is paused — skipping" }
@@ -480,11 +564,24 @@ class FlagScannerService(
         val flagBars: Int?,
         val flagRetracementPct: Double?,
         val dataFeed: String,
+        /** True when this symbol runs parameters that differ from the saved global baseline. */
+        val customParams: Boolean,
+        /** Only the differing parameters, as `name -> "custom (default X)"`, for the hover detail. */
+        val customParamDetail: Map<String, String>,
     )
 
-    fun getScannerStatus(): List<SymbolScannerStatus> =
-        subscriptions.keys
+    suspend fun getScannerStatus(): List<SymbolScannerStatus> {
+        // One query for the whole table rather than one per row: the Candle Scanner polls this every
+        // 10 seconds and a per-symbol lookup would be 40 round trips a poll.
+        val overrides =
+            runCatching { paramsResolver.symbolsWithOverrides(FLAG_STRATEGY_ID) }
+                .getOrElse { e ->
+                    logger.warn { "Could not read flag param overrides for scanner status: ${e.message}" }
+                    emptyMap()
+                }
+        return subscriptions.keys
             .map { symbol ->
+                val symbolOverrides = overrides[symbol.value].orEmpty()
                 val buffer = buffers[symbol]
                 val lastCandle = buffer?.snapshot()?.lastOrNull()
                 val state = detectors[symbol]?.state ?: PatternState.Idle
@@ -498,8 +595,12 @@ class FlagScannerService(
                     flagBars = state.flag()?.bars?.size,
                     flagRetracementPct = state.flag()?.let { round1(it.retracement * 100) },
                     dataFeed = marketDataTypeTracker.feedFor(symbol).name,
+                    customParams = symbolOverrides.isNotEmpty(),
+                    customParamDetail =
+                        symbolOverrides.mapValues { (_, o) -> "${o.custom} (default ${o.inherited})" },
                 )
             }.sortedBy { it.symbol }
+    }
 
     private fun PatternState.label(): String =
         when (this) {

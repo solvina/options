@@ -11,5 +11,5 @@ class FlagScannerStatusController(
     private val flagScannerService: FlagScannerService,
 ) {
     @GetMapping("/status")
-    fun getStatus(): List<FlagScannerService.SymbolScannerStatus> = flagScannerService.getScannerStatus()
+    suspend fun getStatus(): List<FlagScannerService.SymbolScannerStatus> = flagScannerService.getScannerStatus()
 }

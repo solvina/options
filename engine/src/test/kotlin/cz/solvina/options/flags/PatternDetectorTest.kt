@@ -33,16 +33,12 @@ class PatternDetectorTest {
     // (volume=3000) produce a genuine spike above 1.5×volMa. With period=3 and only 2
     // pole bars it is mathematically impossible for any bar to spike above its own average.
     private val config =
-        FlagStrategyConfig(
+        FlagStrategyConfig.defaults().copy(
             atrPeriod = 3,
-            atrMultiplier = 2.0,
             volumeMaPeriod = 5,
-            volumeSpikeMultiplier = 1.5,
             poleMinBars = 2,
-            poleMaxBars = 10,
             flagMinBars = 3,
             flagMaxBars = 15,
-            maxRetracementPct = 0.50,
         )
 
     // Each call to next() advances the clock by one 5-minute bar.

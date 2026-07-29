@@ -1,5 +1,14 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { ParamFields } from '../components/strategy/ParamFields'
+import {
+  FLAG_STRATEGY_ID,
+  paramPrefill,
+  strategyParamsApi,
+  type StrategyParams,
+  type SymbolParams,
+} from '../components/strategy/params'
 import {
   listUniverseOptions,
   toggleInstrumentMutation,
@@ -127,6 +136,8 @@ function EditModal({
             />
           </label>
         </div>
+        <FlagParamsSection symbol={instrument.symbol} />
+
         <div className="flex justify-end gap-2 pt-2">
           <button className="px-4 py-1.5 text-sm rounded border border-border hover:bg-accent" onClick={onClose}>
             Cancel
@@ -144,9 +155,155 @@ function EditModal({
   )
 }
 
-function InstrumentRow({ inst }: { inst: InstrumentConfigDto }) {
+/**
+ * This symbol's bull-flag parameters, layered over the global baseline.
+ *
+ * Saved and reset independently of the spread overrides above: they live in a different store
+ * (strategy_symbol_params, not instrument_universe) and share only this dialog. Reset here deletes
+ * the row so the symbol inherits the baseline again — the per-symbol twin of the strategy page's
+ * Clear saved.
+ */
+function FlagParamsSection({ symbol }: { symbol: string }) {
+  const [meta, setMeta] = useState<StrategyParams | null>(null)
+  const [symbolValues, setSymbolValues] = useState<SymbolParams | null>(null)
+  const [form, setForm] = useState<Record<string, unknown>>({})
+  const [dirty, setDirty] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [note, setNote] = useState<string | null>(null)
+  const [open, setOpen] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    Promise.all([strategyParamsApi.get(FLAG_STRATEGY_ID), strategyParamsApi.getSymbol(FLAG_STRATEGY_ID, symbol)])
+      .then(([strategy, sym]) => {
+        if (cancelled) return
+        setMeta(strategy)
+        setSymbolValues(sym)
+        // A prefill handed over from the Candle Scanner wins over the stored values — that is the
+        // whole point of the link — but it is only filled in, never saved.
+        const prefill = paramPrefill.take(symbol)
+        setForm(prefill ?? sym.values)
+        if (prefill) {
+          setDirty(true)
+          setOpen(true)
+          setNote('Prefilled from the strategy form — press Save to store them for this symbol.')
+        }
+      })
+      .catch((e) => !cancelled && setError(String(e instanceof Error ? e.message : e)))
+    return () => {
+      cancelled = true
+    }
+  }, [symbol])
+
+  const overrideCount = Object.keys(symbolValues?.overrides ?? {}).length
+
+  async function save() {
+    setBusy(true)
+    setError(null)
+    try {
+      await strategyParamsApi.saveSymbol(FLAG_STRATEGY_ID, symbol, form)
+      setSymbolValues(await strategyParamsApi.getSymbol(FLAG_STRATEGY_ID, symbol))
+      setDirty(false)
+      setNote('Saved and applied to the running scanner.')
+    } catch (e) {
+      setError(String(e instanceof Error ? e.message : e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function reset() {
+    setBusy(true)
+    setError(null)
+    try {
+      await strategyParamsApi.resetSymbol(FLAG_STRATEGY_ID, symbol)
+      const refreshed = await strategyParamsApi.getSymbol(FLAG_STRATEGY_ID, symbol)
+      setSymbolValues(refreshed)
+      setForm(refreshed.values)
+      setDirty(false)
+      setNote('Custom values removed — this symbol follows the strategy defaults again.')
+    } catch (e) {
+      setError(String(e instanceof Error ? e.message : e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="border-t border-border pt-3 space-y-3">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center justify-between text-left"
+      >
+        <span className="flex items-center gap-2 text-sm font-medium">
+          Bull Flag parameters
+          {overrideCount > 0 && (
+            <span className="text-[11px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
+              {overrideCount} custom
+            </span>
+          )}
+        </span>
+        <span className="text-xs text-muted-foreground">{open ? 'hide ▲' : 'show ▼'}</span>
+      </button>
+
+      {open && (
+        <>
+          {error && <p className="text-sm text-destructive">{error}</p>}
+          {!meta && !error && <p className="text-sm text-muted-foreground">Loading…</p>}
+          {meta && (
+            <>
+              <ParamFields
+                descriptors={meta.descriptors}
+                values={form}
+                onChange={(name, value) => {
+                  setForm((f) => ({ ...f, [name]: value }))
+                  setDirty(true)
+                  setNote(null)
+                }}
+                dirtyAgainst={meta.values}
+                disabled={busy}
+                columns="grid-cols-2"
+              />
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs text-muted-foreground">{note ?? ''}</span>
+                <div className="flex gap-2">
+                  <button
+                    onClick={reset}
+                    disabled={busy || overrideCount === 0}
+                    title="Delete this symbol's custom values and follow the strategy defaults"
+                    className="px-3 py-1 text-xs rounded border border-border hover:bg-accent disabled:opacity-40"
+                  >
+                    Reset to defaults
+                  </button>
+                  <button
+                    onClick={save}
+                    disabled={busy || !dirty}
+                    className="px-3 py-1 text-xs rounded bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50"
+                  >
+                    {busy ? 'Saving…' : 'Save flag params'}
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+function InstrumentRow({
+  inst,
+  autoEdit = false,
+  onEditorClosed,
+}: {
+  inst: InstrumentConfigDto
+  autoEdit?: boolean
+  onEditorClosed?: () => void
+}) {
   const qc = useQueryClient()
-  const [editing, setEditing] = useState(false)
+  const [editing, setEditing] = useState(autoEdit)
   const [confirmDelete, setConfirmDelete] = useState(false)
 
   const toggle = useMutation({
@@ -163,7 +320,16 @@ function InstrumentRow({ inst }: { inst: InstrumentConfigDto }) {
 
   return (
     <>
-      {editing && <EditModal instrument={inst} onClose={() => setEditing(false)} />}
+      {editing && (
+        <EditModal
+          instrument={inst}
+          onClose={() => {
+            setEditing(false)
+            // Drop the deep-link parameter so a refresh does not reopen the dialog.
+            onEditorClosed?.()
+          }}
+        />
+      )}
       <tr className="border-b border-border hover:bg-muted/30 transition-colors text-sm">
         <td className="px-3 py-2 font-mono font-medium">{inst.symbol}</td>
         <td className="px-3 py-2">
@@ -245,6 +411,9 @@ function InstrumentRow({ inst }: { inst: InstrumentConfigDto }) {
 
 export function UniversePage() {
   const { data, isLoading, error } = useQuery(listUniverseOptions())
+  // ?symbol=X opens that row's editor straight away — how the Candle Scanner's Tune link arrives.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const deepLinkSymbol = searchParams.get('symbol')?.toUpperCase() ?? null
   const qc = useQueryClient()
   const [addSymbol, setAddSymbol] = useState('')
   const { sort, toggle } = usePersistentSortable('universe', 'symbol')
@@ -320,7 +489,12 @@ export function UniversePage() {
             </thead>
             <tbody>
               {sortedInstruments.map((inst) => (
-                <InstrumentRow key={inst.symbol} inst={inst} />
+                <InstrumentRow
+                  key={inst.symbol}
+                  inst={inst}
+                  autoEdit={inst.symbol === deepLinkSymbol}
+                  onEditorClosed={() => deepLinkSymbol && setSearchParams({}, { replace: true })}
+                />
               ))}
             </tbody>
           </table>

@@ -24,15 +24,7 @@ import cz.solvina.options.domain.models.Symbol
  * What a strategy must **never** do inside [decide]: read a clock, touch the network or DB, or
  * mutate anything a host owns.
  */
-interface StockStrategy {
-    /** Stable identifier, persisted on runs, assignments and positions. Never rename in place. */
-    val id: String
-
-    val displayName: String
-
-    /** Declares the tunable surface — drives validation, the sweep grid and the generic UI form. */
-    val params: List<ParamDescriptor>
-
+interface StockStrategy : TunableStrategy {
     /** Declares what data the strategy consumes, so a host can refuse what it cannot honestly feed. */
     val inputs: StrategyInputs
 

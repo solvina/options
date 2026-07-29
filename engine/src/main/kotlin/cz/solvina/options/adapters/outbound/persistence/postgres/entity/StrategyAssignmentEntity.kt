@@ -8,10 +8,10 @@ import java.time.Instant
 import java.util.UUID
 
 /**
- * One strategy running on one symbol at one timeframe, with optional parameter overrides.
+ * One strategy running on one symbol at one timeframe.
  *
- * [paramsJson] null means "use the strategy's descriptor defaults" — distinct from an empty object
- * only in intent, but the UI shows the difference between "not configured" and "configured empty".
+ * Parameters are not here: they live in `strategy_default_params` / `strategy_symbol_params`, so
+ * every strategy family is tuned through one path. The `params_json` column was dropped in v38.
  */
 @Entity
 @Table(name = "strategy_assignment")
@@ -24,8 +24,6 @@ class StrategyAssignmentEntity(
     var symbol: String = "",
     @Column(columnDefinition = "TEXT", nullable = false)
     var timeframe: String = "1d",
-    @Column(name = "params_json", columnDefinition = "TEXT")
-    var paramsJson: String? = null,
     @Column(nullable = false)
     var enabled: Boolean = false,
     @Column(name = "created_at", nullable = false)

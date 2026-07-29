@@ -7,11 +7,13 @@ import java.util.UUID
 
 /**
  * The managed layer of the strategy platform: which [strategyId] runs on which [symbol], at which
- * [timeframe], with which parameter overrides.
+ * [timeframe].
  *
- * [paramOverrides] is null when nothing has been overridden — the strategy's descriptor defaults
- * apply in full. Resolution is overrides-over-defaults, the same shape spreads already use
- * (`inst?.ivRankThreshold ?: config.ivRankThreshold`) generalised to a params blob.
+ * Parameters are NOT stored here. They live in the shared tuning tables
+ * (`strategy_default_params` / `strategy_symbol_params`) and are resolved by
+ * [cz.solvina.options.domain.features.strategy.tuning.StrategyParamsResolver], so one strategy is
+ * tuned in one place whether or not it happens to have an assignment row — the flag strategy has
+ * none, because its enablement is `instrument_universe.flag_enabled`.
  *
  * [enabled] is the live on/off switch. It gates the runner only; a disabled assignment is still
  * backtestable and still owns any historical positions attributed to it.
@@ -21,7 +23,6 @@ data class StrategyAssignment(
     val strategyId: String,
     val symbol: Symbol,
     val timeframe: Timeframe,
-    val paramOverrides: Map<String, Any?>?,
     val enabled: Boolean,
     val createdAt: Instant,
     val updatedAt: Instant,

@@ -5,11 +5,11 @@ import cz.solvina.options.domain.features.account.EffectiveAccountService
 import cz.solvina.options.domain.features.bars.AtrCalculator
 import cz.solvina.options.domain.features.bars.BarStorePort
 import cz.solvina.options.domain.features.strategy.StrategyContext
-import cz.solvina.options.domain.features.strategy.StrategyParams
 import cz.solvina.options.domain.features.strategy.StrategyRegistry
 import cz.solvina.options.domain.features.strategy.StrategyWarmup
 import cz.solvina.options.domain.features.strategy.assignment.StrategyAssignment
 import cz.solvina.options.domain.features.strategy.assignment.StrategyAssignmentPort
+import cz.solvina.options.domain.features.strategy.tuning.StrategyParamsResolver
 import cz.solvina.options.domain.features.universe.UniversePort
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.stereotype.Service
@@ -42,6 +42,7 @@ class StockStrategyRunner(
     private val universe: UniversePort,
     private val effectiveAccount: EffectiveAccountService,
     private val config: StockStrategyConfig,
+    private val paramsResolver: StrategyParamsResolver,
     private val mapper: ObjectMapper,
 ) {
     /**
@@ -97,7 +98,10 @@ class StockStrategyRunner(
             return null
         }
 
-        val resolved = StrategyParams.resolve(template.params, assignment.paramOverrides ?: emptyMap())
+        // Resolved through the shared tuning layer (descriptor defaults -> strategy_default_params
+        // -> strategy_symbol_params) rather than from the assignment row, so a live run and the
+        // Strategy Parameters screen can never disagree about what this symbol is trading.
+        val resolved = paramsResolver.effectiveParams(assignment.strategyId, symbol.value, assignment.timeframe.label)
         template.validate(resolved)?.let {
             logger.warn { "[${symbol.value}] ${assignment.strategyId} params invalid: $it — skipped" }
             return null

@@ -30,17 +30,21 @@ class FlagBacktestStrategySizingTest {
     private val et = ZoneId.of("America/New_York")
 
     // Compact periods (same as PatternDetectorTest) so a valid pattern forms in 10 bars.
+    //
+    // The entry-quality filters are switched off deliberately: these cases assert SIZING, and the
+    // 10-bar synthetic series cannot satisfy a 90-minute calm period or a 1.5×ATR pole. Leaving the
+    // real defaults on would make every case fail for a reason that has nothing to do with sizing.
     private val config =
-        FlagStrategyConfig(
+        FlagStrategyConfig.defaults().copy(
             atrPeriod = 3,
-            atrMultiplier = 2.0,
             volumeMaPeriod = 5,
-            volumeSpikeMultiplier = 1.5,
             poleMinBars = 2,
-            poleMaxBars = 10,
             flagMinBars = 3,
             flagMaxBars = 15,
-            maxRetracementPct = 0.50,
+            skipFirstRthMinutes = 0,
+            minFlagpoleAtrMultiple = 0.0,
+            minFlagRetracementPct = 0.0,
+            minFlagBarsForEntry = 1,
         )
     private val trading = FlagTradingConfig(maxOpenPositions = 3, entryBlockMinutesBeforeClose = 0)
 

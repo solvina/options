@@ -1,7 +1,5 @@
 package cz.solvina.options.adapters.outbound.persistence.postgres
 
-import com.fasterxml.jackson.databind.ObjectMapper
-import com.fasterxml.jackson.module.kotlin.readValue
 import cz.solvina.options.adapters.outbound.persistence.postgres.entity.StrategyAssignmentEntity
 import cz.solvina.options.adapters.outbound.persistence.postgres.repository.StrategyAssignmentRepository
 import cz.solvina.options.domain.features.bars.Timeframe
@@ -23,7 +21,6 @@ private val logger = KotlinLogging.logger {}
 @Component
 class StrategyAssignmentPersistenceAdapter(
     private val repository: StrategyAssignmentRepository,
-    private val mapper: ObjectMapper,
 ) : StrategyAssignmentPort {
     override fun findAll(): List<StrategyAssignment> = repository.findAll().map { it.toDomain() }
 
@@ -49,7 +46,6 @@ class StrategyAssignmentPersistenceAdapter(
                 strategyId = assignment.strategyId
                 symbol = assignment.symbol.value
                 timeframe = assignment.timeframe.label
-                paramsJson = assignment.paramOverrides?.let { mapper.writeValueAsString(it) }
                 enabled = assignment.enabled
                 updatedAt = now
             }
@@ -74,14 +70,6 @@ class StrategyAssignmentPersistenceAdapter(
             strategyId = strategyId,
             symbol = Symbol(symbol),
             timeframe = Timeframe.fromLabel(timeframe),
-            // A params blob that no longer parses (hand-edited row, format change) must not take the
-            // whole runner down — fall back to descriptor defaults and say so.
-            paramOverrides =
-                paramsJson?.let {
-                    runCatching { mapper.readValue<Map<String, Any?>>(it) }
-                        .onFailure { e -> logger.warn { "Assignment $id has unreadable params_json, using defaults: ${e.message}" } }
-                        .getOrNull()
-                },
             enabled = enabled,
             createdAt = createdAt,
             updatedAt = updatedAt,

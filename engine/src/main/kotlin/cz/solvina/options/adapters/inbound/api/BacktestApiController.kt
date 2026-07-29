@@ -8,9 +8,12 @@ import cz.solvina.options.adapters.outbound.persistence.postgres.repository.Back
 import cz.solvina.options.domain.features.backtest.BacktestEngine
 import cz.solvina.options.domain.features.backtest.FlagBacktestStrategy
 import cz.solvina.options.domain.features.bars.BarStorePort
+import cz.solvina.options.domain.features.flag.config.FLAG_STRATEGY_ID
 import cz.solvina.options.domain.features.flag.config.FlagStrategyConfig
 import cz.solvina.options.domain.features.flag.config.FlagTradingConfig
+import cz.solvina.options.domain.features.flag.config.from
 import cz.solvina.options.domain.features.flag.model.FlagPosition
+import cz.solvina.options.domain.features.strategy.tuning.StrategyParamsResolver
 import cz.solvina.options.domain.models.Symbol
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -32,7 +35,7 @@ import java.util.UUID
 @RequestMapping("/backtest")
 class BacktestApiController(
     private val barStore: BarStorePort,
-    private val strategyConfig: FlagStrategyConfig,
+    private val paramsResolver: StrategyParamsResolver,
     private val runRepository: BacktestRunRepository,
     private val objectMapper: ObjectMapper,
 ) {
@@ -147,6 +150,11 @@ class BacktestApiController(
                 enabled = true,
                 entryBlockMinutesBeforeClose = request.entryBlockMinutesBeforeClose,
             )
+        // Backtests start from the saved global baseline (what an un-overridden symbol trades) and
+        // let the request override any filter explicitly. Per-symbol overrides are deliberately NOT
+        // applied: a multi-symbol run must compare symbols under one parameter set, or the result
+        // measures the tuning rather than the strategy.
+        val strategyConfig = FlagStrategyConfig.from(paramsResolver.globalParams(FLAG_STRATEGY_ID))
         val effectiveStrategyConfig =
             strategyConfig.copy(
                 skipFirstRthMinutes = request.skipFirstRthMinutes ?: strategyConfig.skipFirstRthMinutes,

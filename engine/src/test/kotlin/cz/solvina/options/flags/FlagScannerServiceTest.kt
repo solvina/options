@@ -14,9 +14,13 @@ import cz.solvina.options.domain.features.flag.FlagPort
 import cz.solvina.options.domain.features.flag.FlagScannerService
 import cz.solvina.options.domain.features.flag.PatternDetector
 import cz.solvina.options.domain.features.flag.config.FlagStrategyConfig
+import cz.solvina.options.domain.features.flag.config.FlagStrategyDescriptors
 import cz.solvina.options.domain.features.flag.config.FlagTradingConfig
 import cz.solvina.options.domain.features.flag.config.FlagTradingConfigPort
+import cz.solvina.options.domain.features.flag.config.toParams
 import cz.solvina.options.domain.features.market.MarketDataTypeTracker
+import cz.solvina.options.domain.features.strategy.StrategyParams
+import cz.solvina.options.domain.features.strategy.tuning.StrategyParamsResolver
 import cz.solvina.options.domain.features.universe.MarketSchedule
 import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.models.Symbol
@@ -51,7 +55,7 @@ class FlagScannerServiceTest {
     private val aapl = Symbol("AAPL")
     private val sap = Symbol("SAP")
 
-    private val strategyConfig = FlagStrategyConfig()
+    private val strategyConfig = FlagStrategyConfig.defaults()
     private val tradingConfig =
         FlagTradingConfig(
             entryBlockMinutesBeforeClose = 5,
@@ -99,6 +103,13 @@ class FlagScannerServiceTest {
             every { getMarketSchedule(sap) } returns euSchedule
         }
 
+    // Stubs the tuning layer so the service under test resolves exactly the config a case asks for.
+    private fun resolverReturning(config: FlagStrategyConfig): StrategyParamsResolver =
+        mockk(relaxed = true) {
+            coEvery { effectiveParams(any(), any(), any()) } returns
+                StrategyParams.resolve(FlagStrategyDescriptors().params, config.toParams())
+        }
+
     private val testDispatcher = StandardTestDispatcher()
     private val testScope = TestScope(testDispatcher)
 
@@ -114,7 +125,7 @@ class FlagScannerServiceTest {
         flagManagementService = flagManagementService,
         flagTradingConfigPort = flagTradingConfigPort,
         barStorePort = barStorePort,
-        strategyConfig = config,
+        paramsResolver = resolverReturning(config),
         connectionStatusPort = mockk(relaxed = true),
         universePort = universePort,
         symbolMutexManager = mockk(relaxed = true),
@@ -304,16 +315,12 @@ class FlagScannerServiceTest {
             // Small detection parameters (mirrors PatternDetectorTest) so a compact, deterministic
             // series forms exactly one flagpole that consolidates into a flag.
             val detectConfig =
-                FlagStrategyConfig(
+                FlagStrategyConfig.defaults().copy(
                     atrPeriod = 3,
-                    atrMultiplier = 2.0,
                     volumeMaPeriod = 5,
-                    volumeSpikeMultiplier = 1.5,
                     poleMinBars = 2,
-                    poleMaxBars = 10,
                     flagMinBars = 3,
                     flagMaxBars = 15,
-                    maxRetracementPct = 0.50,
                 )
 
             // 4 flat base bars → 2 pole bars (height 7, volume spike) → 3 consolidation bars.

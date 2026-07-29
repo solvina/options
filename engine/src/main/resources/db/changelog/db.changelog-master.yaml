@@ -63,3 +63,5 @@ databaseChangeLog:
       file: db/changelog/v36__strategy_assignment.yaml
   - include:
       file: db/changelog/v37__stock_position.yaml
+  - include:
+      file: db/changelog/v38__strategy_params.yaml
