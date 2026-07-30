@@ -497,7 +497,12 @@ class SpreadManagementService(
                 // Capture the underlying spot in the same cycle so the API can show a current price
                 // and distance-to-short-strike for open positions. Non-fatal: a missing spot keeps
                 // the prior stored value rather than blocking the value update.
-                val underlyingNow = runCatching { marketDataPort.getUnderlyingPrice(spread.symbol).amount }.getOrNull()
+                // Prefer the underlying IBKR already ships on the held legs' option-computation
+                // ticks — this is display/telemetry only, and reading it costs no market-data line,
+                // where the snapshot fallback burns one subscribe→cancel per position per cycle.
+                val underlyingNow =
+                    marketDataPort.streamedUnderlyingPrice(spread.symbol)?.amount
+                        ?: runCatching { marketDataPort.getUnderlyingPrice(spread.symbol).amount }.getOrNull()
                 closers.forSpread(spread).recordLastValue(spread, currentSpreadValue, underlyingNow)
             } else {
                 logger.debug { "[${spread.symbol}] No live option quotes — skipping price-based exit checks this cycle (DTE=$dte)" }

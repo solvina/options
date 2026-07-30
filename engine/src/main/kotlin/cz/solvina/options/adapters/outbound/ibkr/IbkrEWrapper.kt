@@ -168,7 +168,7 @@ class IbkrEWrapper(
                 "undPrice" to undPrice,
             )
         }
-        marketDataRegistry.onTickOptionComputation(tickerId, field, impliedVol, delta, gamma, vega, theta)
+        marketDataRegistry.onTickOptionComputation(tickerId, field, impliedVol, delta, gamma, vega, theta, undPrice)
     }
 
     override fun tickGeneric(

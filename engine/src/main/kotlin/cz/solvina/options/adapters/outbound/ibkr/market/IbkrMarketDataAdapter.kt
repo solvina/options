@@ -152,4 +152,22 @@ class IbkrMarketDataAdapter(
         val mid = midPrice(snap.bid, snap.ask)
         return if (mid > BigDecimal.ZERO) Money(mid) else null
     }
+
+    // Spot for free off the leg streams: IBKR's option computation tick carries the underlying it
+    // priced the greeks against, so a symbol with held legs already has spot on the wire. Any leg of
+    // the symbol will do — they all reference the same underlying — so take the freshest reading.
+    override fun streamedUnderlyingPrice(symbol: Symbol): Money? {
+        val now = Instant.now()
+        val freshest =
+            positionStreams
+                .entries
+                .asSequence()
+                .filter { it.key.symbol == symbol }
+                .mapNotNull { registry.getPendingContinuousMarketDataSnapshot(it.value) }
+                .filter { it.underlyingPrice > 0 && it.underlyingPriceAsOf != null }
+                .filter { Duration.between(it.underlyingPriceAsOf, now).toMillis() <= POSITION_STREAM_STALENESS_MS }
+                .maxByOrNull { it.underlyingPriceAsOf!! }
+                ?: return null
+        return Money(BigDecimal(freshest.underlyingPrice).setScale(2, RoundingMode.HALF_UP))
+    }
 }

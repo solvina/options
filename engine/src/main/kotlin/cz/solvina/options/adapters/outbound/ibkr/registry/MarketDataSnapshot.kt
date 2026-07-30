@@ -12,5 +12,12 @@ data class MarketDataSnapshot(
     val gamma: Double = Double.NaN,
     val vega: Double = Double.NaN,
     val theta: Double = Double.NaN,
+    // Underlying price IBKR used to compute the greeks above, delivered free on every option
+    // computation tick (tickOptionComputation's last argument). Lets a held option-leg stream
+    // report its underlying's spot without a second market-data line. NaN on non-option requests.
+    val underlyingPrice: Double = Double.NaN,
+    // Separate from [asOf] on purpose: bid/ask ticks refresh asOf without carrying undPrice, so a
+    // shared timestamp would make a stale underlying look fresh whenever quotes keep ticking.
+    val underlyingPriceAsOf: Instant? = null,
     val asOf: Instant = Instant.now(),
 )

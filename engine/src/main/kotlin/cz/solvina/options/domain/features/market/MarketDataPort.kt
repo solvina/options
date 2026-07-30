@@ -34,4 +34,18 @@ interface MarketDataPort {
     suspend fun reconcilePositionQuoteStreams(contracts: List<OptionContract>) {}
 
     fun streamedOptionMid(contract: OptionContract): Money? = null
+
+    /**
+     * Spot for [symbol] read off an already-open position leg stream, or null when no fresh reading
+     * exists. IBKR ships the underlying price it priced the greeks against on every option
+     * computation tick, so a symbol with held leg streams already has spot on the wire — reading it
+     * here costs no extra market-data line and replaces a per-cycle subscribe→read→cancel snapshot.
+     *
+     * This is IBKR's model input, not a stock-farm last trade: it tracks spot to within a few cents
+     * and only refreshes when a computation tick fires. Fine for display/telemetry
+     * ([cz.solvina.options.domain.features.spread.SpreadCloser.recordLastValue]); callers whose exit
+     * decision turns on spot should keep using [getUnderlyingPrice]. Default null leaves
+     * test/backtest adapters on the snapshot path; the IBKR adapter overrides.
+     */
+    fun streamedUnderlyingPrice(symbol: Symbol): Money? = null
 }

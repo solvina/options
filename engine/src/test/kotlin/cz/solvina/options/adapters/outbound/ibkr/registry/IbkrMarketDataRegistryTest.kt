@@ -8,6 +8,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -195,5 +196,65 @@ class IbkrMarketDataRegistryTest {
         assertNull(registry.getSymbolForMarketData(1))
         assertNull(registry.getSymbolForMarketData(2))
         assertNull(registry.getSymbolForMarketData(3))
+    }
+
+    /**
+     * IBKR ships the underlying it priced the greeks against on every option computation tick.
+     * Capturing it lets a held leg stream report its symbol's spot with no extra market-data line,
+     * replacing the exit monitor's per-cycle subscribe→read→cancel underlying snapshot.
+     */
+    @Test
+    fun `option computation tick captures the underlying price on a continuous stream`() {
+        val reqId = 42
+        registry.addPendingContinuousMarketDataRequest(reqId, symbol, onUpdate = {})
+
+        registry.onTickOptionComputation(
+            reqId,
+            field = 13,
+            impliedVol = 0.64,
+            delta = -0.12,
+            gamma = 0.003,
+            vega = 0.20,
+            theta = -0.14,
+            underlyingPrice = 495.30,
+        )
+
+        val snapshot = registry.getPendingContinuousMarketDataSnapshot(reqId)!!
+        assertEquals(495.30, snapshot.underlyingPrice)
+        assertNotNull(snapshot.underlyingPriceAsOf, "a real reading must stamp its own timestamp")
+    }
+
+    @Test
+    fun `a tick without a usable underlying price does not blank the last good reading`() {
+        val reqId = 42
+        registry.addPendingContinuousMarketDataRequest(reqId, symbol, onUpdate = {})
+
+        registry.onTickOptionComputation(
+            reqId,
+            field = 13,
+            impliedVol = 0.64,
+            delta = -0.12,
+            gamma = 0.003,
+            vega = 0.20,
+            theta = -0.14,
+            underlyingPrice = 495.30,
+        )
+        val stampedAt = registry.getPendingContinuousMarketDataSnapshot(reqId)!!.underlyingPriceAsOf
+
+        // A BID/ASK computation that omits undPrice arrives as the sentinel — it must be ignored.
+        registry.onTickOptionComputation(
+            reqId,
+            field = 10,
+            impliedVol = 0.64,
+            delta = -0.12,
+            gamma = 0.003,
+            vega = 0.20,
+            theta = -0.14,
+            underlyingPrice = Double.MAX_VALUE,
+        )
+
+        val snapshot = registry.getPendingContinuousMarketDataSnapshot(reqId)!!
+        assertEquals(495.30, snapshot.underlyingPrice, "sentinel undPrice must not overwrite a real reading")
+        assertEquals(stampedAt, snapshot.underlyingPriceAsOf, "and must not refresh its freshness stamp")
     }
 }

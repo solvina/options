@@ -179,10 +179,12 @@ class IbkrMarketDataRegistry(
         gamma: Double,
         vega: Double,
         theta: Double,
+        underlyingPrice: Double = Double.NaN,
     ) {
         if (normalizeDelayedOptionComputationField(field) !in 10..13) return
         val sentinel = Double.MAX_VALUE
         val now = Instant.now()
+        val undPriceUsable = !underlyingPrice.isNaN() && underlyingPrice != sentinel && underlyingPrice > 0
 
         fun MarketDataSnapshot.withGreeks() =
             copy(
@@ -191,6 +193,10 @@ class IbkrMarketDataRegistry(
                 gamma = if (!gamma.isNaN() && gamma != sentinel) gamma else this.gamma,
                 vega = if (!vega.isNaN() && vega != sentinel) vega else this.vega,
                 theta = if (!theta.isNaN() && theta != sentinel) theta else this.theta,
+                // IBKR sends undPrice on BID/ASK/LAST/MODEL computations alike; keep the last real
+                // value so a tick that omits it (sentinel/NaN) does not blank a good reading.
+                underlyingPrice = if (undPriceUsable) underlyingPrice else this.underlyingPrice,
+                underlyingPriceAsOf = if (undPriceUsable) now else this.underlyingPriceAsOf,
                 asOf = now,
             )
 

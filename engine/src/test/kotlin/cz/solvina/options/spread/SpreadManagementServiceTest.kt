@@ -145,6 +145,7 @@ class SpreadManagementServiceTest {
     private fun mockMarketData(): MarketDataPort =
         mockk<MarketDataPort>().also {
             every { it.streamedOptionMid(any()) } returns null
+            every { it.streamedUnderlyingPrice(any()) } returns null
             coEvery { it.reconcilePositionQuoteStreams(any()) } returns Unit
         }
 
@@ -160,7 +161,10 @@ class SpreadManagementServiceTest {
     ): SpreadManagementService {
         // New MarketDataPort stream methods (2026-07-21): default to snapshot-fallback (null) and a
         // no-op reconcile so the existing per-contract getOptionMidLive stubs drive every test.
+        // streamedUnderlyingPrice (2026-07-30) defaults to null for the same reason — tests assert
+        // against the getUnderlyingPrice stubs, not the leg stream's piggybacked spot.
         every { marketDataPort.streamedOptionMid(any()) } returns null
+        every { marketDataPort.streamedUnderlyingPrice(any()) } returns null
         coEvery { marketDataPort.reconcilePositionQuoteStreams(any()) } returns Unit
         return SpreadManagementService(
             closers = buildClosers(spreadPort),
