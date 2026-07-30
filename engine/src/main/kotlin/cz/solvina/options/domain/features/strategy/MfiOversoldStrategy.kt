@@ -19,19 +19,21 @@ import cz.solvina.options.domain.models.Symbol
  * the time but returns +0.174R. Hence the defaults here. [Params.targetLastHigh] keeps the original
  * rule available as a comparison arm so a sweep can show the difference rather than assert it.
  *
- * ### Why the entry is a limit and not a market order
+ * ### Why the entry is a limit, and why the tolerance defaults to zero
  * Live, the signal is computed after the close and the order rests for the next session, so this
- * emits a limit at `close + limitToleranceAtr x ATR` rather than the close itself. Entering at the
- * next open instead of the signal close costs about 8% of the edge (+0.174R -> +0.160R) — a haircut
- * worth paying to keep the backtest and the live host filling identically. Tolerance matters mostly
- * through fill *rate*, not fill quality: expectancy per filled trade is flat (+0.157..+0.165R) at
- * every tolerance, so a tight limit does not select better trades, it just declines good ones. At
- * 1.0 ATR the fill rate is 98% and per-signal expectancy is within 0.6% of an unconditional market
- * order, while still capping what an overnight news gap can make us pay.
+ * emits a limit rather than a close-price fill. Entering at the next open instead of the signal
+ * close costs about 8% of the edge — a haircut worth paying to keep the backtest and the live host
+ * filling identically.
  *
- * NOTE for the live host: [Params.limitToleranceAtr] is already baked into the emitted
- * [Decision.entryPrice]. `stock-strategies.limit-tolerance-atr-multiple` must be 0 for this
- * strategy or the runner adds its tolerance a second time.
+ * [Params.limitToleranceAtr] defaults to **0.0** despite an idealised probe favouring 1.0, because
+ * of where the bracket is anchored. A [Decision] carries absolute stop and target *prices*, fixed
+ * at signal time off [Decision.entryPrice] — they do not follow the fill. Widen the limit and the
+ * fill routinely lands below it (a gap-down fills at the open), so the stop ends up further from
+ * the fill than intended and the target nearer, silently degrading the bracket. It is measurable:
+ * across 25 symbols 2015-2026, avgLossR drifts -0.90 -> -0.47 and the win rate 25% -> 15% as
+ * tolerance goes 0.0 -> 1.0, purely from that anchoring. The probe assumed a bracket measured from
+ * the fill; until the bracket is derived from the fill (the [Decision] doc's `PositionSizer` seam)
+ * a tolerance above zero is a loss, not a gain.
  */
 class MfiOversoldStrategy(
     private val p: Params = Params(),
@@ -40,8 +42,11 @@ class MfiOversoldStrategy(
     data class Params(
         val mfiPeriod: Int = 14,
         val mfiThreshold: Double = 10.0,
-        /** Limit offset above the signal close, in ATR. 0 = a limit exactly at the close. */
-        val limitToleranceAtr: Double = 1.0,
+        /**
+         * Limit offset above the signal close, in ATR. 0 (the default, and the only value that
+         * currently helps) rests the limit exactly at the close — see the class doc on anchoring.
+         */
+        val limitToleranceAtr: Double = 0.0,
         val atrPeriod: Int = 14,
         val stopAtrMultiple: Double = 1.5,
         val targetAtrMultiple: Double = 3.0,
@@ -67,10 +72,10 @@ class MfiOversoldStrategy(
             ParamDescriptor(
                 "limitToleranceAtr",
                 ParamType.DOUBLE,
-                1.0,
+                0.0,
                 0.0,
                 group = "Entry",
-                help = "Entry limit = close + this x ATR. Higher fills more often; 0 = limit at the close.",
+                help = "Entry limit = close + this x ATR. Fills more often, but the bracket is anchored to the limit, not the fill.",
             ),
             ParamDescriptor("atrPeriod", ParamType.INT, 14, min = 1.0, group = "Exit", help = "Wilder ATR lookback."),
             ParamDescriptor("stopAtrMultiple", ParamType.DOUBLE, 1.5, 0.0, group = "Exit", help = "> 0 overrides stopLossPct."),
