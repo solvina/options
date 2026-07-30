@@ -52,6 +52,7 @@ class IbkrMarketDataAdapter(
             marketSnapshotHelper.reqMktDataSnapshot(
                 symbol,
                 contractFactory.stockContract(symbol),
+                "underlying price (scanner/exit/strategy pricing)",
                 SnapshotReady.STOCK_PRICE,
             )
         val price = snapshot.last.takeIf { it > 0 } ?: snapshot.close.takeIf { it > 0 }
@@ -70,6 +71,7 @@ class IbkrMarketDataAdapter(
             marketSnapshotHelper.reqMktDataSnapshot(
                 contract.symbol,
                 contractFactory.optionContract(contract),
+                "option live mid (exit/close decision, no BS fallback)",
                 SnapshotReady.OPTION_PRICE,
             )
         val mid = midPrice(snapshot.bid, snapshot.ask)
@@ -83,6 +85,7 @@ class IbkrMarketDataAdapter(
             marketSnapshotHelper.reqMktDataSnapshot(
                 contract.symbol,
                 contractFactory.optionContract(contract),
+                "option mid (reporting, BS/historical fallback allowed)",
                 SnapshotReady.OPTION_PRICE,
             )
         val mid = midPrice(snapshot.bid, snapshot.ask)

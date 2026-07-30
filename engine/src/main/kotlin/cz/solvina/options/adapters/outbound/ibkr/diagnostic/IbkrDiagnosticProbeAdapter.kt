@@ -127,6 +127,7 @@ class IbkrDiagnosticProbeAdapter(
                 marketSnapshotHelper.reqMktDataSnapshot(
                     symbol,
                     contractFactory.stockContract(symbol),
+                    "DIAG manual health probe (stock spot)",
                     SnapshotReady.STOCK_PRICE,
                 )
             val ms = System.currentTimeMillis() - start
@@ -165,6 +166,7 @@ class IbkrDiagnosticProbeAdapter(
             marketSnapshotHelper.reqMktDataSnapshot(
                 contract.symbol,
                 contractFactory.optionContract(contract),
+                "DIAG manual health probe (option quote)",
                 SnapshotReady.OPTION_QUOTE,
             )
         val ms = System.currentTimeMillis() - start
@@ -191,6 +193,7 @@ class IbkrDiagnosticProbeAdapter(
                         marketSnapshotHelper.reqMktDataSnapshot(
                             contract.symbol,
                             stock,
+                            "DIAG BS-fallback spot lookup (option probe had no live quote)",
                             SnapshotReady.STOCK_PRICE,
                         )
                     snap.last.takeIf { !it.isNaN() } ?: snap.close.takeIf { !it.isNaN() }

@@ -209,6 +209,7 @@ class IbkrOptionChainAdapter(
                 marketSnapshotHelper.reqMktDataSnapshot(
                     symbol,
                     mdContract,
+                    "scanner candidate-strike greeks ($requestDesc)",
                     SnapshotReady.OPTION_QUOTE,
                 )
 

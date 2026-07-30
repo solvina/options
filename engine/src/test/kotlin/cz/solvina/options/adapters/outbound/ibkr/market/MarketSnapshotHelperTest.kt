@@ -41,7 +41,7 @@ class MarketSnapshotHelperTest {
     @Test
     fun `reqMktDataSnapshot returns a snapshot instead of throwing when isReady completes fast`() =
         runTest {
-            val result = async { helper.reqMktDataSnapshot(symbol, contract, isReady = optionReady) }
+            val result = async { helper.reqMktDataSnapshot(symbol, contract, purpose = "test", isReady = optionReady) }
             runCurrent()
 
             // Ticks satisfy optionReady, so the registry's completeIfReady() resolves AND removes
@@ -69,7 +69,7 @@ class MarketSnapshotHelperTest {
     @Test
     fun `reqMktDataSnapshot returns the partial snapshot instead of throwing on graceful-degradation error codes`() =
         runTest {
-            val result = async { helper.reqMktDataSnapshot(symbol, contract, isReady = optionReady) }
+            val result = async { helper.reqMktDataSnapshot(symbol, contract, purpose = "test", isReady = optionReady) }
             runCurrent()
 
             // 354 = no live subscription — IBKR does not send tickSnapshotEnd for it, so the

@@ -54,16 +54,21 @@ class MarketSnapshotHelper(
     suspend fun reqMktDataSnapshot(
         symbol: Symbol,
         contract: Contract,
+        purpose: String,
         isReady: (MarketDataSnapshot) -> Boolean,
-    ): MarketDataSnapshot = reqMktDataSnapshot(symbol, contract, "", isReady)
+    ): MarketDataSnapshot = reqMktDataSnapshot(symbol, contract, "", purpose, isReady)
 
     // [symbol] is the owning domain symbol, passed explicitly by the caller. Deriving it from
     // contract.symbol() is unsafe: conId-routed requests (the cached-scanner path) carry only a
     // conId + exchange, so contract.symbol() is null/blank there. The caller always has it.
+    // [purpose] is a short caller-supplied tag (e.g. "exit price check") — this helper is the one
+    // choke point every snapshot flows through, so it's the only place that can label the
+    // subscribe/cancel log line with *why* a request fired, not just that one did.
     suspend fun reqMktDataSnapshot(
         symbol: Symbol,
         contract: Contract,
         genericTickList: String,
+        purpose: String,
         isReady: (MarketDataSnapshot) -> Boolean,
     ): MarketDataSnapshot {
         // Even a short-lived snapshot holds a market-data line between reqMktData and cancelMktData.
@@ -76,7 +81,7 @@ class MarketSnapshotHelper(
             // finally below always cancelMktData once the snapshot completes, quiesces, or times out.
             // Shortest-lived line in the system (sub-5s typical); every snapshot flows through here.
             client.reqMktData(reqId, contract, genericTickList, false, false, null)
-            MarketDataLineTracker.subscribed("[$symbol] snapshot (reqMktData)")
+            MarketDataLineTracker.subscribed("[$symbol] $purpose (reqMktData)")
             val snapshot = withTimeout(5.seconds) { pending.await() }
             logger.debug { "Received market data snapshot: $snapshot" }
             snapshot
@@ -89,7 +94,7 @@ class MarketSnapshotHelper(
         } finally {
             registry.remove(reqId)
             client.cancelMktData(reqId)
-            MarketDataLineTracker.unsubscribed("[$symbol] snapshot (reqMktData)")
+            MarketDataLineTracker.unsubscribed("[$symbol] $purpose (reqMktData)")
         }
     }
 }
