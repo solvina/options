@@ -3,8 +3,8 @@
 import { type DefaultError, type InfiniteData, infiniteQueryOptions, queryOptions, type UseMutationOptions } from '@tanstack/react-query';
 
 import { client } from '../client.gen';
-import { forceCloseBearCallSpread, getBearCallSpreadById, listBearCallDividendRisk, listBearCallSpreads, type Options, softCloseBearCallSpread } from '../sdk.gen';
-import type { ForceCloseBearCallSpreadData, ForceCloseBearCallSpreadResponse, GetBearCallSpreadByIdData, GetBearCallSpreadByIdResponse, ListBearCallDividendRiskData, ListBearCallDividendRiskResponse, ListBearCallSpreadsData, ListBearCallSpreadsResponse, SoftCloseBearCallSpreadData, SoftCloseBearCallSpreadResponse } from '../types.gen';
+import { forceCloseBearCallSpread, getBearCallAnalytics, getBearCallSpreadById, listBearCallDividendRisk, listBearCallSpreads, type Options, softCloseBearCallSpread } from '../sdk.gen';
+import type { ForceCloseBearCallSpreadData, ForceCloseBearCallSpreadResponse, GetBearCallAnalyticsData, GetBearCallAnalyticsResponse, GetBearCallSpreadByIdData, GetBearCallSpreadByIdResponse, ListBearCallDividendRiskData, ListBearCallDividendRiskResponse, ListBearCallSpreadsData, ListBearCallSpreadsResponse, SoftCloseBearCallSpreadData, SoftCloseBearCallSpreadResponse } from '../types.gen';
 
 export type QueryKey<TOptions extends Options> = [
     Pick<TOptions, 'baseUrl' | 'body' | 'headers' | 'path' | 'query'> & {
@@ -182,3 +182,21 @@ export const forceCloseBearCallSpreadMutation = (options?: Partial<Options<Force
     };
     return mutationOptions;
 };
+
+export const getBearCallAnalyticsQueryKey = (options?: Options<GetBearCallAnalyticsData>) => createQueryKey('getBearCallAnalytics', options);
+
+/**
+ * Aggregate performance analytics across all bear call trades
+ */
+export const getBearCallAnalyticsOptions = (options?: Options<GetBearCallAnalyticsData>) => queryOptions<GetBearCallAnalyticsResponse, DefaultError, GetBearCallAnalyticsResponse, ReturnType<typeof getBearCallAnalyticsQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await getBearCallAnalytics({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: getBearCallAnalyticsQueryKey(options)
+});

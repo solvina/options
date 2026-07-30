@@ -9,6 +9,8 @@ import kotlinx.coroutines.withTimeout
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
 import java.math.RoundingMode
+import java.time.Clock
+import java.time.Instant
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.ConcurrentHashMap
@@ -17,7 +19,9 @@ import kotlin.time.Duration
 private val IBKR_DATE = DateTimeFormatter.ofPattern("yyyyMMdd")
 
 @Component
-class IbkrPositionsRegistry {
+class IbkrPositionsRegistry(
+    private val clock: Clock = Clock.systemUTC(),
+) {
     // Thread-safe state store for current portfolio positions with real-time PnL
     val portfolio = ConcurrentHashMap<Int, AccountPosition>()
 
@@ -62,6 +66,7 @@ class IbkrPositionsRegistry {
                 avgCost = averageCost,
                 unrealizedPNL = unrealizedPNL,
                 realizedPNL = realizedPNL,
+                updatedAt = clock.instant(),
             )
         if (position == null) {
             portfolio.remove(contract.conid())
@@ -82,6 +87,7 @@ private fun toPosition(
     avgCost: Double,
     unrealizedPNL: Double,
     realizedPNL: Double,
+    updatedAt: Instant,
 ): AccountPosition? {
     val quantity = BigDecimal(pos.value().toPlainString())
     if (quantity.compareTo(BigDecimal.ZERO) == 0) return null
@@ -118,5 +124,6 @@ private fun toPosition(
         unrealizedPnL = unrealizedPNL,
         realizedPnL = realizedPNL,
         conId = contract.conid(),
+        updatedAt = updatedAt,
     )
 }

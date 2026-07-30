@@ -10,6 +10,7 @@ import type { SpreadDto, PagedSpreadsDto } from '../generated/spreads/types.gen'
 import { SpreadStatusBadge } from '../components/spreads/SpreadStatusBadge'
 import { usePersistentSortable, sorted, SortTh } from '../lib/sort'
 import { useLocalStorage } from '../lib/useLocalStorage'
+import { isStalePnl, pnlSourceLabel, type PnlSource } from '../lib/pnlSource'
 
 const STATUS_FILTERS = ['ALL', 'OPEN', 'CLOSED_PROFIT', 'CLOSED_STOP', 'CLOSED_TIME', 'CLOSED_MANUAL'] as const
 type StatusFilter = (typeof STATUS_FILTERS)[number]
@@ -25,18 +26,33 @@ function fmt(val: number | null | undefined, decimals = 2) {
   return val == null ? '—' : val.toFixed(decimals)
 }
 
-function PnlCell({ pnl, credit, quantity }: { pnl: number | null | undefined; credit: number | null | undefined; quantity?: number | null }) {
+function PnlCell({
+  pnl,
+  credit,
+  quantity,
+  unrealizedPnl,
+  source,
+}: {
+  pnl: number | null | undefined
+  credit: number | null | undefined
+  quantity?: number | null
+  unrealizedPnl?: number | null
+  source?: PnlSource | null
+}) {
   if (pnl == null || credit == null || credit === 0) return <td className="px-3 py-2 text-muted-foreground tabular-nums">—</td>
   const pct = (pnl / credit) * 100
-  // Actual position P&L in dollars: per-share P&L × contract multiplier (100) × contracts.
-  const dollars = pnl * 100 * (quantity ?? 1)
-  const color = pnl >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'
+  // Prefer the broker's own unrealized P&L (what TWS shows). Only fall back to per-share P&L ×
+  // multiplier × contracts when the portfolio feed had nothing for this spread.
+  const dollars = unrealizedPnl != null ? unrealizedPnl : pnl * 100 * (quantity ?? 1)
+  const stale = isStalePnl(source)
+  const color = dollars >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'
   return (
     <td
-      className={`px-3 py-2 tabular-nums font-medium ${color}`}
-      title={`${pnl >= 0 ? '+' : ''}${pnl.toFixed(4)} per share`}
+      className={`px-3 py-2 tabular-nums font-medium ${stale ? 'opacity-60' : ''} ${color}`}
+      title={`${pnl >= 0 ? '+' : ''}${pnl.toFixed(4)} per share · ${pnlSourceLabel(source)}`}
     >
       {dollars >= 0 ? '+' : '−'}${Math.abs(dollars).toFixed(2)} ({pct >= 0 ? '+' : ''}{pct.toFixed(0)}%)
+      {stale && <span className="ml-1 text-muted-foreground font-normal">~</span>}
     </td>
   )
 }
@@ -76,7 +92,13 @@ function SpreadRow({ spread }: { spread: SpreadDto }) {
       <td className="px-3 py-2">
         <SpreadStatusBadge status={spread.status ?? ''} />
       </td>
-      <PnlCell pnl={spread.currentPnl != null ? Number(spread.currentPnl) : null} credit={Number(spread.creditPerShare)} quantity={spread.quantity} />
+      <PnlCell
+        pnl={spread.currentPnl != null ? Number(spread.currentPnl) : null}
+        credit={Number(spread.creditPerShare)}
+        quantity={spread.quantity}
+        unrealizedPnl={spread.unrealizedPnl != null ? Number(spread.unrealizedPnl) : null}
+        source={spread.pnlSource}
+      />
       <td className="px-1 py-2">
         {spread.status === 'OPEN' && (
           <button
@@ -156,7 +178,12 @@ export function SpreadsPage() {
 
   const sortedSpreads = sorted(spreads as SpreadDto[], sort, (s, k) => {
     if (k === 'dte') return s.expiryDate ? dte(s.expiryDate.toString()) : null
-    if (k === 'pnl') return s.currentPnl != null ? Number(s.currentPnl) : null
+    // Sort on the dollar figure actually displayed (broker P&L when available), so ordering
+    // matches the column instead of a per-share proxy that ignores contract count.
+    if (k === 'pnl') {
+      if (s.unrealizedPnl != null) return Number(s.unrealizedPnl)
+      return s.currentPnl != null ? Number(s.currentPnl) * 100 * (s.quantity ?? 1) : null
+    }
     if (k === 'openedAt') return s.openedAt ? new Date(s.openedAt).getTime() : null
     return (s as Record<string, unknown>)[k]
   })

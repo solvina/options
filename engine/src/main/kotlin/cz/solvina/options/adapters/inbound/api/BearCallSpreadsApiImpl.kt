@@ -13,6 +13,7 @@ import cz.solvina.options.domain.features.scanner.BearCallScannerConfig
 import cz.solvina.options.domain.features.spread.BearCallSpreadPort
 import cz.solvina.options.domain.features.spread.SpreadAnalyticsService
 import cz.solvina.options.domain.features.spread.SpreadManagementService
+import cz.solvina.options.domain.features.spread.SpreadMarkService
 import cz.solvina.options.domain.features.spread.model.BearCallSpread
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
 import cz.solvina.options.domain.features.universe.UniversePort
@@ -34,6 +35,7 @@ class BearCallSpreadsApiImpl(
     private val spreadPort: BearCallSpreadPort,
     private val spreadAnalyticsService: SpreadAnalyticsService,
     private val spreadManagementService: SpreadManagementService,
+    private val spreadMarkService: SpreadMarkService,
     private val universePort: UniversePort,
     private val config: BearCallScannerConfig,
     private val clock: Clock,
@@ -47,9 +49,10 @@ class BearCallSpreadsApiImpl(
             status?.let { s -> runCatching { SpreadStatus.valueOf(s) }.getOrNull()?.let { spreadPort.findByStatus(it) } ?: emptyList() }
                 ?: spreadPort.findAll()
         val pageItems = if (size <= 0) emptyList() else all.drop(page * size).take(size)
+        val marks = spreadMarkService.marks(pageItems)
         return ResponseEntity.ok(
             PagedBearCallSpreadsDto(
-                content = pageItems.map { it.toDto() },
+                content = pageItems.map { it.toDto(it.id?.let(marks::get)) },
                 totalElements = all.size.toLong(),
                 totalPages = if (size <= 0) 0 else (all.size + size - 1) / size,
                 page = page,
@@ -59,7 +62,7 @@ class BearCallSpreadsApiImpl(
     }
 
     override suspend fun getBearCallSpreadById(id: UUID): ResponseEntity<BearCallSpreadDto> =
-        spreadPort.findById(id)?.let { ResponseEntity.ok(it.toDto()) } ?: ResponseEntity.notFound().build()
+        spreadPort.findById(id)?.let { ResponseEntity.ok(it.toDto(spreadMarkService.mark(it))) } ?: ResponseEntity.notFound().build()
 
     override suspend fun getBearCallAnalytics(): ResponseEntity<BearCallAnalyticsDto> {
         val a = spreadAnalyticsService.compute(spreadPort.findAll())
@@ -122,9 +125,11 @@ class BearCallSpreadsApiImpl(
             flow {
                 val today = LocalDate.now(clock)
                 val windowDays = config.dividendCheckWindowHours / 24
-                for (spread in spreadPort.findOpen()) {
+                val open = spreadPort.findOpen()
+                val marks = spreadMarkService.marks(open)
+                for (spread in open) {
                     val exDiv = universePort.get(spread.symbol)?.exDividendDate ?: continue
-                    if (ChronoUnit.DAYS.between(today, exDiv) in 0..windowDays) emit(spread.toDto())
+                    if (ChronoUnit.DAYS.between(today, exDiv) in 0..windowDays) emit(spread.toDto(spread.id?.let(marks::get)))
                 }
             },
         )
@@ -141,16 +146,20 @@ class BearCallSpreadsApiImpl(
         spreadPort.findById(id) ?: return ResponseEntity.notFound().build()
         val result = if (force) spreadManagementService.forceClose(id) else spreadManagementService.softClose(id)
         return when (result) {
-            is SpreadManagementService.ManualCloseResult.Closed -> ResponseEntity.ok((result.spread as BearCallSpread).toDto())
+            is SpreadManagementService.ManualCloseResult.Closed -> ResponseEntity.ok((result.spread as BearCallSpread).toDto(null))
             is SpreadManagementService.ManualCloseResult.NotFound -> ResponseEntity.notFound().build()
             is SpreadManagementService.ManualCloseResult.AlreadyClosed -> ResponseEntity.status(HttpStatus.CONFLICT).build()
         }
     }
 
-    private suspend fun BearCallSpread.toDto(): BearCallSpreadDto {
+    /**
+     * [mark] carries the broker-sourced value/P&L for a live spread (see SpreadMarkService); pass
+     * null for closed spreads, where the booked close price is the only truth.
+     */
+    private suspend fun BearCallSpread.toDto(mark: SpreadMarkService.SpreadMark?): BearCallSpreadDto {
         val (currentSpreadValue, currentPnl) =
             if (status == SpreadStatus.OPEN) {
-                val sv = lastSpreadValue
+                val sv = mark?.spreadValuePerShare ?: lastSpreadValue
                 if (sv != null) sv to creditPerShare.subtract(sv) else null to null
             } else {
                 val sv = closePricePerShare
@@ -174,6 +183,8 @@ class BearCallSpreadsApiImpl(
             closePricePerShare = closePricePerShare,
             currentSpreadValue = currentSpreadValue,
             currentPnl = currentPnl,
+            unrealizedPnl = if (status == SpreadStatus.OPEN) mark?.unrealizedPnl else null,
+            pnlSource = if (status == SpreadStatus.OPEN) mark?.source?.let { BearCallSpreadDto.PnlSource.forValue(it.name) } else null,
             underlyingPriceNow = lastUnderlyingPrice,
             // Bear call is safe while spot stays BELOW the short (sold) strike.
             distanceToShortStrikePct = cushionPct(lastUnderlyingPrice, soldLeg.contract.strike, bullish = false),

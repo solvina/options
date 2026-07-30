@@ -4,6 +4,7 @@ import { cancelOrder, closePosition } from '../generated/account/sdk.gen'
 import { getAccountOverviewOptions } from '../generated/account/@tanstack/react-query.gen'
 import type { AccountPositionDto, OpenOrderDto, OpenPositionDto } from '../generated/account/types.gen'
 import { usePersistentSortable, sorted, SortTh } from '../lib/sort'
+import { isStalePnl, pnlSourceLabel } from '../lib/pnlSource'
 
 function StatCard({ label, value }: { label: string; value: string }) {
   return (
@@ -100,8 +101,14 @@ function EnginePositionsTable({ positions }: { positions: OpenPositionDto[] }) {
               <td className="px-3 py-2 tabular-nums">
                 {p.ivRankAtEntry != null ? `${p.ivRankAtEntry.toFixed(1)}%` : '—'}
               </td>
-              <td className={`px-3 py-2 tabular-nums font-medium ${pnlColor}`}>
+              <td
+                className={`px-3 py-2 tabular-nums font-medium ${isStalePnl(p.pnlSource) ? 'opacity-60' : ''} ${pnlColor}`}
+                title={pnlSourceLabel(p.pnlSource)}
+              >
                 {pnl != null ? fmtPnl(pnl) : '—'}
+                {pnl != null && isStalePnl(p.pnlSource) && (
+                  <span className="ml-1 text-muted-foreground font-normal">~</span>
+                )}
               </td>
             </tr>
           )

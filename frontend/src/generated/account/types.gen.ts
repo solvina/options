@@ -91,9 +91,20 @@ export type OpenPositionDto = {
      */
     distanceToShortStrikePct?: number | null;
     /**
-     * (creditPerShare - currentSpreadValue) × quantity × 100; null until first monitor check
+     * Total unrealized P&L in account currency. Sourced from IBKR's own per-leg unrealized P&L when the held legs are exactly this spread — the same figure TWS shows. Otherwise derived as (creditPerShare − current spread value) × quantity × 100. Null when neither the broker feed nor a monitor mark has a value yet. See pnlSource.
+     *
      */
     unrealizedPnL?: number | null;
+    /**
+     * Cost to close, per share — IBKR's own streamed leg mark (short − long), falling back to the monitor's last quote-derived mark when the broker feed has no fresh row.
+     *
+     */
+    currentSpreadValue?: number | null;
+    /**
+     * Where unrealizedPnL came from. IBKR_PNL = broker's own per-leg P&L (matches TWS). IBKR_MARK = broker leg marks, P&L derived from credit because the legs are not exclusively this spread. LAST_MONITOR_MARK = broker feed had no fresh row, showing the monitor's last quote-derived snapshot, which may be stale.
+     *
+     */
+    pnlSource?: 'IBKR_PNL' | 'IBKR_MARK' | 'LAST_MONITOR_MARK';
 };
 
 export type ClosePositionRequestDto = {

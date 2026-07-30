@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { ForceCloseBearCallSpreadData, ForceCloseBearCallSpreadErrors, ForceCloseBearCallSpreadResponses, GetBearCallSpreadByIdData, GetBearCallSpreadByIdErrors, GetBearCallSpreadByIdResponses, ListBearCallDividendRiskData, ListBearCallDividendRiskResponses, ListBearCallSpreadsData, ListBearCallSpreadsResponses, SoftCloseBearCallSpreadData, SoftCloseBearCallSpreadErrors, SoftCloseBearCallSpreadResponses } from './types.gen';
+import type { ForceCloseBearCallSpreadData, ForceCloseBearCallSpreadErrors, ForceCloseBearCallSpreadResponses, GetBearCallAnalyticsData, GetBearCallAnalyticsResponses, GetBearCallSpreadByIdData, GetBearCallSpreadByIdErrors, GetBearCallSpreadByIdResponses, ListBearCallDividendRiskData, ListBearCallDividendRiskResponses, ListBearCallSpreadsData, ListBearCallSpreadsResponses, SoftCloseBearCallSpreadData, SoftCloseBearCallSpreadErrors, SoftCloseBearCallSpreadResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean> = Options2<TData, ThrowOnError> & {
     /**
@@ -42,3 +42,8 @@ export const softCloseBearCallSpread = <ThrowOnError extends boolean = false>(op
  * Force-close a bear call spread at market price
  */
 export const forceCloseBearCallSpread = <ThrowOnError extends boolean = false>(options: Options<ForceCloseBearCallSpreadData, ThrowOnError>) => (options.client ?? client).post<ForceCloseBearCallSpreadResponses, ForceCloseBearCallSpreadErrors, ThrowOnError>({ url: '/bear-call-spreads/{id}/close-force', ...options });
+
+/**
+ * Aggregate performance analytics across all bear call trades
+ */
+export const getBearCallAnalytics = <ThrowOnError extends boolean = false>(options?: Options<GetBearCallAnalyticsData, ThrowOnError>) => (options?.client ?? client).get<GetBearCallAnalyticsResponses, unknown, ThrowOnError>({ url: '/bear-call-spreads/analytics', ...options });

@@ -16,6 +16,7 @@ import cz.solvina.options.domain.features.account.OrphanPositionDetector
 import cz.solvina.options.domain.features.account.PositionsPort
 import cz.solvina.options.domain.features.flag.FlagPort
 import cz.solvina.options.domain.features.spread.SpreadCloserRegistry
+import cz.solvina.options.domain.features.spread.SpreadMarkService
 import cz.solvina.options.domain.features.spread.model.Spread
 import cz.solvina.options.domain.models.OptionType
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -40,6 +41,7 @@ class AccountApiImpl(
     private val orphanDetector: OrphanPositionDetector,
     private val positionsPort: PositionsPort,
     private val accountTradingPort: AccountTradingPort,
+    private val spreadMarkService: SpreadMarkService,
     private val clock: Clock,
 ) : AccountApi,
     OrdersApi {
@@ -86,6 +88,9 @@ class AccountApiImpl(
                 .onFailure { e -> logger.warn(e) { "Orphan detection failed: ${e.message}" } }
                 .getOrDefault(emptyMap())
         val legMembership: Map<PosKey, LegMembership> = buildLegMembership(allManagedSpreads)
+        // Broker-sourced value/P&L for the tracked spreads, so the overview agrees with TWS instead
+        // of replaying the monitor's last quote snapshot.
+        val marks = spreadMarkService.marks(openSpreads)
 
         val dto =
             AccountOverviewDto(
@@ -94,7 +99,7 @@ class AccountApiImpl(
                 unrealizedPnL = detail?.unrealizedPnL?.amount,
                 excessLiquidity = detail?.excessLiquidity?.amount,
                 openPositionCount = openSpreads.size,
-                openPositions = openSpreads.map { it.toDto(today) },
+                openPositions = openSpreads.map { it.toDto(today, it.id?.let(marks::get)) },
                 accountPositionCount = ibkrPositions.size,
                 accountPositions = ibkrPositions.map { it.toDto(orphanReasons[it], legMembership) },
                 openOrderCount = openOrders.size,
@@ -143,7 +148,10 @@ class AccountApiImpl(
         return ResponseEntity.noContent().build()
     }
 
-    private fun Spread.toDto(today: LocalDate): OpenPositionDto {
+    private fun Spread.toDto(
+        today: LocalDate,
+        mark: SpreadMarkService.SpreadMark?,
+    ): OpenPositionDto {
         val expiry = soldLeg.contract.expiry
         val dte = ChronoUnit.DAYS.between(today, expiry).toInt()
         val maxRiskTotal =
@@ -169,13 +177,9 @@ class AccountApiImpl(
             // sells a CALL (safe BELOW it) — so the cushion sign is correct for both strategies.
             distanceToShortStrikePct =
                 cushionPct(lastUnderlyingPrice, soldLeg.contract.strike, bullish = soldLeg.contract.type == OptionType.PUT),
-            unrealizedPnL =
-                lastSpreadValue?.let { sv ->
-                    creditPerShare
-                        .subtract(sv)
-                        .multiply(BigDecimal(quantity))
-                        .multiply(BigDecimal("100"))
-                },
+            unrealizedPnL = mark?.unrealizedPnl,
+            currentSpreadValue = mark?.spreadValuePerShare,
+            pnlSource = mark?.source?.let { OpenPositionDto.PnlSource.forValue(it.name) },
         )
     }
 

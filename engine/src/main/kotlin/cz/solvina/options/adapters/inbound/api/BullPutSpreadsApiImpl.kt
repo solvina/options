@@ -4,6 +4,7 @@ import cz.solvina.options.domain.features.market.MarketDataPort
 import cz.solvina.options.domain.features.spread.BullPutSpreadPort
 import cz.solvina.options.domain.features.spread.SpreadAnalyticsService
 import cz.solvina.options.domain.features.spread.SpreadManagementService
+import cz.solvina.options.domain.features.spread.SpreadMarkService
 import cz.solvina.options.domain.features.spread.model.Spread
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
 import `cz.solvina.options.spreads`.api.BullPutSpreadsApi
@@ -33,6 +34,7 @@ class BullPutSpreadsApiImpl(
     private val spreadPort: BullPutSpreadPort,
     private val spreadManagementService: SpreadManagementService,
     private val spreadAnalyticsService: SpreadAnalyticsService,
+    private val spreadMarkService: SpreadMarkService,
     private val marketDataPort: MarketDataPort,
 ) : BullPutSpreadsApi {
     override suspend fun listSpreads(
@@ -42,7 +44,8 @@ class BullPutSpreadsApiImpl(
     ): ResponseEntity<PagedSpreadsDto> {
         val spreadStatus = status?.let { runCatching { SpreadStatus.valueOf(it) }.getOrNull() }
         val spreadPage = spreadPort.findPage(spreadStatus, page, size)
-        val dtos = spreadPage.content.map { it.toDto() }
+        val marks = spreadMarkService.marks(spreadPage.content)
+        val dtos = spreadPage.content.map { it.toDto(it.id?.let(marks::get)) }
         return ResponseEntity.ok(
             PagedSpreadsDto(
                 content = dtos,
@@ -57,12 +60,12 @@ class BullPutSpreadsApiImpl(
     override suspend fun getSpreadById(id: UUID): ResponseEntity<SpreadDto> {
         val all = spreadPort.findAll()
         val spread = all.firstOrNull { it.id == id } ?: return ResponseEntity.notFound().build()
-        return ResponseEntity.ok(spread.toDto())
+        return ResponseEntity.ok(spread.toDto(spreadMarkService.mark(spread)))
     }
 
     override suspend fun refreshSpreadPnl(id: UUID): ResponseEntity<SpreadDto> {
         val spread = spreadPort.findById(id) ?: return ResponseEntity.notFound().build()
-        if (spread.status != SpreadStatus.OPEN) return ResponseEntity.ok(spread.toDto())
+        if (spread.status != SpreadStatus.OPEN) return ResponseEntity.ok(spread.toDto(null))
 
         // Live quotes only: outside market hours both legs quote as unavailable, and booking the
         // resulting 0 as lastSpreadValue makes every credit spread display max profit (2026-07-10
@@ -80,12 +83,14 @@ class BullPutSpreadsApiImpl(
             }.onFailure { e -> logger.warn(e) { "[${spread.symbol}] refreshSpreadPnl failed: ${e.message}" } }
                 .getOrDefault(spread)
 
-        return ResponseEntity.ok(updated.toDto())
+        // Displayed numbers still come from the broker feed when it has this spread — the quote
+        // refresh above exists to keep the persisted fallback warm, not to beat IBKR's own mark.
+        return ResponseEntity.ok(updated.toDto(spreadMarkService.mark(updated)))
     }
 
     override suspend fun softCloseSpread(id: UUID): ResponseEntity<SpreadDto> =
         when (val result = spreadManagementService.softClose(id)) {
-            is SpreadManagementService.ManualCloseResult.Closed -> ResponseEntity.ok(result.spread.toDto())
+            is SpreadManagementService.ManualCloseResult.Closed -> ResponseEntity.ok(result.spread.toDto(null))
             is SpreadManagementService.ManualCloseResult.NotFound -> ResponseEntity.notFound().build()
             is SpreadManagementService.ManualCloseResult.AlreadyClosed -> ResponseEntity.status(HttpStatus.CONFLICT).build()
         }
@@ -148,15 +153,19 @@ class BullPutSpreadsApiImpl(
 
     override suspend fun forceCloseSpread(id: UUID): ResponseEntity<SpreadDto> =
         when (val result = spreadManagementService.forceClose(id)) {
-            is SpreadManagementService.ManualCloseResult.Closed -> ResponseEntity.ok(result.spread.toDto())
+            is SpreadManagementService.ManualCloseResult.Closed -> ResponseEntity.ok(result.spread.toDto(null))
             is SpreadManagementService.ManualCloseResult.NotFound -> ResponseEntity.notFound().build()
             is SpreadManagementService.ManualCloseResult.AlreadyClosed -> ResponseEntity.status(HttpStatus.CONFLICT).build()
         }
 
-    private fun Spread.toDto(): SpreadDto {
+    /**
+     * [mark] carries the broker-sourced value/P&L for a live spread (see SpreadMarkService); pass
+     * null for closed spreads, where the booked close price is the only truth.
+     */
+    private fun Spread.toDto(mark: SpreadMarkService.SpreadMark?): SpreadDto {
         val (currentSpreadValue, currentPnl) =
             if (status == SpreadStatus.OPEN) {
-                val sv = lastSpreadValue
+                val sv = mark?.spreadValuePerShare ?: lastSpreadValue
                 if (sv != null) sv to creditPerShare.subtract(sv) else null to null
             } else {
                 val sv = closePricePerShare
@@ -182,6 +191,8 @@ class BullPutSpreadsApiImpl(
             closePricePerShare = closePricePerShare,
             currentSpreadValue = currentSpreadValue,
             currentPnl = currentPnl,
+            unrealizedPnl = if (status == SpreadStatus.OPEN) mark?.unrealizedPnl else null,
+            pnlSource = if (status == SpreadStatus.OPEN) mark?.source?.let { SpreadDto.PnlSource.forValue(it.name) } else null,
             underlyingPriceNow = lastUnderlyingPrice,
             // Bull put is safe while spot stays ABOVE the short (sold) strike.
             distanceToShortStrikePct = cushionPct(lastUnderlyingPrice, soldLeg.contract.strike, bullish = true),

@@ -20,8 +20,25 @@ export type SpreadDto = {
     closedAt?: string | null;
     closeReason?: string | null;
     closePricePerShare?: number | null;
+    /**
+     * Cost to close, per share. For an open spread this is IBKR's own streamed leg mark (short − long); it falls back to the monitor's last quote-derived mark only when the broker feed has no fresh row for the legs. Booked close price once closed.
+     *
+     */
     currentSpreadValue?: number | null;
+    /**
+     * creditPerShare − currentSpreadValue (per share, gross of commissions)
+     */
     currentPnl?: number | null;
+    /**
+     * Total unrealized P&L in account currency for an open spread. Sourced from IBKR's own per-leg unrealized P&L when the held legs are exactly this spread — the same figure TWS shows, net of commissions. Null for closed spreads. See pnlSource for provenance.
+     *
+     */
+    unrealizedPnl?: number | null;
+    /**
+     * Where the open-spread figures came from. IBKR_PNL = broker's own per-leg P&L (matches TWS). IBKR_MARK = broker leg marks, P&L derived from credit because the legs are not exclusively this spread. LAST_MONITOR_MARK = broker feed had no fresh row, showing the monitor's last quote-derived snapshot, which may be stale.
+     *
+     */
+    pnlSource?: 'IBKR_PNL' | 'IBKR_MARK' | 'LAST_MONITOR_MARK';
     /**
      * Latest underlying spot recorded by the monitor (null until the first check on an open spread)
      */

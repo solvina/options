@@ -4,6 +4,54 @@ export type ClientOptions = {
     baseUrl: `${string}://${string}` | (string & {});
 };
 
+export type BearCallAnalyticsDto = {
+    summary: BearCallAnalyticsSummaryDto;
+    byStatus: Array<BearCallStatusBreakdownDto>;
+    bySymbol: Array<BearCallSymbolBreakdownDto>;
+    byEntryIvBucket: Array<BearCallIvBucketBreakdownDto>;
+    pnlTimeline: Array<BearCallPnlTimelinePointDto>;
+};
+
+export type BearCallAnalyticsSummaryDto = {
+    totalTrades: number;
+    openTrades: number;
+    winRate: number;
+    totalRealizedPnl: number;
+    avgPnlPerTrade: number;
+    avgHoldDays: number;
+};
+
+export type BearCallStatusBreakdownDto = {
+    status: string;
+    count: number;
+    totalPnl: number;
+    avgPnl: number;
+    avgHoldDays: number;
+};
+
+export type BearCallSymbolBreakdownDto = {
+    symbol: string;
+    count: number;
+    wins: number;
+    winRate: number;
+    totalPnl: number;
+    avgPnl: number;
+    avgCreditRatio: number;
+};
+
+export type BearCallIvBucketBreakdownDto = {
+    bucket: string;
+    count: number;
+    winRate: number;
+    avgPnl: number;
+};
+
+export type BearCallPnlTimelinePointDto = {
+    date: string;
+    dailyPnl: number;
+    cumulativePnl: number;
+};
+
 export type BearCallSpreadDto = {
     id?: string;
     symbol: string;
@@ -20,8 +68,25 @@ export type BearCallSpreadDto = {
     closedAt?: string | null;
     closeReason?: string | null;
     closePricePerShare?: number | null;
+    /**
+     * Cost to close, per share. For an open spread this is IBKR's own streamed leg mark (short − long); it falls back to the monitor's last quote-derived mark only when the broker feed has no fresh row for the legs. Booked close price once closed.
+     *
+     */
     currentSpreadValue?: number | null;
+    /**
+     * creditPerShare − currentSpreadValue (per share, gross of commissions)
+     */
     currentPnl?: number | null;
+    /**
+     * Total unrealized P&L in account currency for an open spread. Sourced from IBKR's own per-leg unrealized P&L when the held legs are exactly this spread — the same figure TWS shows, net of commissions. Null for closed spreads. See pnlSource for provenance.
+     *
+     */
+    unrealizedPnl?: number | null;
+    /**
+     * Where the open-spread figures came from. IBKR_PNL = broker's own per-leg P&L (matches TWS). IBKR_MARK = broker leg marks, P&L derived from credit because the legs are not exclusively this spread. LAST_MONITOR_MARK = broker feed had no fresh row, showing the monitor's last quote-derived snapshot, which may be stale.
+     *
+     */
+    pnlSource?: 'IBKR_PNL' | 'IBKR_MARK' | 'LAST_MONITOR_MARK';
     /**
      * Latest underlying spot recorded by the monitor (null until the first check on an open spread)
      */
@@ -162,3 +227,19 @@ export type ForceCloseBearCallSpreadResponses = {
 };
 
 export type ForceCloseBearCallSpreadResponse = ForceCloseBearCallSpreadResponses[keyof ForceCloseBearCallSpreadResponses];
+
+export type GetBearCallAnalyticsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/bear-call-spreads/analytics';
+};
+
+export type GetBearCallAnalyticsResponses = {
+    /**
+     * Analytics data
+     */
+    200: BearCallAnalyticsDto;
+};
+
+export type GetBearCallAnalyticsResponse = GetBearCallAnalyticsResponses[keyof GetBearCallAnalyticsResponses];

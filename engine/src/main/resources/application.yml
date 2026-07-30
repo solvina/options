@@ -222,6 +222,10 @@ account:
   # Lets the large paper balance behave like a small account, and is a hard exposure ceiling live.
   # Leave blank/absent to use the real broker figures unchanged. Display/diagnostics still show real.
   effective-account-size: 50000
+  # Age at which a streamed IBKR portfolio push stops counting as a live mark (SpreadMarkService).
+  # IBKR repushes a changed position every ~3 min, so a longer gap means the feed went quiet, not
+  # the market — the spread then falls back to its last monitor mark and is labelled as such.
+  portfolio-mark-max-age-minutes: 20
 
 flag:
   # Watchlist is DB-driven via instrument_universe.flag_enabled (UniversePort.getFlagWatchlist).
