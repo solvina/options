@@ -76,6 +76,7 @@ class MarketSnapshotHelper(
             // finally below always cancelMktData once the snapshot completes, quiesces, or times out.
             // Shortest-lived line in the system (sub-5s typical); every snapshot flows through here.
             client.reqMktData(reqId, contract, genericTickList, false, false, null)
+            MarketDataLineTracker.subscribed("[$symbol] snapshot (reqMktData)")
             val snapshot = withTimeout(5.seconds) { pending.await() }
             logger.debug { "Received market data snapshot: $snapshot" }
             snapshot
@@ -88,6 +89,7 @@ class MarketSnapshotHelper(
         } finally {
             registry.remove(reqId)
             client.cancelMktData(reqId)
+            MarketDataLineTracker.unsubscribed("[$symbol] snapshot (reqMktData)")
         }
     }
 }

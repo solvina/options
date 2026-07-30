@@ -7,6 +7,7 @@ import cz.solvina.options.adapters.outbound.ibkr.account.IbkrPositionsAdapter
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrOptionParamsCache
 import cz.solvina.options.adapters.outbound.ibkr.market.IbkrHistoricalDataAdapter
+import cz.solvina.options.adapters.outbound.ibkr.market.MarketDataLineTracker
 import cz.solvina.options.adapters.outbound.ibkr.market.MarketSnapshotHelper
 import cz.solvina.options.adapters.outbound.ibkr.market.SnapshotReady
 import cz.solvina.options.adapters.outbound.ibkr.market.midPrice
@@ -296,10 +297,15 @@ class IbkrDiagnosticProbeAdapter(
         // diagnostic window only. Self-retiring — every one is cancelled after the delay below. Off the
         // hot path: fires only when a diagnostic probe is explicitly triggered.
         client.reqMktData(underlyingReqId, contractFactory.stockContract(symbol), "", false, false, null)
+        MarketDataLineTracker.subscribed("[$symbol] DIAG underlying (reqMktData)")
         client.reqTickByTickData(soldTickReqId, contractFactory.optionContract(soldContract), "BidAsk", 0, true)
+        MarketDataLineTracker.subscribed("[$symbol] DIAG sold leg tick (reqTickByTickData)")
         client.reqTickByTickData(boughtTickReqId, contractFactory.optionContract(boughtContract), "BidAsk", 0, true)
+        MarketDataLineTracker.subscribed("[$symbol] DIAG bought leg tick (reqTickByTickData)")
         client.reqMktData(soldGreeksReqId, contractFactory.optionContract(soldContract), "100", false, false, null)
+        MarketDataLineTracker.subscribed("[$symbol] DIAG sold leg greeks (reqMktData)")
         client.reqMktData(boughtGreeksReqId, contractFactory.optionContract(boughtContract), "100", false, false, null)
+        MarketDataLineTracker.subscribed("[$symbol] DIAG bought leg greeks (reqMktData)")
 
         logger.info { "[$symbol] DIAG tick stream active — waiting ${windowMs}ms" }
         delay(windowMs.milliseconds)
@@ -307,14 +313,19 @@ class IbkrDiagnosticProbeAdapter(
         // Cancel all subscriptions
         registry.remove(soldTickReqId)
         client.cancelTickByTickData(soldTickReqId)
+        MarketDataLineTracker.unsubscribed("[$symbol] DIAG sold leg tick (reqTickByTickData)")
         registry.remove(boughtTickReqId)
         client.cancelTickByTickData(boughtTickReqId)
+        MarketDataLineTracker.unsubscribed("[$symbol] DIAG bought leg tick (reqTickByTickData)")
         registry.remove(soldGreeksReqId)
         client.cancelMktData(soldGreeksReqId)
+        MarketDataLineTracker.unsubscribed("[$symbol] DIAG sold leg greeks (reqMktData)")
         registry.remove(boughtGreeksReqId)
         client.cancelMktData(boughtGreeksReqId)
+        MarketDataLineTracker.unsubscribed("[$symbol] DIAG bought leg greeks (reqMktData)")
         registry.remove(underlyingReqId)
         client.cancelMktData(underlyingReqId)
+        MarketDataLineTracker.unsubscribed("[$symbol] DIAG underlying (reqMktData)")
 
         logger.info {
             "[$symbol] DIAG tick stream done — ticksReceived=${tickCount.get()} lastBid=${lastBid.get()} lastAsk=${lastAsk.get()} lastDelta=${lastDelta.get()}"

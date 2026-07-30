@@ -67,6 +67,7 @@ class IbkrDividendTickAdapter(
             // Self-retiring — cancelMktData in the finally below. Runs on the daily SCANNER-tagged
             // dividend refresh, so a 15s wait can never displace exec/exit/flag lines.
             client.reqMktData(reqId, contractFactory.stockContract(symbol), "456", false, false, null)
+            MarketDataLineTracker.subscribed("[$symbol] dividend tick (reqMktData)")
             withTimeout(timeoutMs.milliseconds) { deferred.await() }
         } catch (_: TimeoutCancellationException) {
             logger.warn { "[$symbol] IB_DIVIDENDS tick timed out after ${timeoutMs}ms" }
@@ -77,6 +78,7 @@ class IbkrDividendTickAdapter(
         } finally {
             registry.remove(reqId)
             runCatching { client.cancelMktData(reqId) }
+            MarketDataLineTracker.unsubscribed("[$symbol] dividend tick (reqMktData)")
         }
     }
 }

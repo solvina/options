@@ -114,6 +114,7 @@ class IbkrMarketDataAdapter(
             positionStreams.remove(key)?.let { reqId ->
                 registry.remove(reqId)
                 runCatching { client.cancelMktData(reqId) }
+                    .onSuccess { MarketDataLineTracker.unsubscribed("[${key.symbol}] position leg quote (reqMktData)") }
             }
         }
         // Open a held stream for each newly-tracked leg.
@@ -132,6 +133,7 @@ class IbkrMarketDataAdapter(
             // out of the wanted set (position closed) → cancelMktData in the reconcile loop above, NOT
             // per pricing cycle. Subscribe-on-open / unsubscribe-on-close; steady occupancy, low churn.
             runCatching { client.reqMktData(reqId, contractFactory.optionContract(contract), "", false, false, null) }
+                .onSuccess { MarketDataLineTracker.subscribed("[${contract.symbol}] position leg quote (reqMktData)") }
                 .onFailure { e ->
                     positionStreams.remove(key)
                     registry.remove(reqId)

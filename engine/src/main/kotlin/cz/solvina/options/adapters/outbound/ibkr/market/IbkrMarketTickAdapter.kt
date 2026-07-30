@@ -69,10 +69,12 @@ class IbkrMarketTickAdapter(
             // Short-lived: lives only as long as the entry/exit decision reading the underlying price;
             // retires via cancelMktData in awaitClose when the collector stops. Subscribe→read→cancel.
             client.reqMktData(reqId, contractFactory.stockContract(symbol), "", false, false, null)
+            MarketDataLineTracker.subscribed("[$symbol] underlying price (reqMktData)")
             logger.debug { "[$symbol] Started underlying price stream (reqId=$reqId)" }
             awaitClose {
                 registry.remove(reqId)
                 client.cancelMktData(reqId)
+                MarketDataLineTracker.unsubscribed("[$symbol] underlying price (reqMktData)")
                 logger.debug { "[$symbol] Cancelled underlying price stream (reqId=$reqId)" }
             }
         }
@@ -204,10 +206,14 @@ class IbkrMarketTickAdapter(
                 linesAcquired += mktDataLines
                 if (useTickByTick) {
                     client.reqTickByTickData(soldTickReqId, soldContract4Mkt, "BidAsk", 0, true)
+                    MarketDataLineTracker.subscribed("[${soldContract.symbol}] sold leg tick (reqTickByTickData)")
                     client.reqTickByTickData(boughtTickReqId, boughtContract4Mkt, "BidAsk", 0, true)
+                    MarketDataLineTracker.subscribed("[${boughtContract.symbol}] bought leg tick (reqTickByTickData)")
                 }
                 client.reqMktData(soldGreeksReqId, soldContract4Mkt, greeksGenericTicks, false, false, null)
+                MarketDataLineTracker.subscribed("[${soldContract.symbol}] sold leg greeks (reqMktData)")
                 client.reqMktData(boughtGreeksReqId, boughtContract4Mkt, greeksGenericTicks, false, false, null)
+                MarketDataLineTracker.subscribed("[${boughtContract.symbol}] bought leg greeks (reqMktData)")
             } catch (e: Throwable) {
                 registry.remove(soldTickReqId)
                 registry.remove(boughtTickReqId)
@@ -229,13 +235,17 @@ class IbkrMarketTickAdapter(
                 if (useTickByTick) {
                     registry.remove(soldTickReqId)
                     client.cancelTickByTickData(soldTickReqId)
+                    MarketDataLineTracker.unsubscribed("[${soldContract.symbol}] sold leg tick (reqTickByTickData)")
                     registry.remove(boughtTickReqId)
                     client.cancelTickByTickData(boughtTickReqId)
+                    MarketDataLineTracker.unsubscribed("[${boughtContract.symbol}] bought leg tick (reqTickByTickData)")
                 }
                 registry.remove(soldGreeksReqId)
                 client.cancelMktData(soldGreeksReqId)
+                MarketDataLineTracker.unsubscribed("[${soldContract.symbol}] sold leg greeks (reqMktData)")
                 registry.remove(boughtGreeksReqId)
                 client.cancelMktData(boughtGreeksReqId)
+                MarketDataLineTracker.unsubscribed("[${boughtContract.symbol}] bought leg greeks (reqMktData)")
                 linesAcquired -= mktDataLines
                 logger.debug {
                     "Cancelled spread credit stream for " +

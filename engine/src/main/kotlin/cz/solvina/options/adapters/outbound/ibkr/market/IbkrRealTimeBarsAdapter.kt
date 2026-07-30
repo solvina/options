@@ -87,11 +87,13 @@ class IbkrRealTimeBarsAdapter(
             // this flow is cancelled (strategy teardown / shutdown) → cancelRealTimeBars in awaitClose
             // below. This is the "flags don't retire" category: steady occupancy, not churn.
             client.reqRealTimeBars(reqId, contract, 5, "TRADES", true, null)
+            MarketDataLineTracker.subscribed("[${symbol.value}] real-time bars (reqRealTimeBars)")
 
             awaitClose {
                 registry.removeRealTimeBarRequest(reqId)
                 runCatching { client.cancelRealTimeBars(reqId) }
                     .onFailure { e -> logger.warn { "[${symbol.value}] cancelRealTimeBars failed: ${e.message}" } }
+                MarketDataLineTracker.unsubscribed("[${symbol.value}] real-time bars (reqRealTimeBars)")
                 logger.info { "[${symbol.value}] Unsubscribed from real-time bars (reqId=$reqId)" }
             }
         }.buffer(Channel.UNLIMITED)
