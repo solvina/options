@@ -28,6 +28,12 @@ interface StockStrategy : TunableStrategy {
     /** Declares what data the strategy consumes, so a host can refuse what it cannot honestly feed. */
     val inputs: StrategyInputs
 
+    /**
+     * Defaults to [StrategyEntryMode.STOP], which is what every strategy written before this seam
+     * existed assumed — so adding it changed no existing fill.
+     */
+    val entryMode: StrategyEntryMode get() = StrategyEntryMode.STOP
+
     /** Returns why [params] is unusable, or null when it is. */
     fun validate(params: StrategyParams): String?
 
@@ -80,4 +86,17 @@ data class StrategyInputs(
     val requiresTicks: Boolean = false,
 ) {
     val primary: Timeframe get() = timeframes.first()
+}
+
+/**
+ * How a strategy intends its [Decision.entryPrice] to be reached. Host-neutral by design: the
+ * backtest maps it to a fill rule and the live host to a broker order type, so the two cannot
+ * quietly disagree about whether an entry is a breakout or a mean-reversion limit.
+ */
+enum class StrategyEntryMode {
+    /** Entry sits above the market; only a move in the trade's favour triggers it. */
+    STOP,
+
+    /** Entry sits at or above the market; a gap beyond it is a miss, not a chase. */
+    LIMIT,
 }

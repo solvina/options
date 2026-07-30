@@ -25,6 +25,12 @@ object EntrySizer {
         val riskPerTrade: Double,
         val riskPerTradePct: Double,
         val maxLeverage: Double,
+        /**
+         * An absolute target level, overriding both [targetPct] and [targetAtrMultiple]. For rules
+         * that name a *price* rather than a distance — "take profit at the signal bar's high". Null
+         * (the default) leaves every existing caller on the distance-based path unchanged.
+         */
+        val targetOverride: Double? = null,
     ) {
         val needsAtr: Boolean get() = stopAtrMultiple > 0.0 || targetAtrMultiple > 0.0
     }
@@ -45,9 +51,14 @@ object EntrySizer {
         // percent — mixing exit styles inside one run would poison sweeps.
         if (f.needsAtr && atr.isNaN()) return null
         val stop = if (f.stopAtrMultiple > 0.0) entry - atr * f.stopAtrMultiple else entry * (1.0 - f.stopLossPct / 100.0)
-        val target = if (f.targetAtrMultiple > 0.0) entry + atr * f.targetAtrMultiple else entry * (1.0 + f.targetPct / 100.0)
+        val target =
+            f.targetOverride
+                ?: if (f.targetAtrMultiple > 0.0) entry + atr * f.targetAtrMultiple else entry * (1.0 + f.targetPct / 100.0)
         val perShareRisk = entry - stop
         if (perShareRisk <= 0.0) return null
+        // An override can legitimately land at or below the entry (a bar that closed on its high),
+        // which is not a trade. Distance-based targets cannot, so this only bites the override path.
+        if (target <= entry) return null
         // Size straight off the risk budget: % of current equity when set, else the fixed dollar
         // risk. Ruin guard: never risk more than the account holds, so size shrinks as equity falls
         // and a drained account (<= 0) opens nothing — no bounce-back from thin air.

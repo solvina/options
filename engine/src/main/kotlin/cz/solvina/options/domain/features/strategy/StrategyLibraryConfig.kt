@@ -17,4 +17,7 @@ class StrategyLibraryConfig {
 
     @Bean
     fun rsiMaCrossStrategy(): StockStrategy = RsiMaCrossStrategy()
+
+    @Bean
+    fun mfiOversoldStrategy(): StockStrategy = MfiOversoldStrategy()
 }

@@ -3,6 +3,7 @@ package cz.solvina.options.domain.features.backtest
 import cz.solvina.options.domain.features.bars.Candle
 import cz.solvina.options.domain.features.strategy.StockStrategy
 import cz.solvina.options.domain.features.strategy.StrategyContext
+import cz.solvina.options.domain.features.strategy.StrategyEntryMode
 import cz.solvina.options.domain.features.strategy.StrategyTrade
 import cz.solvina.options.domain.models.Symbol
 import java.math.BigDecimal
@@ -84,6 +85,11 @@ class StrategyBacktestAdapter(
                 entryPrice = decision.entryPrice,
                 stopLossPrice = decision.stopLossPrice,
                 profitTargetPrice = decision.profitTargetPrice,
+                entryMode =
+                    when (strategy.entryMode) {
+                        StrategyEntryMode.STOP -> BacktestSignal.EntryMode.STOP
+                        StrategyEntryMode.LIMIT -> BacktestSignal.EntryMode.LIMIT
+                    },
             ),
         )
     }

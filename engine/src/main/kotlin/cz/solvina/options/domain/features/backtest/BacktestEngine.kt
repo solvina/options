@@ -539,10 +539,24 @@ class BacktestEngine(
         val ep = signal.entryPrice.toDouble()
         val pt = signal.profitTargetPrice.toDouble()
         val fillPrice =
-            when {
-                bar.open >= ep -> bar.open // gap-up: fill at open
-                bar.high >= ep -> ep // bar reaches entry level
-                else -> return null
+            when (signal.entryMode) {
+                BacktestSignal.EntryMode.STOP ->
+                    when {
+                        bar.open >= ep -> bar.open // gap-up: fill at open
+                        bar.high >= ep -> ep // bar reaches entry level
+                        else -> return null
+                    }
+                // Mirror image: a limit is filled by price coming DOWN to it. A gap below the limit
+                // fills at the open (price improvement we would really get); otherwise the bar has
+                // to trade back down to the level. A bar that gaps above and never returns is a
+                // genuine miss — counting it as a fill is how a mean-reversion backtest flatters
+                // itself by silently buying the gap-ups it would have declined.
+                BacktestSignal.EntryMode.LIMIT ->
+                    when {
+                        bar.open <= ep -> bar.open // gap-down/flat: fill at the (better) open
+                        bar.low <= ep -> ep // traded back down to the limit
+                        else -> return null
+                    }
             }
         // Skip entry if fill is already at or beyond profit target (would be a wash or instant loss)
         return if (fillPrice >= pt) null else BigDecimal.valueOf(fillPrice)
