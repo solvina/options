@@ -280,14 +280,59 @@ components:
         unrealizedPnl:
           type: number
           nullable: true
+          description: >
+            Engine's own estimate: (currentPrice − actualEntryPrice) × shares, gross of commissions.
+            Shown for comparison; brokerUnrealizedPnl is what TWS reports.
         currentPrice:
           type: number
           nullable: true
+          description: Engine's own quote snapshot for the underlying (may fall back to the last historical close)
         strategyName:
           type: string
         actualEntryPrice:
           type: number
           nullable: true
+          description: Average fill price of the entry order as reported by the broker
+        brokerShares:
+          type: number
+          nullable: true
+          description: >
+            Shares IBKR reports holding for this symbol, from the streamed updatePortfolio feed.
+            All broker* fields are reported exactly as sent — no engine arithmetic — and are null
+            when the feed has no stock row for the symbol (e.g. after the position closed).
+        brokerMarketPrice:
+          type: number
+          nullable: true
+          description: IBKR's own mark for the share price (the price TWS prices the position at)
+        brokerMarketValue:
+          type: number
+          nullable: true
+          description: IBKR's own position market value
+        brokerAvgCost:
+          type: number
+          nullable: true
+          description: IBKR's average cost per share, inclusive of commissions — the broker's cost basis
+        brokerUnrealizedPnl:
+          type: number
+          nullable: true
+          description: >
+            IBKR's own unrealized P&L for the position — the figure TWS displays. Computed by the
+            broker against brokerAvgCost, so it includes commissions.
+        brokerRealizedPnl:
+          type: number
+          nullable: true
+          description: IBKR's own realized P&L for this position in the current session, as sent
+        brokerUpdatedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: When IBKR last pushed this position row
+        brokerDataStale:
+          type: boolean
+          nullable: true
+          description: >
+            True when the last broker push is older than account.portfolio-mark-max-age-minutes.
+            The values are still shown as sent; this only warns that they may lag TWS.
         highestPriceSeen:
           type: number
           nullable: true

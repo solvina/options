@@ -1,5 +1,6 @@
 package cz.solvina.options.adapters.inbound.api
 
+import cz.solvina.options.domain.features.account.BrokerStockPositionService
 import cz.solvina.options.domain.features.strategy.live.StockPosition
 import cz.solvina.options.domain.features.strategy.live.StockPositionPort
 import cz.solvina.options.domain.features.strategy.live.StockPositionStatus
@@ -23,6 +24,7 @@ import java.time.Instant
 class StockPositionApiController(
     private val positions: StockPositionPort,
     private val config: StockStrategyConfig,
+    private val brokerStockPositions: BrokerStockPositionService,
 ) {
     data class StockPositionDto(
         val id: String,
@@ -44,6 +46,17 @@ class StockPositionApiController(
         val signalledAt: Instant,
         val openedAt: Instant?,
         val closedAt: Instant?,
+        // ---- Broker view: IBKR's updatePortfolio row for this symbol, reported verbatim ----
+        val brokerShares: BigDecimal?,
+        val brokerMarketPrice: BigDecimal?,
+        val brokerMarketValue: BigDecimal?,
+        /** IBKR's cost basis per share, inclusive of commissions. */
+        val brokerAvgCost: BigDecimal?,
+        /** IBKR's own unrealized P&L — the figure TWS displays. Not recomputed here. */
+        val brokerUnrealizedPnl: BigDecimal?,
+        val brokerRealizedPnl: BigDecimal?,
+        val brokerUpdatedAt: Instant?,
+        val brokerDataStale: Boolean?,
     )
 
     data class SummaryDto(
@@ -59,7 +72,11 @@ class StockPositionApiController(
     )
 
     @GetMapping
-    suspend fun list(): List<StockPositionDto> = positions.findAll().sortedByDescending { it.signalledAt }.map { it.toDto() }
+    suspend fun list(): List<StockPositionDto> {
+        // One broker-feed read for the whole list; rows are matched to positions by symbol.
+        val broker = brokerStockPositions.bySymbol()
+        return positions.findAll().sortedByDescending { it.signalledAt }.map { it.toDto(broker[it.symbol.value]) }
+    }
 
     @GetMapping("/summary")
     suspend fun summary(): SummaryDto {
@@ -90,7 +107,7 @@ class StockPositionApiController(
         )
     }
 
-    private fun StockPosition.toDto() =
+    private fun StockPosition.toDto(broker: BrokerStockPositionService.BrokerStockPosition?) =
         StockPositionDto(
             id = id.toString(),
             strategyId = strategyId,
@@ -111,5 +128,13 @@ class StockPositionApiController(
             signalledAt = signalledAt,
             openedAt = openedAt,
             closedAt = closedAt,
+            brokerShares = broker?.shares,
+            brokerMarketPrice = broker?.marketPrice,
+            brokerMarketValue = broker?.marketValue,
+            brokerAvgCost = broker?.avgCost,
+            brokerUnrealizedPnl = broker?.unrealizedPnl,
+            brokerRealizedPnl = broker?.realizedPnl,
+            brokerUpdatedAt = broker?.updatedAt,
+            brokerDataStale = broker?.stale,
         )
 }

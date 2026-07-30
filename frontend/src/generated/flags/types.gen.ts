@@ -7,7 +7,7 @@ export type ClientOptions = {
 export type FlagPositionDto = {
     id: string;
     symbol: string;
-    status: 'PENDING' | 'OPEN' | 'CLOSED_PROFIT' | 'CLOSED_STOP' | 'CLOSED_EOD' | 'CLOSED_MANUAL' | 'ENTRY_TIMEOUT' | 'CLOSED_EXTERNAL';
+    status: 'PENDING' | 'OPEN' | 'CLOSING' | 'CLOSED_PROFIT' | 'CLOSED_STOP' | 'CLOSED_EOD' | 'CLOSED_MANUAL' | 'ENTRY_TIMEOUT' | 'CLOSED_EXTERNAL';
     entryOrderId: number;
     stopLossOrderId: number;
     profitTargetOrderId: number;
@@ -33,10 +33,55 @@ export type FlagPositionDto = {
     closeReason?: string | null;
     closePriceActual?: number | null;
     realizedPnl?: number | null;
+    /**
+     * Engine's own estimate: (currentPrice − actualEntryPrice) × shares, gross of commissions. Shown for comparison; brokerUnrealizedPnl is what TWS reports.
+     *
+     */
     unrealizedPnl?: number | null;
+    /**
+     * Engine's own quote snapshot for the underlying (may fall back to the last historical close)
+     */
     currentPrice?: number | null;
     strategyName?: string;
+    /**
+     * Average fill price of the entry order as reported by the broker
+     */
     actualEntryPrice?: number | null;
+    /**
+     * Shares IBKR reports holding for this symbol, from the streamed updatePortfolio feed. All broker* fields are reported exactly as sent — no engine arithmetic — and are null when the feed has no stock row for the symbol (e.g. after the position closed).
+     *
+     */
+    brokerShares?: number | null;
+    /**
+     * IBKR's own mark for the share price (the price TWS prices the position at)
+     */
+    brokerMarketPrice?: number | null;
+    /**
+     * IBKR's own position market value
+     */
+    brokerMarketValue?: number | null;
+    /**
+     * IBKR's average cost per share, inclusive of commissions — the broker's cost basis
+     */
+    brokerAvgCost?: number | null;
+    /**
+     * IBKR's own unrealized P&L for the position — the figure TWS displays. Computed by the broker against brokerAvgCost, so it includes commissions.
+     *
+     */
+    brokerUnrealizedPnl?: number | null;
+    /**
+     * IBKR's own realized P&L for this position in the current session, as sent
+     */
+    brokerRealizedPnl?: number | null;
+    /**
+     * When IBKR last pushed this position row
+     */
+    brokerUpdatedAt?: string | null;
+    /**
+     * True when the last broker push is older than account.portfolio-mark-max-age-minutes. The values are still shown as sent; this only warns that they may lag TWS.
+     *
+     */
+    brokerDataStale?: boolean | null;
     highestPriceSeen?: number | null;
     lowestPriceSeen?: number | null;
     maxFavorableExcursion?: number | null;
@@ -159,7 +204,7 @@ export type ListFlagsData = {
     body?: never;
     path?: never;
     query?: {
-        status?: 'PENDING' | 'OPEN' | 'CLOSED_PROFIT' | 'CLOSED_STOP' | 'CLOSED_EOD' | 'CLOSED_MANUAL' | 'ENTRY_TIMEOUT' | 'CLOSED_EXTERNAL';
+        status?: 'PENDING' | 'OPEN' | 'CLOSING' | 'CLOSED_PROFIT' | 'CLOSED_STOP' | 'CLOSED_EOD' | 'CLOSED_MANUAL' | 'ENTRY_TIMEOUT' | 'CLOSED_EXTERNAL';
         page?: number;
         size?: number;
         sort?: 'openedAt' | 'closedAt' | 'realizedPnl' | 'rMultiple' | 'timeInTradeSeconds' | 'symbol' | 'entryPrice';

@@ -1,5 +1,6 @@
 package cz.solvina.options.adapters.inbound.api
 
+import cz.solvina.options.domain.features.account.BrokerStockPositionService
 import cz.solvina.options.domain.features.flag.FlagAnalyticsService
 import cz.solvina.options.domain.features.flag.FlagManagementService
 import cz.solvina.options.domain.features.flag.FlagPort
@@ -37,6 +38,7 @@ class FlagsApiImpl(
     private val flagTradingConfigPort: FlagTradingConfigPort,
     private val marketDataPort: MarketDataPort,
     private val flagScannerService: FlagScannerService,
+    private val brokerStockPositions: BrokerStockPositionService,
 ) : FlagsApi {
     override suspend fun listFlags(
         status: String?,
@@ -48,7 +50,9 @@ class FlagsApiImpl(
         val flagStatus = status?.let { FlagStatus.valueOf(it) }
         val result = flagPort.findPage(flagStatus, page, size, sort, sortDir)
         val dtos = mutableListOf<FlagPositionDto>()
-        for (p in result.content) dtos.add(p.toDto())
+        // One broker-feed read for the whole page; rows are matched to positions by symbol.
+        val broker = brokerStockPositions.bySymbol()
+        for (p in result.content) dtos.add(p.toDto(broker[p.symbol.value]))
         return ResponseEntity.ok(
             PagedFlagsDto(
                 content = dtos,
@@ -62,7 +66,7 @@ class FlagsApiImpl(
 
     override suspend fun getFlagById(id: UUID): ResponseEntity<FlagPositionDto> {
         val position = flagPort.findById(id) ?: return ResponseEntity.notFound().build()
-        return ResponseEntity.ok(position.toDto())
+        return ResponseEntity.ok(position.toDto(brokerStockPositions.bySymbol()[position.symbol.value]))
     }
 
     override suspend fun getFlagAnalytics(): ResponseEntity<FlagAnalyticsDto> {
@@ -133,7 +137,8 @@ class FlagsApiImpl(
 
     override suspend fun closeFlagPosition(id: UUID): ResponseEntity<FlagPositionDto> =
         when (val result = flagManagementService.manualClose(id)) {
-            is FlagManagementService.ManualCloseResult.Closed -> ResponseEntity.ok(result.position.toDto())
+            is FlagManagementService.ManualCloseResult.Closed ->
+                ResponseEntity.ok(result.position.toDto(brokerStockPositions.bySymbol()[result.position.symbol.value]))
             is FlagManagementService.ManualCloseResult.NotFound -> ResponseEntity.notFound().build()
             is FlagManagementService.ManualCloseResult.AlreadyClosed -> ResponseEntity.status(HttpStatus.CONFLICT).build()
             is FlagManagementService.ManualCloseResult.Failed -> ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).build()
@@ -158,16 +163,25 @@ class FlagsApiImpl(
             if (ratcheted != null && ratcheted > stopLossPrice) ratcheted else stopLossPrice
         }
 
-    private suspend fun FlagPosition.toDto(): FlagPositionDto {
+    /**
+     * [broker] is the IBKR `updatePortfolio` row for this symbol, if the feed has one. It is
+     * surfaced verbatim alongside the engine's own estimate rather than replacing it, so a
+     * divergence between our journal and the broker is visible instead of hidden.
+     */
+    private suspend fun FlagPosition.toDto(broker: BrokerStockPositionService.BrokerStockPosition?): FlagPositionDto {
         val livePrice =
             if (status.isActive) {
                 runCatching { marketDataPort.getUnderlyingPrice(symbol).amount }.getOrNull()
             } else {
                 null
             }
+        // Basis is the actual fill, matching what FlagExecutionService already uses for realizedPnl,
+        // MFE/MAE and the R-multiple. The planned breakout trigger (entryPrice) is not what we paid,
+        // so using it here made this estimate disagree with both the broker and our own journal.
+        val effectiveEntry = actualEntryPrice ?: entryPrice
         val unrealized =
             livePrice
-                ?.subtract(entryPrice)
+                ?.subtract(effectiveEntry)
                 ?.multiply(BigDecimal(shares))
                 ?.setScale(2, RoundingMode.HALF_UP)
         return FlagPositionDto(
@@ -195,6 +209,15 @@ class FlagsApiImpl(
             realizedPnl = realizedPnl,
             unrealizedPnl = unrealized,
             currentPrice = livePrice,
+            // Verbatim from IBKR's stream — no engine arithmetic applied to any of these.
+            brokerShares = broker?.shares,
+            brokerMarketPrice = broker?.marketPrice,
+            brokerMarketValue = broker?.marketValue,
+            brokerAvgCost = broker?.avgCost,
+            brokerUnrealizedPnl = broker?.unrealizedPnl,
+            brokerRealizedPnl = broker?.realizedPnl,
+            brokerUpdatedAt = broker?.updatedAt?.let { OffsetDateTime.ofInstant(it, ZoneOffset.UTC) },
+            brokerDataStale = broker?.stale,
             strategyName = strategyName,
             actualEntryPrice = actualEntryPrice,
             highestPriceSeen = highestPriceSeen,

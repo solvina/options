@@ -495,7 +495,13 @@ function LivePositionCard({ position: p }: { position: FlagPositionDto }) {
     onError: () => setConfirming(false),
   })
 
-  const unrealPnl = p.unrealizedPnl != null ? Number(p.unrealizedPnl) : null
+  // Two P&L numbers on purpose. brokerUnrealizedPnl is IBKR's own figure against its avgCost —
+  // what TWS shows, commissions included. engineUnrealPnl is our estimate from our own quote
+  // snapshot. Showing the broker's as primary and ours beside it makes any divergence visible
+  // instead of picking a winner silently.
+  const brokerPnl = p.brokerUnrealizedPnl != null ? Number(p.brokerUnrealizedPnl) : null
+  const engineUnrealPnl = p.unrealizedPnl != null ? Number(p.unrealizedPnl) : null
+  const brokerAge = p.brokerUpdatedAt ? Math.floor((Date.now() - new Date(p.brokerUpdatedAt).getTime()) / 60_000) : null
   const entryPrice = Number(p.entryPrice)
   const stopPct = ((entryPrice - Number(p.stopLossPrice)) / entryPrice * 100).toFixed(1)
   const effStop = p.effectiveStopPrice != null ? Number(p.effectiveStopPrice) : null
@@ -540,9 +546,26 @@ function LivePositionCard({ position: p }: { position: FlagPositionDto }) {
       )}
 
       <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-x-4 gap-y-1 text-sm">
-        <div><span className="text-xs text-muted-foreground block">Entry</span><span className="tabular-nums font-medium">${fmt(p.entryPrice, 2)}</span></div>
-        <div><span className="text-xs text-muted-foreground block">Current</span>
-          <span className="tabular-nums font-medium">{p.currentPrice != null ? `$${fmt(p.currentPrice, 2)}` : '—'}</span>
+        <div title="Planned breakout trigger — not necessarily what we paid">
+          <span className="text-xs text-muted-foreground block">Trigger</span>
+          <span className="tabular-nums font-medium">${fmt(p.entryPrice, 2)}</span>
+        </div>
+        <div title={p.brokerAvgCost != null ? "Actual fill · IBKR avg cost includes commissions" : 'Actual fill price'}>
+          <span className="text-xs text-muted-foreground block">Fill{p.brokerAvgCost != null ? ' / cost' : ''}</span>
+          <span className="tabular-nums font-medium">
+            {p.actualEntryPrice != null ? `$${fmt(p.actualEntryPrice, 2)}` : '—'}
+            {p.brokerAvgCost != null && (
+              <span className="text-xs text-muted-foreground"> / ${fmt(p.brokerAvgCost, 4)}</span>
+            )}
+          </span>
+        </div>
+        <div title={p.brokerMarketPrice != null ? "IBKR's own mark (TWS prices the position at this)" : 'Engine quote snapshot'}>
+          <span className="text-xs text-muted-foreground block">{p.brokerMarketPrice != null ? 'Mark (IBKR)' : 'Current'}</span>
+          <span className="tabular-nums font-medium">
+            {p.brokerMarketPrice != null
+              ? `$${fmt(p.brokerMarketPrice, 2)}`
+              : p.currentPrice != null ? `$${fmt(p.currentPrice, 2)}` : '—'}
+          </span>
         </div>
         <div title="Approximate — IBKR ratchets the trigger server-side on its own tick stream">
           <span className="text-xs text-muted-foreground block">Stop{isTrailing ? ' ⇡ trailing' : ''}</span>
@@ -553,8 +576,28 @@ function LivePositionCard({ position: p }: { position: FlagPositionDto }) {
         <div><span className="text-xs text-muted-foreground block">Trail</span>
           <span className="tabular-nums">{p.trailAmount != null ? `$${fmt(p.trailAmount, 2)}` : '—'}</span>
         </div>
-        <div><span className="text-xs text-muted-foreground block">Shares</span><span className="tabular-nums">{p.shares}</span></div>
-        <div><span className="text-xs text-muted-foreground block">Unreal. P&amp;L</span><PnlSpan val={unrealPnl} placeholder="…" /></div>
+        <div title={p.brokerShares != null && Number(p.brokerShares) !== p.shares
+          ? `Journal says ${p.shares}, IBKR holds ${fmt(p.brokerShares, 0)}`
+          : undefined}>
+          <span className="text-xs text-muted-foreground block">Shares</span>
+          <span className="tabular-nums">
+            {p.shares}
+            {p.brokerShares != null && Number(p.brokerShares) !== p.shares && (
+              <span className="text-amber-500 text-xs"> ≠ {fmt(p.brokerShares, 0)} ⚠</span>
+            )}
+          </span>
+        </div>
+        <div title={brokerPnl != null
+          ? `IBKR unrealized P&L${p.brokerDataStale ? ' (last push is stale)' : ''} · engine estimate ${fmtMoney(engineUnrealPnl)}`
+          : `Engine estimate from our own quote snapshot — no IBKR position row for this symbol`}>
+          <span className="text-xs text-muted-foreground block">
+            Unreal. P&amp;L {brokerPnl != null ? <span className="opacity-70">(IBKR)</span> : <span className="opacity-70">(est.)</span>}
+          </span>
+          <span className={p.brokerDataStale ? 'opacity-60' : ''}>
+            <PnlSpan val={brokerPnl ?? engineUnrealPnl} placeholder="…" />
+            {p.brokerDataStale && <span className="ml-1 text-muted-foreground text-xs">~</span>}
+          </span>
+        </div>
         {lockedIn != null && (
           <div><span className="text-xs text-muted-foreground block">Locked in</span><PnlSpan val={lockedIn} /></div>
         )}
@@ -575,6 +618,21 @@ function LivePositionCard({ position: p }: { position: FlagPositionDto }) {
             ['VWAP@entry', p.vwapAtEntry != null ? `$${fmt(p.vwapAtEntry, 2)}` : null],
             ['Stop %', p.stopDistancePct != null ? `${fmt(p.stopDistancePct, 2)}%` : null],
           ]} />
+          {p.brokerShares != null && (
+            <div className="pt-1">
+              <span className="text-xs text-muted-foreground uppercase tracking-wide">
+                From IBKR{brokerAge != null ? ` · pushed ${brokerAge}m ago` : ''}{p.brokerDataStale ? ' · STALE' : ''}
+              </span>
+              <DetailGrid items={[
+                ['Shares', fmt(p.brokerShares, 0)],
+                ['Mark', `$${fmt(p.brokerMarketPrice, 4)}`],
+                ['Market value', `$${fmt(p.brokerMarketValue, 2)}`],
+                ['Avg cost', `$${fmt(p.brokerAvgCost, 4)}`],
+                ['Unrealized', fmtMoney(p.brokerUnrealizedPnl)],
+                ['Realized (session)', p.brokerRealizedPnl != null ? fmtMoney(p.brokerRealizedPnl) : null],
+              ]} />
+            </div>
+          )}
           <DetailGrid items={[
             ['High seen', p.highestPriceSeen != null ? `$${fmt(p.highestPriceSeen, 4)}` : null],
             ['Low seen', p.lowestPriceSeen != null ? `$${fmt(p.lowestPriceSeen, 4)}` : null],
