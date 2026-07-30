@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { getReportSummaryOptions } from '../generated/reports/@tanstack/react-query.gen'
-import type { StrategyReportDto } from '../generated/reports/types.gen'
+import { getReportSummaryOptions } from '../../generated/reports/@tanstack/react-query.gen'
+import type { StrategyReportDto } from '../../generated/reports/types.gen'
 
 // ─────────────────────────────────────────────
 // Helpers
@@ -58,7 +58,7 @@ function PnlSpan({ val, children }: { val: number | null | undefined; children: 
 }
 
 // ─────────────────────────────────────────────
-// Page
+// Section
 // ─────────────────────────────────────────────
 
 // 2026-07-10: quote snapshots, SL confirmation, flag exit booking, and the P&L refresh were all
@@ -74,7 +74,12 @@ const PRESETS: { label: string; from: () => string }[] = [
   { label: 'Since fix', from: () => MAJOR_FIX_EPOCH },
 ]
 
-export function ReportsPage() {
+/**
+ * Per-strategy performance for a period. Covers all three strategies (bull put, bear call, flag)
+ * from the single /reports/summary endpoint, so it is the one place that reports flags alongside
+ * the spread strategies. Rendered inside the Overview page below the live-state strip.
+ */
+export function ReportSection() {
   // Default to Today; the post-fix era stays reachable via the 'Since fix' preset.
   const [from, setFrom] = useState(() => isoDate(new Date()))
   const [to, setTo] = useState(() => isoDate(new Date()))
@@ -87,11 +92,11 @@ export function ReportsPage() {
   const rows: StrategyReportDto[] = data ? [...data.strategies, data.total] : []
 
   return (
-    <div className="space-y-4">
+    <section className="space-y-4">
       <div className="flex flex-wrap items-end gap-3">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">Reports</h1>
-          <p className="text-sm text-muted-foreground">Per-strategy performance for a period</p>
+          <h2 className="text-base font-semibold tracking-tight">Performance</h2>
+          <p className="text-sm text-muted-foreground">Per-strategy results for a period</p>
         </div>
         <div className="ml-auto flex flex-wrap items-end gap-2">
           <label className="flex flex-col gap-1 text-xs text-muted-foreground">
@@ -229,6 +234,6 @@ export function ReportsPage() {
           exits that filled at the broker while the engine was not watching.
         </p>
       )}
-    </div>
+    </section>
   )
 }
