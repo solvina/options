@@ -65,6 +65,15 @@ class BacktestRunEntity(
     var profitFactor: BigDecimal? = null,
     @Column(name = "max_drawdown_pct", nullable = false, precision = 10, scale = 4)
     var maxDrawdownPct: BigDecimal = BigDecimal.ZERO,
+    /**
+     * Buy & hold over the same window, so a stored run stays judgeable on its own. Nullable: the
+     * flag controller writes to this table too and has no benchmark.
+     */
+    @Column(name = "buy_hold_pnl_pct", precision = 10, scale = 4)
+    var buyHoldPnlPct: BigDecimal? = null,
+    /** Commission + slippage already deducted from [totalPnl]. Null for runs stored before v39. */
+    @Column(name = "total_costs", precision = 18, scale = 2)
+    var totalCosts: BigDecimal? = null,
     @Column(name = "trades_json", nullable = false, columnDefinition = "TEXT")
     var tradesJson: String = "[]",
 )

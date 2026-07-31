@@ -65,3 +65,5 @@ databaseChangeLog:
       file: db/changelog/v37__stock_position.yaml
   - include:
       file: db/changelog/v38__strategy_params.yaml
+  - include:
+      file: db/changelog/v39__backtest_run_benchmark_costs.yaml

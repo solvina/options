@@ -1,0 +1,34 @@
+databaseChangeLog:
+  # ---------------------------------------------------------------------------
+  # Two comparator columns on backtest_run (2026-07-31), so the stock run-history
+  # table can answer the only question that decides a strategy: did this beat
+  # holding the same symbols, after costs.
+  #
+  # Both numbers already exist on BacktestEngine.Summary and were being thrown
+  # away at persist time. Storing them as columns rather than leaving them in
+  # params_json keeps them sortable, which is what a history table is for.
+  #
+  #   buy_hold_pnl_pct — the benchmark the Phase 5 sweep judged rsi_ma_cross
+  #     against. A run's own P&L% in isolation says nothing: 88.6% looks strong
+  #     until the same window's buy & hold is also 88.6%.
+  #   total_costs — commission + slippage already deducted from total_pnl. The
+  #     sweep showed cost drag runs 13-62 percentage points and INVERTS the
+  #     ranking between gross and net, so a history row without it cannot be
+  #     compared to one run under a different cost model.
+  #
+  # Nullable because the flag backtest controller writes to this same table and
+  # does not populate them, and because every row already stored predates both.
+  # ---------------------------------------------------------------------------
+  - changeSet:
+      id: v39__backtest_run_benchmark_costs
+      author: claude
+      changes:
+        - addColumn:
+            tableName: backtest_run
+            columns:
+              - column:
+                  name: buy_hold_pnl_pct
+                  type: NUMERIC(10, 4)
+              - column:
+                  name: total_costs
+                  type: NUMERIC(18, 2)

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useLocalStorage } from '../lib/useLocalStorage'
+import { StockRunHistory } from '../components/backtest/StockRunHistory'
 
 // ---- types ----
 type Timeframe = '1d' | '4h'
@@ -381,6 +382,7 @@ export function StockBacktestPage() {
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<Result | null>(null)
   const [paramsOpen, setParamsOpen] = useState(true)
+  const [runsKey, setRunsKey] = useState(0)
 
   const meta = strategies.find((s) => s.id === form.strategy)
   const set = <K extends keyof StockForm>(k: K, v: StockForm[K]) => setForm({ ...form, [k]: v })
@@ -469,6 +471,8 @@ export function StockBacktestPage() {
       })
       if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`)
       setResult(await res.json())
+      // The engine persists every run; bump the key so the history table below picks up this one.
+      setRunsKey((k) => k + 1)
     } catch (e) {
       setError(String(e))
     } finally {
@@ -788,6 +792,8 @@ export function StockBacktestPage() {
         </div>
         )
       })()}
+
+      <StockRunHistory refreshKey={runsKey} strategy={form.strategy} />
     </div>
   )
 }

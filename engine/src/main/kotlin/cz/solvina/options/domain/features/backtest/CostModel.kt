@@ -82,5 +82,20 @@ data class CostModel(
                 minCommissionPerOrder = BigDecimal("4.00"),
                 slippageBps = BigDecimal("10"),
             )
+
+        /**
+         * A short label for a stored run's parameter record. A preset gets its name; anything else
+         * gets its four numbers spelled out, so a hand-tuned model is still legible a month later
+         * rather than collapsing to "custom".
+         */
+        fun nameOf(model: CostModel): String =
+            when (model) {
+                NONE -> "none"
+                IBKR_US_STOCK -> "ibkr_us_stock"
+                IBKR_EU_ETF -> "ibkr_eu_etf"
+                else ->
+                    "custom(perShare=${model.commissionPerShare}, pctNotional=${model.commissionPctOfNotional}, " +
+                        "min=${model.minCommissionPerOrder}, slipBps=${model.slippageBps})"
+            }
     }
 }

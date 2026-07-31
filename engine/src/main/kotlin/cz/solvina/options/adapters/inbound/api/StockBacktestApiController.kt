@@ -1,5 +1,9 @@
 package cz.solvina.options.adapters.inbound.api
 
+import com.fasterxml.jackson.databind.JsonNode
+import com.fasterxml.jackson.databind.ObjectMapper
+import cz.solvina.options.adapters.outbound.persistence.postgres.entity.BacktestRunEntity
+import cz.solvina.options.adapters.outbound.persistence.postgres.repository.BacktestRunRepository
 import cz.solvina.options.domain.features.backtest.BacktestEngine
 import cz.solvina.options.domain.features.backtest.CostModel
 import cz.solvina.options.domain.features.backtest.StrategyBacktestAdapter
@@ -18,16 +22,21 @@ import cz.solvina.options.domain.features.universe.SectorEtf
 import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
+import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
 import java.math.BigDecimal
+import java.time.Instant
 import java.time.LocalDate
+import java.util.UUID
 
 private val logger = KotlinLogging.logger {}
 
@@ -52,6 +61,8 @@ class StockBacktestApiController(
     private val barStore: BarStorePort,
     private val universePort: UniversePort,
     private val strategies: StrategyRegistry,
+    private val runRepository: BacktestRunRepository,
+    private val objectMapper: ObjectMapper,
 ) {
     data class StockBacktestRequest(
         val symbols: List<String>,
@@ -260,6 +271,14 @@ class StockBacktestApiController(
             )
         // The engine logs the result summary; this line pairs the strategy params with it.
         logger.info { "Stock backtest [${template.id}] params: ${resolved.asMap()}" }
+        // Persist the run so the UI can list what was tried and with which parameters. Persistence
+        // failure must not lose the result the caller is waiting on — a history row is worth less
+        // than the answer, so it is logged and swallowed rather than propagated.
+        // The response shape is deliberately unchanged — the UI reads summary/trades/buyHoldCurve
+        // off the root, and a wrapper here would break every existing caller for a field none of
+        // them asked for. The run is discoverable through GET /backtest/stock/runs instead.
+        runCatching { persistRun(template.id, req, resolved, result) }
+            .onFailure { logger.warn(it) { "Stock backtest run not persisted: ${it.message}" } }
         return ResponseEntity.status(HttpStatus.OK).body<Any>(result)
     }
 
@@ -268,9 +287,144 @@ class StockBacktestApiController(
         return ResponseEntity.badRequest().body<Any>(mapOf("error" to reason))
     }
 
+    // -------------------------------------------------------------------------
+    // Run history
+    // -------------------------------------------------------------------------
+
+    /**
+     * One stored stock-backtest run. [params] is the **resolved** blob — every descriptor the
+     * strategy declares, defaults included — not just the fields the caller happened to send, so a
+     * row read back a month later still says exactly what was run.
+     */
+    data class StockRunDto(
+        val id: UUID,
+        val createdAt: Instant,
+        val strategy: String,
+        val from: LocalDate,
+        val to: LocalDate,
+        val symbols: List<String>,
+        val symbolCount: Int,
+        val initialCapital: BigDecimal,
+        val finalCapital: BigDecimal,
+        val totalPnl: BigDecimal,
+        val totalPnlPct: BigDecimal,
+        val tradeCount: Int,
+        val winRate: Double,
+        val avgRMultiple: BigDecimal?,
+        val profitFactor: BigDecimal?,
+        val maxDrawdownPct: BigDecimal,
+        /** Buy & hold over the same window. Null for rows stored before v39. */
+        val buyHoldPnlPct: BigDecimal?,
+        /** Commission + slippage, already inside [totalPnl]. Null for rows stored before v39. */
+        val totalCosts: BigDecimal?,
+        val params: JsonNode,
+    )
+
+    /**
+     * Stock-strategy runs, newest first. Filtered to the strategy library by construction: flag
+     * runs live in the same table under `strategy = "flag"` and are listed by the flag controller,
+     * so this endpoint returns only ids the [StrategyRegistry] knows.
+     */
+    @GetMapping("/stock/runs")
+    suspend fun listStockRuns(
+        @RequestParam(required = false) strategy: String?,
+        @RequestParam(required = false, defaultValue = "50") limit: Int,
+    ): ResponseEntity<List<StockRunDto>> {
+        val known = strategies.all().map { it.id }.toSet()
+        val rows = withContext(Dispatchers.IO) { runRepository.findAllByOrderByCreatedAtDesc() }
+        val filtered =
+            rows
+                .asSequence()
+                .filter { it.strategy in known }
+                .filter { strategy == null || it.strategy == strategy }
+                .take(limit.coerceIn(1, 500))
+                .map { it.toStockRun() }
+                .toList()
+        return ResponseEntity.ok(filtered)
+    }
+
+    private fun BacktestRunEntity.toStockRun(): StockRunDto {
+        val syms = symbols.split(",").filter { it.isNotBlank() }
+        return StockRunDto(
+            id = id!!,
+            createdAt = createdAt,
+            strategy = strategy,
+            from = fromDate,
+            to = toDate,
+            // A 100-symbol run would swamp a table cell, so the list is capped and the true count
+            // carried alongside it rather than the UI inferring "…" from a truncated array.
+            symbols = syms.take(MAX_LISTED_SYMBOLS),
+            symbolCount = syms.size,
+            initialCapital = initialCapital,
+            finalCapital = finalCapital,
+            totalPnl = totalPnl,
+            totalPnlPct = totalPnlPct,
+            tradeCount = tradeCount,
+            winRate = winRate,
+            avgRMultiple = avgRMultiple,
+            profitFactor = profitFactor,
+            maxDrawdownPct = maxDrawdownPct,
+            buyHoldPnlPct = buyHoldPnlPct,
+            totalCosts = totalCosts,
+            params = objectMapper.readTree(paramsJson),
+        )
+    }
+
+    private suspend fun persistRun(
+        strategyId: String,
+        req: StockBacktestRequest,
+        resolved: StrategyParams,
+        result: BacktestEngine.Result<StrategyTrade>,
+    ) {
+        val s = result.summary
+        val entity =
+            BacktestRunEntity(
+                createdAt = Instant.now(),
+                label = null,
+                strategy = strategyId,
+                fromDate = s.from,
+                toDate = s.to,
+                symbols = s.symbols.joinToString(","),
+                // Resolved params plus the host-level knobs that are not strategy descriptors but
+                // do change the answer — a row without them cannot be reproduced. The cost model
+                // is recorded by name because it reorders results outright: the Phase 5 sweep's
+                // best gross setting fell out of the costed top five, so "which costs" is not a
+                // footnote to a stored result, it is part of what the result means.
+                paramsJson =
+                    objectMapper.writeValueAsString(
+                        resolved.asMap() +
+                            mapOf(
+                                "timeframe" to (req.timeframe ?: Timeframe.DAILY.label),
+                                "holdOvernight" to (req.holdOvernight ?: true),
+                                "trailStopRMultiple" to req.trailStopRMultiple,
+                                "costs" to CostModel.nameOf(req.costs ?: CostModel.IBKR_US_STOCK),
+                            ),
+                    ),
+                initialCapital = s.initialCapital,
+                finalCapital = s.finalCapital,
+                totalPnl = s.totalPnl,
+                totalPnlPct = s.totalPnlPct,
+                tradeCount = s.tradeCount,
+                winCount = s.winCount,
+                lossCount = s.lossCount,
+                eodCount = s.eodCount,
+                winRate = s.winRate,
+                avgRMultiple = s.avgRMultiple,
+                avgWinR = s.avgWinR,
+                avgLossR = s.avgLossR,
+                profitFactor = s.profitFactor,
+                maxDrawdownPct = s.maxDrawdownPct,
+                buyHoldPnlPct = s.buyHoldPnlPct,
+                totalCosts = s.totalCosts,
+                tradesJson = objectMapper.writeValueAsString(result.trades),
+            )
+        withContext(Dispatchers.IO) { runRepository.save(entity) }
+    }
+
     companion object {
         private const val MAX_WAIT_SECONDS = 600
         private const val DEFAULT_MAX_OPEN_POSITIONS = 3
+        private const val MAX_LISTED_SYMBOLS = 12
 
         /** Delegates to [StrategyWarmup] so both hosts warm on an identical span. */
         fun warmupCalendarDays(
