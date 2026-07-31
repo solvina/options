@@ -74,6 +74,14 @@ class BacktestRunEntity(
     /** Commission + slippage already deducted from [totalPnl]. Null for runs stored before v39. */
     @Column(name = "total_costs", precision = 18, scale = 2)
     var totalCosts: BigDecimal? = null,
+    /**
+     * Gross exposure ÷ equity at its highest, and typically. Above 2× is untradeable overnight
+     * under Reg-T, which is the check that stops a levered run reading as an edge. Null before v40.
+     */
+    @Column(name = "peak_leverage", precision = 10, scale = 2)
+    var peakLeverage: BigDecimal? = null,
+    @Column(name = "median_leverage", precision = 10, scale = 2)
+    var medianLeverage: BigDecimal? = null,
     @Column(name = "trades_json", nullable = false, columnDefinition = "TEXT")
     var tradesJson: String = "[]",
 )

@@ -20,6 +20,8 @@ export interface StockRun {
   maxDrawdownPct: number
   buyHoldPnlPct: number | null
   totalCosts: number | null
+  peakLeverage: number | null
+  medianLeverage: number | null
   params: Record<string, unknown>
 }
 
@@ -130,6 +132,12 @@ export function StockRunHistory({ refreshKey, strategy }: { refreshKey: number; 
                 <th className="px-3 py-2 font-medium text-right">Avg R</th>
                 <th className="px-3 py-2 font-medium text-right">PF</th>
                 <th className="px-3 py-2 font-medium text-right">Max DD</th>
+                <th
+                  className="px-3 py-2 font-medium text-right"
+                  title="Gross exposure / equity: median, peak on hover. Over 2x could not be held overnight under Reg-T"
+                >
+                  Lev
+                </th>
                 <th className="px-3 py-2 font-medium text-right" title="Commission + slippage, already deducted from P&L">
                   Costs
                 </th>
@@ -176,6 +184,20 @@ export function StockRunHistory({ refreshKey, strategy }: { refreshKey: number; 
                     <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
                       {r.maxDrawdownPct.toFixed(1)}%
                     </td>
+                    <td
+                      className={`px-3 py-2 text-right tabular-nums ${
+                        r.peakLeverage == null ? 'text-muted-foreground' : r.peakLeverage > 2 ? neg : 'text-muted-foreground'
+                      }`}
+                      title={
+                        r.peakLeverage == null
+                          ? 'not recorded for this run'
+                          : `peak ${r.peakLeverage.toFixed(2)}x` +
+                            (r.peakLeverage > 2 ? ' — above the 2x Reg-T overnight limit, untradeable' : '')
+                      }
+                    >
+                      {r.medianLeverage == null ? '—' : `${r.medianLeverage.toFixed(1)}x`}
+                      {r.peakLeverage != null && r.peakLeverage > 2 && <span className="ml-1">!</span>}
+                    </td>
                     <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
                       {r.totalCosts == null ? '—' : money(r.totalCosts)}
                     </td>
@@ -186,10 +208,23 @@ export function StockRunHistory({ refreshKey, strategy }: { refreshKey: number; 
                     <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
                       {r.buyHoldPnlPct == null ? '—' : `${r.buyHoldPnlPct >= 0 ? '+' : ''}${r.buyHoldPnlPct.toFixed(1)}%`}
                     </td>
+                    {/* A levered run beating unlevered buy & hold is not a win, so the verdict is
+                        greyed out rather than shown green once the run could not have been held. */}
                     <td
                       className={`px-3 py-2 text-right tabular-nums font-medium ${
-                        r.buyHoldPnlPct == null ? '' : r.totalPnlPct - r.buyHoldPnlPct >= 0 ? pos : neg
+                        r.buyHoldPnlPct == null
+                          ? ''
+                          : r.peakLeverage != null && r.peakLeverage > 2
+                            ? 'text-muted-foreground line-through decoration-1'
+                            : r.totalPnlPct - r.buyHoldPnlPct >= 0
+                              ? pos
+                              : neg
                       }`}
+                      title={
+                        r.peakLeverage != null && r.peakLeverage > 2
+                          ? `Not comparable: this run reached ${r.peakLeverage.toFixed(2)}x leverage against an unlevered benchmark`
+                          : undefined
+                      }
                     >
                       {r.buyHoldPnlPct == null
                         ? '—'
@@ -198,7 +233,7 @@ export function StockRunHistory({ refreshKey, strategy }: { refreshKey: number; 
                   </tr>,
                   open && (
                     <tr key={`${r.id}-params`} className="border-t border-border bg-muted/20">
-                      <td colSpan={14} className="px-3 py-2">
+                      <td colSpan={15} className="px-3 py-2">
                         <ParamPills params={r.params} />
                         {r.symbolCount > r.symbols.length && (
                           <p className="mt-1.5 text-[11px] text-muted-foreground">

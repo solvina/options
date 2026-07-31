@@ -73,3 +73,5 @@ databaseChangeLog:
       file: db/changelog/v39__quarantine_fictional_flag_pnl.yaml
   - include:
       file: db/changelog/v39__backtest_run_benchmark_costs.yaml
+  - include:
+      file: db/changelog/v40__backtest_run_leverage.yaml

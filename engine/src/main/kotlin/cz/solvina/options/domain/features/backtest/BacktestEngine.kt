@@ -68,6 +68,13 @@ class BacktestEngine(
         val avgLossR: BigDecimal?,
         val profitFactor: BigDecimal?,
         val maxDrawdownPct: BigDecimal,
+        /**
+         * Highest gross exposure ÷ equity reached at any entry. Above 2× is untradeable overnight
+         * under Reg-T, so a headline return earned there is not a return anyone could have taken.
+         */
+        val peakLeverage: BigDecimal?,
+        /** Typical gross exposure ÷ equity, so one outsized entry does not stand in for the run. */
+        val medianLeverage: BigDecimal?,
         /** CAGR over the from→to window, % per year. Null when the window is degenerate. */
         val annualizedReturnPct: BigDecimal?,
         /** Buy & hold benchmark: initialCapital split equally across symbols, bought at the first
@@ -224,6 +231,10 @@ class BacktestEngine(
         val pending = mutableListOf<PendingEntry>()
         val open = mutableListOf<OpenPosition>()
 
+        // Gross exposure ÷ equity, sampled at each entry fill. Sampling there is enough to catch
+        // the peak: exposure only ever rises when a position opens.
+        val leverageSamples = mutableListOf<BigDecimal>()
+
         // Trade statistics — winCount=profit_target, lossCount=stop_loss, eodCount=eod_liquidation
         var winCount = 0
         var lossCount = 0
@@ -255,6 +266,7 @@ class BacktestEngine(
                         ),
                     )
                     strategy.onEntryFilled(pe.signal.tradeId, fillPrice, bar.time)
+                    leverageSamples.add(grossLeverage(open, capital))
                 }
 
                 // 2. Check exits for open positions
@@ -487,6 +499,8 @@ class BacktestEngine(
                         null
                     },
                 maxDrawdownPct = maxDrawdown.multiply(BigDecimal("100")).setScale(2, RoundingMode.HALF_UP),
+                peakLeverage = leverageSamples.maxOrNull()?.setScale(2, RoundingMode.HALF_UP),
+                medianLeverage = medianOf(leverageSamples)?.setScale(2, RoundingMode.HALF_UP),
                 annualizedReturnPct = annualizedReturnPct,
                 buyHoldFinalCapital = buyHoldFinal,
                 buyHoldPnl = buyHoldPnl,
@@ -596,6 +610,44 @@ class BacktestEngine(
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
+
+    /**
+     * Gross exposure ÷ equity right now: every open position at its cost basis over realized
+     * capital.
+     *
+     * Cost basis rather than mark value, because the question this answers is "could this purchase
+     * have been made", and that is settled at the moment of buying. Realized capital as the
+     * denominator because that is the only equity the engine tracks — open positions reserve no
+     * cash — which makes this the same ratio the position sizer implicitly worked from.
+     *
+     * Worth knowing what the number means: risk-%-of-equity sizing sets notional to
+     * `risk% ÷ stopDistance%`, so a 5% risk behind a 1.5% stop is 3.3× leverage whether or not
+     * anyone intended it. Reg-T allows 2× overnight, so anything above that is a result no account
+     * could have traded.
+     */
+    private fun grossLeverage(
+        open: List<OpenPosition>,
+        capital: BigDecimal,
+    ): BigDecimal {
+        if (capital <= BigDecimal.ZERO) return BigDecimal.ZERO
+        val exposure =
+            open.fold(BigDecimal.ZERO) { acc, op ->
+                acc.add(op.actualEntryPrice.multiply(BigDecimal(op.signal.shares)))
+            }
+        return exposure.divide(capital, 4, RoundingMode.HALF_UP)
+    }
+
+    /** Median of [values]; null when empty. Median over mean — one outsized entry should not set it. */
+    private fun medianOf(values: List<BigDecimal>): BigDecimal? {
+        if (values.isEmpty()) return null
+        val sorted = values.sorted()
+        val mid = sorted.size / 2
+        return if (sorted.size % 2 == 1) {
+            sorted[mid]
+        } else {
+            sorted[mid - 1].add(sorted[mid]).divide(BigDecimal(2), 4, RoundingMode.HALF_UP)
+        }
+    }
 
     private fun updateDrawdown(
         capital: BigDecimal,

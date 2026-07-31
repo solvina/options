@@ -317,6 +317,9 @@ class StockBacktestApiController(
         val buyHoldPnlPct: BigDecimal?,
         /** Commission + slippage, already inside [totalPnl]. Null for rows stored before v39. */
         val totalCosts: BigDecimal?,
+        /** Gross exposure ÷ equity, peak and typical. Null for rows stored before v40. */
+        val peakLeverage: BigDecimal?,
+        val medianLeverage: BigDecimal?,
         val params: JsonNode,
     )
 
@@ -366,6 +369,8 @@ class StockBacktestApiController(
             maxDrawdownPct = maxDrawdownPct,
             buyHoldPnlPct = buyHoldPnlPct,
             totalCosts = totalCosts,
+            peakLeverage = peakLeverage,
+            medianLeverage = medianLeverage,
             params = objectMapper.readTree(paramsJson),
         )
     }
@@ -416,6 +421,8 @@ class StockBacktestApiController(
                 maxDrawdownPct = s.maxDrawdownPct,
                 buyHoldPnlPct = s.buyHoldPnlPct,
                 totalCosts = s.totalCosts,
+                peakLeverage = s.peakLeverage,
+                medianLeverage = s.medianLeverage,
                 tradesJson = objectMapper.writeValueAsString(result.trades),
             )
         withContext(Dispatchers.IO) { runRepository.save(entity) }

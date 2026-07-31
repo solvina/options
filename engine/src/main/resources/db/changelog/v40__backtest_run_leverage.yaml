@@ -1,0 +1,37 @@
+databaseChangeLog:
+  # ---------------------------------------------------------------------------
+  # Realized leverage on backtest_run (2026-07-31).
+  #
+  # Added after an rsi_ma_cross run on MSFT 2015-2025 returned +939.1% against a
+  # +802.8% buy & hold and read, in the run-history table, as the best result
+  # there. It was not a result at all. riskPerTradePct 5 behind a stopLossPct of
+  # 1.5 sets notional to 5/1.5 = 3.3x equity, and the run's stored trades bear
+  # that out: median 2.93x, peak 3.66x, held overnight. Reg-T allows 2x
+  # overnight, so those positions could never have existed. Capped at 2x the same
+  # config returns +564.6% and LOSES to buy & hold by 238pp.
+  #
+  # Nothing was wrong with the arithmetic — the engine sized exactly as asked.
+  # The defect was that the table gave a levered run and an unlevered benchmark
+  # the same column and invited the comparison. These two numbers are what make
+  # such a row disqualify itself on sight.
+  #
+  # Peak AND median: peak is the constraint test (one entry above 2x is one that
+  # could not be placed), median is what the run actually did, and they diverge
+  # whenever equity swings under a fixed risk-%.
+  #
+  # Nullable — the flag controller writes to this table without them, and no
+  # existing row has them.
+  # ---------------------------------------------------------------------------
+  - changeSet:
+      id: v40__backtest_run_leverage
+      author: claude
+      changes:
+        - addColumn:
+            tableName: backtest_run
+            columns:
+              - column:
+                  name: peak_leverage
+                  type: NUMERIC(10, 2)
+              - column:
+                  name: median_leverage
+                  type: NUMERIC(10, 2)
