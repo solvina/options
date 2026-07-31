@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useLocalStorage } from '../lib/useLocalStorage'
-import { StockRunHistory } from '../components/backtest/StockRunHistory'
+import { StockRunHistory, type StockRun } from '../components/backtest/StockRunHistory'
 
 // ---- types ----
 type Timeframe = '1d' | '4h'
@@ -410,6 +410,40 @@ export function StockBacktestPage() {
     setForm(sanitizeForm({ ...form, strategy: id, params: defaultParams(strategies.find((s) => s.id === id)) }, strategies))
   }
 
+  /**
+   * Puts a stored run back in the form, so a history row is a starting point rather than a record.
+   *
+   * The stored blob mixes strategy params with the host-level keys persisted alongside them, so
+   * those are lifted back out to their own fields here; `costs` is dropped because the form has no
+   * control for it. Everything then goes through sanitizeForm, which drops any param the strategy
+   * no longer declares — a run stored before a descriptor changed loads as close as it validly can
+   * instead of being rejected.
+   */
+  function loadRun(r: StockRun) {
+    const { timeframe, holdOvernight, trailStopRMultiple, costs: _costs, ...params } = r.params as Record<string, unknown>
+    setForm(
+      sanitizeForm(
+        {
+          symbols: r.symbols.join(', '),
+          from: r.from,
+          to: r.to,
+          timeframe: timeframe === '4h' ? '4h' : '1d',
+          initialCapital: r.initialCapital,
+          holdOvernight: holdOvernight !== false,
+          trailStopRMultiple: typeof trailStopRMultiple === 'number' ? trailStopRMultiple : 0,
+          strategy: r.strategy,
+          params,
+        },
+        strategies,
+      ),
+    )
+    // The form is above the table it was clicked in; without this the values change off-screen and
+    // the click reads as having done nothing.
+    setResult(null)
+    setError(null)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
   /** Host fields + params flattened to one level — the shape the sweep form reads. */
   const flatSeed = (f: StockForm) => ({
     symbols: f.symbols, from: f.from, to: f.to, timeframe: f.timeframe, initialCapital: f.initialCapital, ...f.params,
@@ -644,7 +678,16 @@ export function StockBacktestPage() {
           {loading ? 'Running…' : 'Run backtest'}
         </button>
         {loading && <span className="text-xs text-muted-foreground">First run for a symbol/period downloads history — can take a few minutes.</span>}
-        <button onClick={() => setForm(sanitizeForm({ ...DEFAULTS, strategy: form.strategy, params: defaultParams(meta) }, strategies))}
+        <button
+          type="button"
+          onClick={() => {
+            setForm(sanitizeForm({ ...DEFAULTS, strategy: form.strategy, params: defaultParams(meta) }, strategies))
+            // Leaving the previous run's results and chart on screen made Reset look like it had
+            // done nothing at all — the changed fields are above the fold, the stale numbers below.
+            setResult(null)
+            setError(null)
+          }}
+          title="Restore the default window, capital and this strategy's own parameter defaults"
           className="text-sm text-muted-foreground hover:text-foreground">Reset</button>
         <button onClick={() => navigate('/backtest/sweeps/new', { state: { seed: flatSeed(sanitizeForm(savedForm, strategies)) } })}
           title="Open the sweep form seeded with these parameters — pick which ones to sweep, then start it as an engine job."
@@ -793,7 +836,7 @@ export function StockBacktestPage() {
         )
       })()}
 
-      <StockRunHistory refreshKey={runsKey} strategy={form.strategy} />
+      <StockRunHistory refreshKey={runsKey} strategy={form.strategy} onLoad={loadRun} />
     </div>
   )
 }

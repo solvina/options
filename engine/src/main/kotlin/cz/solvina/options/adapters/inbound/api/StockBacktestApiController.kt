@@ -354,9 +354,10 @@ class StockBacktestApiController(
             strategy = strategy,
             from = fromDate,
             to = toDate,
-            // A 100-symbol run would swamp a table cell, so the list is capped and the true count
-            // carried alongside it rather than the UI inferring "…" from a truncated array.
-            symbols = syms.take(MAX_LISTED_SYMBOLS),
+            // The FULL list, uncapped. It was capped for display once, which was a trap the moment
+            // the UI could load a row back into the form: a 100-symbol run would have silently
+            // reloaded as its first 12. The table shows the count and puts the list on hover.
+            symbols = syms,
             symbolCount = syms.size,
             initialCapital = initialCapital,
             finalCapital = finalCapital,
@@ -431,7 +432,6 @@ class StockBacktestApiController(
     companion object {
         private const val MAX_WAIT_SECONDS = 600
         private const val DEFAULT_MAX_OPEN_POSITIONS = 3
-        private const val MAX_LISTED_SYMBOLS = 12
 
         /** Delegates to [StrategyWarmup] so both hosts warm on an identical span. */
         fun warmupCalendarDays(

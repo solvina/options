@@ -64,10 +64,22 @@ function ParamPills({ params }: { params: Record<string, unknown> }) {
 /**
  * History of stock-strategy backtests, newest first, each with the parameters it ran under.
  *
+ * Clicking a row loads it back into the form via [onLoad] — the point of keeping history is to
+ * return to a setting and vary it, which reading numbers off a table does not let you do. The
+ * parameter pills moved to their own per-row toggle so the row click can mean the useful thing.
+ *
  * Reloads whenever [refreshKey] changes so a run just executed on this page appears without a
  * manual refresh; the page bumps that key after a successful Run.
  */
-export function StockRunHistory({ refreshKey, strategy }: { refreshKey: number; strategy?: string }) {
+export function StockRunHistory({
+  refreshKey,
+  strategy,
+  onLoad,
+}: {
+  refreshKey: number
+  strategy?: string
+  onLoad?: (run: StockRun) => void
+}) {
   const [runs, setRuns] = useState<StockRun[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -97,6 +109,7 @@ export function StockRunHistory({ refreshKey, strategy }: { refreshKey: number; 
     <div className="rounded-lg border border-border">
       <div className="flex flex-wrap items-center gap-3 border-b border-border px-3 py-2">
         <h2 className="text-sm font-semibold">Run history</h2>
+        {onLoad && <span className="text-xs text-muted-foreground">click a row to load it into the form</span>}
         <span className="text-xs text-muted-foreground">{runs.length} run{runs.length === 1 ? '' : 's'}</span>
         {strategy && (
           <label className="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -149,6 +162,7 @@ export function StockRunHistory({ refreshKey, strategy }: { refreshKey: number; 
                 <th className="px-3 py-2 font-medium text-right" title="P&L minus buy & hold — the only column that decides anything">
                   vs B&H
                 </th>
+                <th className="px-2 py-2" />
               </tr>
             </thead>
             <tbody>
@@ -157,9 +171,9 @@ export function StockRunHistory({ refreshKey, strategy }: { refreshKey: number; 
                 return [
                   <tr
                     key={r.id}
-                    onClick={() => setExpanded(open ? null : r.id)}
-                    className="cursor-pointer border-t border-border hover:bg-accent/40"
-                    title="Click to show the parameters this run used"
+                    onClick={() => onLoad?.(r)}
+                    className={`border-t border-border ${onLoad ? 'cursor-pointer hover:bg-accent/40' : ''}`}
+                    title={onLoad ? 'Click to load this run back into the form' : undefined}
                   >
                     <td className="px-3 py-2 whitespace-nowrap tabular-nums text-muted-foreground">
                       {new Date(r.createdAt).toLocaleString('en-GB', {
@@ -230,16 +244,22 @@ export function StockRunHistory({ refreshKey, strategy }: { refreshKey: number; 
                         ? '—'
                         : `${r.totalPnlPct - r.buyHoldPnlPct >= 0 ? '+' : ''}${(r.totalPnlPct - r.buyHoldPnlPct).toFixed(1)}pp`}
                     </td>
+                    <td className="px-2 py-2 text-right">
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); setExpanded(open ? null : r.id) }}
+                        className="rounded border border-border px-1.5 py-0.5 text-[11px] text-muted-foreground hover:text-foreground"
+                        title="Show the parameters this run used"
+                      >
+                        {open ? '▲' : 'params'}
+                      </button>
+                    </td>
                   </tr>,
                   open && (
                     <tr key={`${r.id}-params`} className="border-t border-border bg-muted/20">
-                      <td colSpan={15} className="px-3 py-2">
+                      <td colSpan={16} className="px-3 py-2">
                         <ParamPills params={r.params} />
-                        {r.symbolCount > r.symbols.length && (
-                          <p className="mt-1.5 text-[11px] text-muted-foreground">
-                            {r.symbols.join(', ')} … and {r.symbolCount - r.symbols.length} more
-                          </p>
-                        )}
+                        <p className="mt-1.5 text-[11px] text-muted-foreground">{r.symbols.join(', ')}</p>
                       </td>
                     </tr>
                   ),
