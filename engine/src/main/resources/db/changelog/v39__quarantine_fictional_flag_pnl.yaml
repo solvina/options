@@ -1,0 +1,86 @@
+databaseChangeLog:
+  # ---------------------------------------------------------------------------
+  # Quarantine fictional flag P&L (2026-07-29).
+  #
+  # Before cd58341 (deployed 2026-07-24) the flag close path marked a position
+  # CLOSED and wrote realized P&L from the quote MID, without confirming that the
+  # sell order actually filled. Ten rows carry P&L for sales that never happened.
+  #
+  # They are identifiable on their own merits, not just by date: the strategy
+  # exits on a 1R stop or a 2R trailing stop, so it has no mechanism that returns
+  # 7.88R on average. The ten rows and their invented numbers:
+  #
+  #   META  2026-07-01  +3027.71  30.28R
+  #   AAPL  2026-07-01  +2007.45  20.07R
+  #   TSLA  2026-07-01   +989.48   9.89R
+  #   AMD   2026-07-23   +531.76   5.32R
+  #   GOOGL 2026-07-06   +446.34   4.46R
+  #   AAPL  2026-07-06   +402.96   4.03R
+  #   JPM   2026-07-22   +175.68   1.76R
+  #   GOOGL 2026-07-01   +128.67   1.29R
+  #   BAC   2026-07-22   +118.32   1.18R
+  #   JPM   2026-07-23    +50.75   0.51R
+  #
+  # Together +$7,879.12 — 96% of the +$8,218.92 the flag strategy appeared to
+  # have made. Excluding them the strategy is flat: 132 trades, +$2.57 each,
+  # avg 0.02R, t = 0.21. Every expectancy, win rate and R-multiple the UI shows
+  # is wrong until these are out of the aggregates.
+  #
+  # NULLing realized_pnl is what removes them: FlagAnalyticsService filters on
+  # `realizedPnl != null`, so a NULL row drops out of the trade count, the win
+  # rate denominator and the P&L sum alike. Zeroing them instead would leave ten
+  # phantom break-even trades in every statistic.
+  #
+  # close_price_actual is deliberately KEPT. It is the mark price the engine saw,
+  # which is real information about where the position stood — it just was not a
+  # fill. close_reason records that distinction so the rows stay auditable rather
+  # than looking like ordinary closes with missing data.
+  #
+  # The date guard matters: manual closes from 2026-07-24 onward run through the
+  # fixed path, which requires a real fill, so their P&L is trustworthy and must
+  # not be touched. (Those rows currently hold NULL P&L — the fix aborting rather
+  # than inventing a number — but a genuine post-fix manual close would not.)
+  # ---------------------------------------------------------------------------
+  - changeSet:
+      id: v39__quarantine_fictional_flag_pnl
+      author: claude
+      comment: NULL the P&L on 10 pre-fix manual closes booked at quote-mid with no fill
+      changes:
+        - update:
+            tableName: flag_positions
+            columns:
+              - column:
+                  name: realized_pnl
+                  valueNumeric: null
+              - column:
+                  name: r_multiple
+                  valueNumeric: null
+              - column:
+                  name: close_reason
+                  value: manual_unverified_fill
+            where: close_reason = 'manual' AND realized_pnl IS NOT NULL AND closed_at < '2026-07-24'
+      rollback:
+        # Restores each row's original values. Also serves as the audit record of
+        # exactly what was quarantined, should the numbers ever need reconstructing.
+        - sql:
+            sql: |
+              UPDATE flag_positions SET realized_pnl = 3027.71, r_multiple = 30.28, close_reason = 'manual'
+                WHERE symbol = 'META' AND close_reason = 'manual_unverified_fill' AND close_price_actual = 618.98;
+              UPDATE flag_positions SET realized_pnl = 2007.45, r_multiple = 20.07, close_reason = 'manual'
+                WHERE symbol = 'AAPL' AND close_reason = 'manual_unverified_fill' AND close_price_actual = 294.15;
+              UPDATE flag_positions SET realized_pnl = 989.48, r_multiple = 9.89, close_reason = 'manual'
+                WHERE symbol = 'TSLA' AND close_reason = 'manual_unverified_fill' AND close_price_actual = 426.07;
+              UPDATE flag_positions SET realized_pnl = 531.76, r_multiple = 5.32, close_reason = 'manual'
+                WHERE symbol = 'AMD' AND close_reason = 'manual_unverified_fill' AND close_price_actual = 558.85;
+              UPDATE flag_positions SET realized_pnl = 446.34, r_multiple = 4.46, close_reason = 'manual'
+                WHERE symbol = 'GOOGL' AND close_reason = 'manual_unverified_fill' AND close_price_actual = 363.30;
+              UPDATE flag_positions SET realized_pnl = 402.96, r_multiple = 4.03, close_reason = 'manual'
+                WHERE symbol = 'AAPL' AND close_reason = 'manual_unverified_fill' AND close_price_actual = 314.05;
+              UPDATE flag_positions SET realized_pnl = 175.68, r_multiple = 1.76, close_reason = 'manual'
+                WHERE symbol = 'JPM' AND close_reason = 'manual_unverified_fill' AND close_price_actual = 348.46;
+              UPDATE flag_positions SET realized_pnl = 128.67, r_multiple = 1.29, close_reason = 'manual'
+                WHERE symbol = 'GOOGL' AND close_reason = 'manual_unverified_fill' AND close_price_actual = 361.37;
+              UPDATE flag_positions SET realized_pnl = 118.32, r_multiple = 1.18, close_reason = 'manual'
+                WHERE symbol = 'BAC' AND close_reason = 'manual_unverified_fill' AND close_price_actual = 61.76;
+              UPDATE flag_positions SET realized_pnl = 50.75, r_multiple = 0.51, close_reason = 'manual'
+                WHERE symbol = 'JPM' AND close_reason = 'manual_unverified_fill' AND close_price_actual = 349.66;

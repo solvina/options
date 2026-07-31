@@ -65,5 +65,11 @@ databaseChangeLog:
       file: db/changelog/v37__stock_position.yaml
   - include:
       file: db/changelog/v38__strategy_params.yaml
+  # Two v39s: the quarantine ran on prod from an uncommitted working-tree file on
+  # 2026-07-30 and is recorded in databasechangelog under this exact filename, so
+  # renumbering it would make Liquibase re-run it as a new changeset. Listed in
+  # execution order.
+  - include:
+      file: db/changelog/v39__quarantine_fictional_flag_pnl.yaml
   - include:
       file: db/changelog/v39__backtest_run_benchmark_costs.yaml
