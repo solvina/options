@@ -31,6 +31,13 @@ internal object SnapshotReady {
 
     /** Option price only (mid for exits/repricing) — bid/ask are enough, greeks not required. */
     val OPTION_PRICE: (MarketDataSnapshot) -> Boolean = { it.bid > 0 && it.ask > 0 }
+
+    /** Combo (BAG) quote. Unlike a single leg, a spread's bid/ask may legitimately be negative or
+     *  zero depending on IBKR's packaging convention, so `> 0` would never complete. Both sides must
+     *  simply have arrived; the −1 placeholder is filtered downstream in
+     *  [cz.solvina.options.domain.features.market.model.ComboQuote.achievableCredit], which is the
+     *  only place that can tell it apart from a real negative combo bid. */
+    val COMBO_QUOTE: (MarketDataSnapshot) -> Boolean = { !it.bid.isNaN() && !it.ask.isNaN() }
 }
 
 /** A SCANNER request found no free market-data line within its bounded wait — skip, don't hang. */

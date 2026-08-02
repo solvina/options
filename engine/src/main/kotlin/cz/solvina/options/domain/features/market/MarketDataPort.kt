@@ -1,5 +1,6 @@
 package cz.solvina.options.domain.features.market
 
+import cz.solvina.options.domain.features.market.model.ComboQuote
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
 import cz.solvina.options.domain.models.Symbol
@@ -48,4 +49,20 @@ interface MarketDataPort {
      * test/backtest adapters on the snapshot path; the IBKR adapter overrides.
      */
     fun streamedUnderlyingPrice(symbol: Symbol): Money? = null
+
+    /**
+     * Bid/ask for the [sold]+[bought] pair quoted as one BAG instrument, or null when unavailable.
+     *
+     * Costs one extra market-data line for the duration of a single snapshot, and only fires for a
+     * pair that already cleared strike selection — a handful of requests per scan, not per symbol.
+     * It does NOT replace the per-leg quotes: those are still required for delta-band selection, the
+     * mid credit, the per-leg liquidity gate and the fresh-tick recheck at execution.
+     *
+     * Default null keeps test/backtest adapters on the leg-derived natural cross; the IBKR adapter
+     * overrides. Null is a first-class answer here — every caller must fall back rather than skip.
+     */
+    suspend fun getComboQuote(
+        sold: OptionContract,
+        bought: OptionContract,
+    ): ComboQuote? = null
 }

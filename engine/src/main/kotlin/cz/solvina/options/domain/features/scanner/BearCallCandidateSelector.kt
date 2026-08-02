@@ -191,15 +191,25 @@ class BearCallCandidateSelector(
             return reject(RejectReason.RISK_EXCEEDS_BUDGET)
         }
 
-        // 7. Build execution request — start at mid, floor at bid-side natural cross price
-        val bidCredit =
+        // 7. Build execution request — start at mid, floor at the achievable combo credit. Mirrors
+        // BullPutCandidateSelector: the spread's own BAG bid where IBKR quotes one, leg-derived
+        // natural cross only as a fallback. See ComboQuote for why the cross gated on a price the
+        // engine's own entry-min-fill-pct-of-mid would never let it accept anyway.
+        val legCross =
             soldQuote.bid.amount
                 .subtract(boughtQuote.ask.amount)
                 .setScale(4, RoundingMode.HALF_UP)
+        val comboQuote = marketDataPort.getComboQuote(soldQuote.contract, boughtQuote.contract)
+        val bidCredit = comboQuote?.achievableCredit(midCredit) ?: legCross
         detail = detail.copy(bidCredit = bidCredit)
 
-        // Require the ACHIEVABLE combo credit (natural cross = soldBid − boughtAsk) to clear the floor,
-        // else the order could never fill at a credit we'd accept — skip rather than launch.
+        tradeLogger.info {
+            "COMBO  $symbol  (bear-call) bag_bid=${comboQuote?.bid ?: "n/a"}  bag_ask=${comboQuote?.ask ?: "n/a"}  " +
+                "leg_cross=\$$legCross  used=\$$bidCredit  mid=\$$midCredit"
+        }
+
+        // Require the achievable credit to clear the floor, else the order could never fill at a
+        // credit we'd accept — skip rather than launch.
         if (bidCredit < config.minCreditPerShare) {
             logger.info {
                 "[$symbol] (bear-call) Skipping — achievable combo bid \$$bidCredit < min credit \$${config.minCreditPerShare}"

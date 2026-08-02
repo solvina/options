@@ -186,16 +186,30 @@ class BullPutCandidateSelector(
             return reject(RejectReason.RISK_EXCEEDS_BUDGET)
         }
 
-        // 7. Build execution request — start at mid, floor at bid-side natural cross price
-        val bidCredit =
+        // 7. Build execution request — start at mid, floor at the achievable combo credit.
+        //
+        // The floor is the spread's own BAG bid where IBKR quotes one, and the leg-derived natural
+        // cross (soldBid − boughtAsk) only as a fallback. The natural cross assumes both legs are hit
+        // at their worst posted price at the same instant; entry-min-fill-pct-of-mid already forbids
+        // ever accepting worse than 95% of fresh mid, so it gated on a price we would never trade at.
+        val legCross =
             soldQuote.bid.amount
                 .subtract(boughtQuote.ask.amount)
                 .setScale(4, RoundingMode.HALF_UP)
+        val comboQuote = marketDataPort.getComboQuote(soldQuote.contract, boughtQuote.contract)
+        val bidCredit = comboQuote?.achievableCredit(midCredit) ?: legCross
         detail = detail.copy(bidCredit = bidCredit)
 
-        // P1 — require the ACHIEVABLE combo credit (natural cross = soldBid − boughtAsk) to clear the
-        // min-credit floor. Selecting off mid while the real combo bid sits below the floor was the
-        // other no-fill cause: the order could never fill at a credit we'd accept. Skip, don't launch.
+        // Both numbers are logged on every evaluation, not just rejections: BAG market data is new
+        // here and its sign convention was inferred rather than documented, so the side-by-side is
+        // what confirms achievableCredit is reading IBKR correctly once real sessions produce data.
+        tradeLogger.info {
+            "COMBO  $symbol  bag_bid=${comboQuote?.bid ?: "n/a"}  bag_ask=${comboQuote?.ask ?: "n/a"}  " +
+                "leg_cross=\$$legCross  used=\$$bidCredit  mid=\$$midCredit"
+        }
+
+        // Require the achievable credit to clear the min-credit floor: below it the order could never
+        // fill at a credit we would accept, so skip rather than launch an order destined to be pulled.
         if (bidCredit < minCreditPerShare) {
             logger.info {
                 "[$symbol] Skipping — achievable combo bid \$$bidCredit < min credit \$$minCreditPerShare (would never fill at floor)"

@@ -2,11 +2,13 @@ package cz.solvina.options.adapters.outbound.ibkr.market
 
 import com.ib.client.EClientSocket
 import cz.solvina.options.adapters.outbound.ibkr.IbkrContractFactory
+import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
 import cz.solvina.options.adapters.outbound.ibkr.cache.OptionContractKey
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderIdCounter
 import cz.solvina.options.domain.features.market.MarketDataHealthTracker
 import cz.solvina.options.domain.features.market.MarketDataPort
+import cz.solvina.options.domain.features.market.model.ComboQuote
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
 import cz.solvina.options.domain.models.Symbol
@@ -36,6 +38,7 @@ class IbkrMarketDataAdapter(
     private val contractFactory: IbkrContractFactory,
     private val historicalDataAdapter: IbkrHistoricalDataAdapter,
     private val healthTracker: MarketDataHealthTracker,
+    private val contractCache: IbkrContractCache,
 ) : MarketDataPort {
     // Every underlying-price fetch feeds the market-data flow signal (see MarketDataHealthTracker):
     // success ⇒ data is live, the "No price data" failure ⇒ starved even if the socket is connected.
@@ -98,6 +101,44 @@ class IbkrMarketDataAdapter(
                 "exp=${contract.expiry} (bid=${snapshot.bid} ask=${snapshot.ask}) — returning 0, no BS fallback"
         }
         return Money(BigDecimal.ZERO)
+    }
+
+    // Quotes the spread as one BAG instrument instead of inferring it from the two leg books. The
+    // conIds are already warm here: strike selection fetched greeks for both legs moments earlier
+    // via the same cache, so this adds a market-data line but no contract-details round trip.
+    //
+    // Every failure mode returns null and the caller falls back to the leg-derived natural cross, so
+    // the worst case is exactly the behaviour that preceded this method.
+    override suspend fun getComboQuote(
+        sold: OptionContract,
+        bought: OptionContract,
+    ): ComboQuote? {
+        val soldConId = contractCache.getCachedOptionConId(OptionContractKey(sold.symbol, sold.expiry, sold.strike, sold.type))
+        val boughtConId =
+            contractCache.getCachedOptionConId(OptionContractKey(bought.symbol, bought.expiry, bought.strike, bought.type))
+        if (soldConId == null || boughtConId == null) {
+            logger.debug { "[${sold.symbol}] No cached conIds for combo quote (sold=$soldConId bought=$boughtConId) — using leg cross" }
+            return null
+        }
+        val snapshot =
+            runCatching {
+                // TWS_LIMITS: +1 market-data line for one snapshot, self-retiring via the helper's
+                // finally. Fires only for a pair that already passed strike selection.
+                marketSnapshotHelper.reqMktDataSnapshot(
+                    sold.symbol,
+                    contractFactory.bagContract(sold, soldConId, boughtConId),
+                    "combo BAG quote (scanner achievable-credit check)",
+                    SnapshotReady.COMBO_QUOTE,
+                )
+            }.getOrElse { e ->
+                logger.debug(e) { "[${sold.symbol}] Combo quote request failed — using leg cross: ${e.message}" }
+                return null
+            }
+        if (snapshot.bid.isNaN() || snapshot.ask.isNaN()) return null
+        return ComboQuote(
+            bid = BigDecimal(snapshot.bid).setScale(4, RoundingMode.HALF_UP),
+            ask = BigDecimal(snapshot.ask).setScale(4, RoundingMode.HALF_UP),
+        )
     }
 
     // ---- Persistent per-leg option quote streams for open positions (2026-07-21) ----
