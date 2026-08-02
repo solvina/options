@@ -63,10 +63,23 @@ scanner:
   execution-timeout-minutes: 15
   ticks-before-price-adjust: 5
   price-adjust-interval-seconds: 30
-  # 2026-07-18: 0.15 → 0.10. Post-epoch fills averaged −$17/spread vs entry mid and the worst
-  # slippage came from wide-legged books (COHR −$36, MRVL −$35) — half the leg spread is the
-  # market maker's fee, so only tight books are worth crossing. Fewer entries, better ones.
-  max-leg-bid-ask-spread-pct: 0.10 # re-checked on the fresh tick at execution
+  # 2026-08-02: 0.10 → 0.25. At 0.10 this gate rejected 18 of the 20 candidates that cleared every
+  # scanner filter over 07-16→07-30 — on QCOM/ORCL/MU/AMT/TMUS, i.e. some of the most liquid option
+  # books in the US market — and the engine placed zero orders in that window. Real 43-DTE equity
+  # books run 15–40% of leg mid (QCOM 07-30: 150P at 17%, 140P at 26%), so 0.10 is unreachable.
+  # Note 0.15 was no better: the 07-16/07-17 candidates were rejected here at that setting too,
+  # which is why this is not a revert.
+  #
+  # It is a proxy for execution cost, and that cost is already bounded directly and precisely by
+  # entry-min-fill-pct-of-mid (0.95 → ≤5% of mid, ~$6 on a $1.20 credit) — rejecting $45–75 of
+  # expected profit to avoid ≤$6 is the wrong trade. Kept rather than removed for two reasons the
+  # 0.95 floor does NOT cover: with very wide legs the mid is itself a poor fair-value estimate, and
+  # the EXIT (buying back at TP 50%) is taxed by book width with no equivalent guard.
+  #
+  # History: 0.15 → 0.10 on 2026-07-18, when post-epoch fills averaged −$17/spread vs entry mid and
+  # the worst slippage came from wide-legged books (COHR −$36, MRVL −$35). That reading was drawn
+  # from 10 paper fills; the drought it caused cost more information than the slippage did.
+  max-leg-bid-ask-spread-pct: 0.25 # re-checked on the fresh tick at execution
   # 2026-07-18: 0.85 → 0.95. Patient entry: rest near mid and let the 15-min scan retry rather
   # than walk down toward the natural cross. All 10 post-epoch fills printed below entry mid
   # (avg −$17 ≈ 15–30% of the expected TP win) — a systematic drag the 67% breakeven math ignores.
