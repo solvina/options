@@ -51,8 +51,14 @@ data class ScannerConfig(
     val orderChaseTimeoutMinutes: Long = 5,
     val orderChaseMaxRetries: Int = 3,
     val orderChasePriceStep: Double = 0.03,
-    // Entry cooldown — how long to wait before retrying a symbol after a failed entry
-    val entryCooldownMinutes: Long = 240,
+    // Entry cooldown after a TRANSIENT no-fill (drift, timeout, floor reached, market moved, no
+    // market data). These are price/data conditions that change within minutes, so the symbol goes
+    // back in the pool after ~2 scan cycles rather than being benched for most of the session.
+    val entryCooldownMinutes: Long = 30,
+    // Entry cooldown after the BROKER rejected the order (ORDER_REJECTED). Not a price signal —
+    // a malformed order or an account-level refusal will be refused identically on retry, so this
+    // stays long deliberately. Do not collapse it into entryCooldownMinutes.
+    val orderRejectedCooldownMinutes: Long = 240,
     // Stop-loss cooldown — how long to block re-entry after a CLOSED_STOP
     val stopLossCooldownHours: Long = 24,
     // Schedulers

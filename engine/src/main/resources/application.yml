@@ -87,6 +87,18 @@ scanner:
   order-chase-timeout-minutes: 3   # Conservative: 5 → 3 (give up sooner, retry next scan)
   order-chase-max-retries: 1       # Conservative: 3 → 1 (one attempt per order, not aggressive chasing)
   order-chase-price-step: 0.01     # Conservative: 0.03 → 0.01 (gradual adjustments, avoid floor hits)
+  # Entry cooldown, split by cause 2026-08-03 (was a single 240 for both).
+  #
+  # Five of the six outcomes that reach the cooldown — DRIFT_ABORTED, TIMED_OUT, FLOOR_REACHED,
+  # MARKET_MOVED_TOO_FAR, NO_MARKET_DATA — mean "not at that price, right then". They say nothing
+  # about the next quarter hour, and 240 min in a 6.5h session benched a symbol for the rest of the
+  # day after one miss. 30 min ≈ 2 scan cycles: enough not to re-fire into the identical failing
+  # quote, short enough for several attempts per session.
+  entry-cooldown-minutes: 30
+  # ORDER_REJECTED is the sixth and is NOT a price signal — the broker refused the order itself
+  # (e.g. IBKR 201, paper "guaranteed-to-lose"). A malformed or account-refused order is refused
+  # identically on retry, so a short cycle just re-submits it. Kept at the old 240 on purpose.
+  order-rejected-cooldown-minutes: 240
   # Stop-loss quality gates (2026-07-07): SL needs 2 consecutive breaching cycles, never fires in
   # the first 15 min after entry nor the first 30 min of the session (LITE stopped 29s after entry,
   # NBIS at 9:59 ET on opening-width quotes — both pure quote artifacts).

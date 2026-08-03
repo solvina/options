@@ -606,12 +606,20 @@ class TradeExecutionService(
             "ABORTED ${request.underlyingSymbol}  ${request.legsLabel}  reason=${outcome.name}" +
                 (rejectReason?.let { "  ($it)" } ?: "")
         }
-        val abortStatus = if (outcome == ExecutionOutcome.ORDER_REJECTED) SpreadStatus.CLOSED_REJECTED else SpreadStatus.CLOSED_TIMEOUT
+        val brokerRejected = outcome == ExecutionOutcome.ORDER_REJECTED
+        val abortStatus = if (brokerRejected) SpreadStatus.CLOSED_REJECTED else SpreadStatus.CLOSED_TIMEOUT
         writer.markStatus(pendingSpread, abortStatus, outcome.name.lowercase())
-        val cooldownExpiry = Instant.now(clock).plusSeconds(config.entryCooldownMinutes * 60)
+        // A broker rejection and a no-fill are different signals and get different benches. DRIFT/
+        // TIMED_OUT/FLOOR_REACHED/MARKET_MOVED_TOO_FAR/NO_MARKET_DATA all mean "not at that price,
+        // right then" — conditions that move within minutes, so a short cooldown lets the symbol
+        // retry the same session. ORDER_REJECTED means the broker refused the order itself; retrying
+        // that on a short cycle just re-submits something that will be refused the same way.
+        val cooldownMinutes = if (brokerRejected) config.orderRejectedCooldownMinutes else config.entryCooldownMinutes
+        val cooldownExpiry = Instant.now(clock).plusSeconds(cooldownMinutes * 60)
         cooldownUntil[request.underlyingSymbol] = cooldownExpiry
         logger.info {
-            "[${request.underlyingSymbol}] Entry cooldown set — won't retry until $cooldownExpiry (${config.entryCooldownMinutes} min)"
+            "[${request.underlyingSymbol}] Entry cooldown set — won't retry until $cooldownExpiry " +
+                "($cooldownMinutes min, outcome=${outcome.name})"
         }
         return TradeExecutionResult(outcome)
     }
