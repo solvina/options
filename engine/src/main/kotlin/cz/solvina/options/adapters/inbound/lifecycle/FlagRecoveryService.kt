@@ -22,9 +22,13 @@ import kotlinx.coroutines.sync.withLock
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 import java.time.Clock
+import java.time.Duration
 import java.time.Instant
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.toJavaDuration
 
 private val logger = KotlinLogging.logger {}
 
@@ -34,6 +38,21 @@ private const val RECOVERY_POSITION_POLL_DELAY_MS = 500L
 
 /** Max wait for the broker's initial portfolio download before a snapshot decision. */
 private val INITIAL_SNAPSHOT_TIMEOUT = 10.seconds
+
+/**
+ * A protective stop we submitted must show up in the broker's open-order list within this window
+ * before recovery is allowed to submit another for the same symbol.
+ *
+ * Without this, recovery has no memory between runs: it submits a stop, the order never appears in
+ * `getOpenOrders()`, the next run therefore still sees an unprotected position and submits another.
+ * On 2026-08-05 that produced 32 trailing-stop orders for two positions in 72 minutes, none of them
+ * ever acknowledged. Deliberately longer than the recovery interval so a slow acknowledgement can
+ * never be mistaken for a lost order.
+ */
+private val REPROTECT_ACK_GRACE = 10.minutes
+
+/** Consecutive unacknowledged submissions for one symbol before escalating to a CRITICAL alert. */
+private const val REPROTECT_ALERT_AFTER = 3
 
 /**
  * Re-attaches the engine to flag positions it stopped watching.
@@ -65,6 +84,15 @@ class FlagRecoveryService(
 ) {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val mutex = Mutex()
+
+    /** Last protective stop this service submitted per symbol, for the acknowledgement guard. */
+    private data class ReprotectAttempt(
+        val at: Instant,
+        val orderId: Int,
+        val consecutiveUnacked: Int,
+    )
+
+    private val lastReprotect = ConcurrentHashMap<String, ReprotectAttempt>()
 
     @Scheduled(
         fixedDelayString = "\${flag-recovery.delay-ms:300000}",
@@ -152,7 +180,7 @@ class FlagRecoveryService(
                 when {
                     available >= row.shares -> {
                         availableLong.merge(row.symbol.value, -row.shares, Int::plus)
-                        reprotect(row)
+                        reprotect(row, openOrderIds)
                     }
                     row.status == FlagStatus.PENDING -> {
                         logger.info { "Flag recovery: [${row.symbol}] entry order gone and shares not held — entry never filled" }
@@ -196,7 +224,39 @@ class FlagRecoveryService(
      * order had trailed server-side, and re-arming from the stale DB stop would silently lower the
      * live trigger back to entry-time protection, giving back locked-in profit on the next dip.
      */
-    private suspend fun reprotect(row: FlagPosition) {
+    private suspend fun reprotect(
+        row: FlagPosition,
+        openOrderIds: Set<Int>,
+    ) {
+        val symbol = row.symbol.value
+        val previous = lastReprotect[symbol]
+        if (previous != null) {
+            if (previous.orderId in openOrderIds) {
+                // The broker took it after all; the position is protected and this row is stale.
+                lastReprotect.remove(symbol)
+            } else {
+                val waited = Duration.between(previous.at, Instant.now(clock))
+                if (waited < REPROTECT_ACK_GRACE.toJavaDuration()) {
+                    logger.warn {
+                        "Flag recovery: [$symbol] stop ${previous.orderId} submitted ${waited.seconds}s ago has still not " +
+                            "appeared in open orders — waiting for acknowledgement instead of submitting another"
+                    }
+                    return
+                }
+                // Grace elapsed and the order never landed: that submission is lost, not slow.
+                if (previous.consecutiveUnacked + 1 >= REPROTECT_ALERT_AFTER) {
+                    alertPort.send(
+                        AlertLevel.CRITICAL,
+                        "Cannot protect flag position: $symbol",
+                        "${row.shares} shares of $symbol are held with NO working protective order. " +
+                            "${previous.consecutiveUnacked + 1} trailing stops have been submitted and none was ever " +
+                            "acknowledged by the broker — automatic re-protection is not working. Place a stop or close " +
+                            "the position in TWS.",
+                    )
+                }
+            }
+        }
+
         // Pre-v26 rows have no persisted trail; profitTargetPrice = entryPrice + trailAmount by construction.
         val trailAmount = row.trailAmount ?: row.profitTargetPrice.subtract(row.entryPrice)
         val ratcheted = row.highestPriceSeen?.subtract(trailAmount)
@@ -213,6 +273,12 @@ class FlagRecoveryService(
                     )
                     return
                 }
+        lastReprotect[symbol] =
+            ReprotectAttempt(
+                at = Instant.now(clock),
+                orderId = newOrderId,
+                consecutiveUnacked = (previous?.consecutiveUnacked ?: 0) + 1,
+            )
         val updated =
             flagPort.update(row.copy(status = FlagStatus.OPEN, stopLossOrderId = newOrderId, profitTargetOrderId = newOrderId))
         logger.warn { "Flag recovery: [${row.symbol}] re-protected ${row.shares} shares with a new trailing stop (orderId=$newOrderId)" }
