@@ -19,9 +19,17 @@ private val logger = KotlinLogging.logger {}
  *
  * Cadence is deliberately just after each European and US open rather than continuous: these are
  * daily-bar strategies, so the only moment a fresh decision exists is once the previous bar has
- * closed, and the plan's entry is a day limit placed just after the opening auction prints
- * (~09:05 Berlin). Polling more often would re-evaluate an unchanged bar and risk duplicate entries
- * on a decision that has not moved.
+ * closed, and the entry is a day limit placed just after the opening auction prints. Polling more
+ * often would re-evaluate an unchanged bar and risk duplicate entries on a decision that has not
+ * moved.
+ *
+ * ### Two crons, each in its own market's timezone
+ * One expression at "09:05 and 15:05 Europe/Berlin" looks like it covers both opens, and does not:
+ * 15:05 Berlin is 09:05 in New York, 25 minutes BEFORE the US open, so
+ * [cz.solvina.options.domain.features.universe.UniversePort.isMarketOpen] rejected every US symbol
+ * and the US half of the universe was never evaluated at all. Anchoring each pass in its own
+ * exchange's zone also keeps both correct through the weeks when European and American DST
+ * transitions have not yet lined up.
  */
 @Component
 class StockStrategyScheduler(
@@ -32,7 +40,8 @@ class StockStrategyScheduler(
 ) {
     private val runInProgress = AtomicBoolean(false)
 
-    @Scheduled(cron = "\${stock-strategies.cron:0 5 9,15 * * MON-FRI}", zone = "Europe/Berlin", scheduler = "backgroundTaskScheduler")
+    @Scheduled(cron = "\${stock-strategies.eu-cron:0 5 9 * * MON-FRI}", zone = "Europe/Berlin", scheduler = "backgroundTaskScheduler")
+    @Scheduled(cron = "\${stock-strategies.us-cron:0 35 9 * * MON-FRI}", zone = "America/New_York", scheduler = "backgroundTaskScheduler")
     fun run() {
         if (killSwitch.scannerPaused) {
             logger.info { "Stock strategy run skipped: paused by kill switch" }

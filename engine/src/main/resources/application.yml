@@ -302,7 +302,10 @@ stock-strategies:
   # 1.0 ATR, commit cc3a7b2). A strategy that wants a tolerance owns it as a parameter, where the
   # backtest sees it too.
   limit-tolerance-atr-multiple: 0
-  cron: "0 5 9,15 * * MON-FRI"   # just after the EU and US opening auctions print
+  # One pass per market, each anchored in that market's own timezone (see StockStrategyScheduler:
+  # a single Berlin-based expression put the "US" pass 25 minutes before the US open).
+  eu-cron: "0 5 9 * * MON-FRI"    # 09:05 Europe/Berlin — just after the Xetra auction prints
+  us-cron: "0 35 9 * * MON-FRI"   # 09:35 America/New_York — just after the NYSE/Nasdaq open
   # Re-attaches to positions whose in-memory order tracking was lost (restart, disconnect).
   recovery:
     delay-ms: 300000
