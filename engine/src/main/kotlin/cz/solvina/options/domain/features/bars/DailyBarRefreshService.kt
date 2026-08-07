@@ -37,11 +37,15 @@ class DailyBarRefreshService(
     private val equityHistoricalBars: EquityHistoricalBarsPort,
     private val clock: Clock,
     /**
-     * Days of history requested per symbol. Small, but wide enough that a run missed over a long
-     * weekend (or a night the engine was down) is repaired by the next one rather than leaving a
-     * permanent hole.
+     * Days of history requested per symbol.
+     *
+     * Wide on purpose, and it costs nothing: a daily series fits ten years in one IBKR request
+     * ([Timeframe.maxChunkDays]), so 45 days and 5 days are the same single call. What the width
+     * buys is gap repair — after an engine outage, a holiday cluster or a run that never happened,
+     * a narrow tail refresh would append recent bars and leave a hole behind them, and an indicator
+     * computed across a hole is wrong without being visibly wrong.
      */
-    @param:Value("\${stock-strategies.bar-refresh.lookback-days:10}") private val lookbackDays: Long = 10,
+    @param:Value("\${stock-strategies.bar-refresh.lookback-days:45}") private val lookbackDays: Long = 45,
     /**
      * Pause between symbols. IBKR allows roughly 60 historical requests per 10 minutes and answers
      * a violation with a silently dropped response (error 162/420), which surfaces here as a 45s

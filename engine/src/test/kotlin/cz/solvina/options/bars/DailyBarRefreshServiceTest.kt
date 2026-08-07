@@ -30,8 +30,8 @@ class DailyBarRefreshServiceTest {
             assertEquals(2, result.symbols)
             assertEquals(
                 listOf(
-                    Fetch(Symbol("AAPL"), LocalDate.of(2026, 7, 28), LocalDate.of(2026, 8, 7), Timeframe.DAILY),
-                    Fetch(Symbol("MSFT"), LocalDate.of(2026, 7, 28), LocalDate.of(2026, 8, 7), Timeframe.DAILY),
+                    Fetch(Symbol("AAPL"), LocalDate.of(2026, 6, 23), LocalDate.of(2026, 8, 7), Timeframe.DAILY),
+                    Fetch(Symbol("MSFT"), LocalDate.of(2026, 6, 23), LocalDate.of(2026, 8, 7), Timeframe.DAILY),
                 ),
                 fetcher.calls,
             )
@@ -80,7 +80,7 @@ class DailyBarRefreshServiceTest {
         assignments = FakeAssignments(assignments),
         equityHistoricalBars = fetcher,
         clock = clock,
-        lookbackDays = 10,
+        lookbackDays = 45,
         pacingMs = 10_000, // virtual time under runTest — pacing costs the test nothing
     )
 

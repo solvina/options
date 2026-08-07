@@ -312,6 +312,6 @@ stock-strategies:
   bar-refresh:
     enabled: true
     cron: "0 30 23 * * MON-FRI"  # after both the EU and US closes, long before the 09:05 run
-    lookback-days: 10
+    lookback-days: 45            # one IBKR request either way at daily bars; the width heals gaps
     pacing-ms: 10000             # ~6 IBKR historical requests/min, well inside the ~60/10min limit
     timeout-minutes: 60
