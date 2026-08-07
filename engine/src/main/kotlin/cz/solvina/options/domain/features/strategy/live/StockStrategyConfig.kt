@@ -19,9 +19,17 @@ data class StockStrategyConfig(
      */
     val maxOpenPositions: Int = 3,
     /**
-     * Entry limit tolerance above the signal price, in ATR multiples. Scales across a EUR 40 and a
-     * EUR 90 instrument, unlike a fixed cent amount. Fills on ordinary opens and refuses to chase a
-     * gap — and a gap-up open is exactly when paying up hurts most.
+     * Entry limit tolerance above the strategy's entry price, in ATR multiples.
+     *
+     * **Zero by default, and raising it is a measurable loss** for any strategy whose Decision
+     * carries absolute stop and target prices — which is all of them. Those prices are fixed off the
+     * signal price and do not follow the fill, so a wider limit fills lower (a gap-down fills at the
+     * open) and leaves the stop further from the fill than intended and the target nearer. On MFI,
+     * 0.0 -> 1.0 ATR walked the win rate 25% -> 15% purely from that anchoring (commit cc3a7b2).
+     *
+     * It also breaks the twin property this host is built on: the backtest never sees this number,
+     * so any non-zero value means live is trading a rule that was never measured. A strategy that
+     * wants a tolerance should own it as a parameter, as MfiOversoldStrategy.limitToleranceAtr does.
      */
-    val limitToleranceAtrMultiple: Double = 0.25,
+    val limitToleranceAtrMultiple: Double = 0.0,
 )

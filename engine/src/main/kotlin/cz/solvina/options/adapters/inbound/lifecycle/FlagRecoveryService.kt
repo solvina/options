@@ -1,8 +1,7 @@
 package cz.solvina.options.adapters.inbound.lifecycle
 
-import cz.solvina.options.domain.features.account.AccountPosition
 import cz.solvina.options.domain.features.account.AccountTradingPort
-import cz.solvina.options.domain.features.account.PositionsPort
+import cz.solvina.options.domain.features.account.BrokerPositionsSnapshotService
 import cz.solvina.options.domain.features.alert.AlertLevel
 import cz.solvina.options.domain.features.alert.AlertPort
 import cz.solvina.options.domain.features.connection.status.ConnectionStatusPort
@@ -15,7 +14,6 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -25,19 +23,10 @@ import java.time.Clock
 import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
-import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
-import kotlin.time.Duration.Companion.seconds
 import kotlin.time.toJavaDuration
 
 private val logger = KotlinLogging.logger {}
-
-/** How many times recovery polls the broker position feed before trusting/abandoning a snapshot. */
-private const val RECOVERY_POSITION_POLLS = 5
-private const val RECOVERY_POSITION_POLL_DELAY_MS = 500L
-
-/** Max wait for the broker's initial portfolio download before a snapshot decision. */
-private val INITIAL_SNAPSHOT_TIMEOUT = 10.seconds
 
 /**
  * A protective stop we submitted must show up in the broker's open-order list within this window
@@ -77,7 +66,7 @@ class FlagRecoveryService(
     private val bracketOrderPort: BracketOrderPort,
     private val flagExecutionService: FlagExecutionService,
     private val accountTradingPort: AccountTradingPort,
-    private val positionsPort: PositionsPort,
+    private val positionsSnapshot: BrokerPositionsSnapshotService,
     private val alertPort: AlertPort,
     private val connectionStatusPort: ConnectionStatusPort,
     private val clock: Clock,
@@ -163,7 +152,7 @@ class FlagRecoveryService(
             }
             if (noOrders.isEmpty()) return@withLock
 
-            val snapshot = fetchPositionsSnapshot()
+            val snapshot = positionsSnapshot.fetch("Flag recovery")
             if (snapshot == null) {
                 logger.warn {
                     "Flag recovery: ${noOrders.size} row(s) have no working orders but positions are unavailable — leaving untouched for the next run"
@@ -296,27 +285,4 @@ class FlagRecoveryService(
      * every broker fetch failed and recovery must not decide anything this run. Empty means at least
      * one successful broker fetch reported a flat account.
      */
-    private suspend fun fetchPositionsSnapshot(): List<AccountPosition>? {
-        val ready = positionsPort.awaitInitialSnapshot(INITIAL_SNAPSHOT_TIMEOUT)
-        var lastSuccessfulSnapshot: List<AccountPosition>? = null
-        repeat(RECOVERY_POSITION_POLLS) { attempt ->
-            val snapshot =
-                runCatching { positionsPort.getPositions() }
-                    .onFailure { e -> logger.warn { "Flag recovery: position fetch failed (attempt $attempt): ${e.message}" } }
-                    .getOrNull()
-            if (snapshot != null) {
-                lastSuccessfulSnapshot = snapshot
-                if (snapshot.isNotEmpty()) return snapshot
-            }
-            if (attempt < RECOVERY_POSITION_POLLS - 1) delay(RECOVERY_POSITION_POLL_DELAY_MS.milliseconds)
-        }
-        // A cold feed (download not yet complete) reporting empty is not a flat account — treat it as
-        // unavailable so a live position is never false-closed.
-        return if (!ready && lastSuccessfulSnapshot.isNullOrEmpty()) {
-            logger.warn { "Flag recovery: position feed not warmed (initial download pending) — treating as unavailable" }
-            null
-        } else {
-            lastSuccessfulSnapshot
-        }
-    }
 }

@@ -40,5 +40,19 @@ interface StockOrderPort {
         targetPrice: BigDecimal?,
     ): StockOrderIds
 
+    /**
+     * A standalone GTC stop SELL for shares already held, returning the new order id.
+     *
+     * Recovery's repair path: shares are at the broker with no working protective order, because
+     * the OCA pair was cancelled, rejected, or lost with a disconnect. Not part of a bracket — there
+     * is no parent left to attach to — and no target is re-placed alongside it, since an unprotected
+     * position needs its downside covered first and a missing target only forgoes profit.
+     */
+    suspend fun submitProtectiveStop(
+        symbol: Symbol,
+        shares: Int,
+        stopPrice: BigDecimal,
+    ): Int
+
     suspend fun cancelOrder(orderId: Int)
 }

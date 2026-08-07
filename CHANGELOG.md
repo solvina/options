@@ -3,6 +3,46 @@
 Notable strategy, engine and operations changes. Newest first. Rendered in the frontend under
 **Maintenance › Changelog**.
 
+## 2026-08-07 — MFI oversold joins the daily paper session
+
+The stock-strategy host shipped dark in Phase 7 and had never actually run. Arming it for the
+MFI mean-reversion strategy — daily, alongside the flag strategy — surfaced four gaps, all of
+which had to close before a paper session could mean anything.
+
+- **The runner never warmed its strategy.** It read a full warmup window of bars and then passed
+  exactly one of them to `decide`. Every strategy in the library carries rolling state (MFI, RSI,
+  ATR) that reports "not ready" until it has its whole period, so `decide` returned null on every
+  symbol on every pass: **the live host could not have produced a single entry.** It now warms on
+  `bars.dropLast(1)` and decides on the last bar — the same two steps `StrategyBacktestAdapter`
+  performs, so both hosts feed identical state.
+- **Positions had no lifecycle.** `StockStrategyRunner` was the only writer of `stock_position`:
+  nothing moved a row past PENDING, so fill rate (the one number a backtest cannot produce) was
+  unmeasurable, an expired day limit left a PENDING row forever, and since the runner refuses a
+  second entry while one is live, the first signal on a symbol blocked that symbol permanently.
+  New `StockPositionLifecycleService` (broker-callback driven, like `FlagExecutionService`) books
+  entry fills, entry misses as ENTRY_UNFILLED, and stop/target fills with realized P&L from the
+  actual fill prices. New `StockRecoveryService` re-attaches after a restart or disconnect, with
+  the flag strategy's decision table and its 10-minute re-protection acknowledgement guard (the
+  2026-08-05 "32 stops in 72 minutes" lesson). Neither ever decides anything from an unavailable
+  position feed — that check is now shared as `BrokerPositionsSnapshotService`.
+- **Daily bars were stale and nothing refreshed them.** Bars were only ever written on demand by
+  a backtest or the Historical Data page; on the paper host the newest daily bars were 2.5 weeks
+  old. New `DailyBarRefreshService` + a 23:30 Berlin job tops up every symbol an enabled
+  assignment names, paced at ~10s/symbol for IBKR's ~60-requests-per-10-minutes limit. The runner
+  independently **refuses a stale bar**: its only data check was bar *count*, which a series that
+  stopped updating three weeks ago passes happily.
+- **Live entries did not match the backtest.** The host added `limit-tolerance-atr-multiple`
+  (0.25 ATR) on top of the strategy's own entry price, while the stop and target stay anchored to
+  the signal price — the exact anchoring that commit cc3a7b2 measured as a 25% → 15% win-rate
+  loss. Now 0 by default, and the ATR-unavailable fallback no longer smuggles in 0.25% either.
+
+Also: stock positions now appear in the daily audit (open counts, zombie PENDING rows,
+positions with no protective stop, cumulative fill rate) and each stock strategy gets its own row
+on the Reports/Overview page next to `bull_flag`, rather than being invisible.
+
+Armed on the paper box only, via `STOCK_STRATEGIES_ENABLED=true` in its `engine.env`; the
+committed default stays `false`, so a prod deploy of this build changes nothing.
+
 ## 2026-07-19 — Sweeps in the web UI as terminable engine jobs
 
 The parameter sweeper is now a first-class engine feature (Backtest › Sweeps) instead of a

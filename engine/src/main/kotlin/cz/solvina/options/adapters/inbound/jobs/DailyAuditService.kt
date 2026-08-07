@@ -13,6 +13,9 @@ import cz.solvina.options.domain.features.spread.BearCallSpreadPort
 import cz.solvina.options.domain.features.spread.BullPutSpreadPort
 import cz.solvina.options.domain.features.spread.SpreadCloserRegistry
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
+import cz.solvina.options.domain.features.strategy.live.StockPosition
+import cz.solvina.options.domain.features.strategy.live.StockPositionPort
+import cz.solvina.options.domain.features.strategy.live.StockPositionStatus
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -54,6 +57,7 @@ class DailyAuditService(
     private val bullPutSpreadPort: BullPutSpreadPort,
     private val bearCallSpreadPort: BearCallSpreadPort,
     private val flagPort: FlagPort,
+    private val stockPositions: StockPositionPort,
     private val bracketOrderPort: BracketOrderPort,
     private val positionsPort: PositionsPort,
     private val detector: OrphanPositionDetector,
@@ -95,10 +99,12 @@ class DailyAuditService(
 
         val openSpreads = spreadClosers.allOpen() + spreadClosers.allClosing()
         val openFlags = flagPort.findByStatuses(FlagStatus.ACTIVE_STATUSES)
-        lines += "Open: ${openSpreads.size} spread(s), ${openFlags.size} flag(s)"
+        val liveStocks = stockPositions.findLive()
+        lines += "Open: ${openSpreads.size} spread(s), ${openFlags.size} flag(s), ${liveStocks.size} stock position(s)"
 
         issues += reconciliationIssues()
         issues += pendingZombieIssues()
+        issues += unprotectedStockIssues(liveStocks)
 
         send("Pre-open audit", lines, issues)
     }
@@ -132,9 +138,26 @@ class DailyAuditService(
                 estimated.joinToString(", ") { it.symbol.value }
         }
 
+        val stocks = stockPositions.findAll()
+        val estimatedStocks =
+            stocks.filter { it.closedAt?.isAfter(startOfDay) == true && it.closeReason?.contains("estimated") == true }
+        if (estimatedStocks.isNotEmpty()) {
+            issues += "${estimatedStocks.size} stock close(s) booked at an ESTIMATED price (no fill reported): " +
+                estimatedStocks.joinToString(", ") { it.symbol.value }
+        }
+        // Fill rate is the headline number of the stock paper validation — the one thing the
+        // backtest cannot produce, since it fills every entry it emits. Reported cumulatively:
+        // a single day's entries are far too few to read anything into.
+        val resolved = stocks.count { it.actualEntryPrice != null || it.status == StockPositionStatus.ENTRY_UNFILLED }
+        if (resolved > 0) {
+            val filled = stocks.count { it.actualEntryPrice != null }
+            lines += "Stock entries filled: $filled/$resolved (${filled * 100 / resolved}%) since the strategy went live"
+        }
+
         if (connectionStatusPort.isConnected()) {
             issues += reconciliationIssues()
             issues += pendingZombieIssues()
+            issues += unprotectedStockIssues(stocks.filter { it.status.isLive })
         } else {
             issues += "IBKR not connected — broker reconciliation skipped"
         }
@@ -171,6 +194,8 @@ class DailyAuditService(
             (bullPutSpreadPort.findByStatus(SpreadStatus.PENDING) + bearCallSpreadPort.findByStatus(SpreadStatus.PENDING))
                 .filter { it.openedAt < cutoff }
         val flags = flagPort.findByStatus(FlagStatus.PENDING).filter { it.openedAt < cutoff }
+        val stocks =
+            stockPositions.findLive().filter { it.status == StockPositionStatus.PENDING && it.signalledAt < cutoff }
         val issues = mutableListOf<String>()
         if (spreads.isNotEmpty()) {
             issues += "${spreads.size} zombie PENDING spread(s) (>12h old): " + spreads.joinToString(", ") { it.symbol.value }
@@ -178,7 +203,27 @@ class DailyAuditService(
         if (flags.isNotEmpty()) {
             issues += "${flags.size} zombie PENDING flag(s) (>12h old): " + flags.joinToString(", ") { it.symbol.value }
         }
+        if (stocks.isNotEmpty()) {
+            // A stock entry is a DAY limit: hours after the close it can only be a row recovery
+            // never resolved, never a fill still to come.
+            issues += "${stocks.size} zombie PENDING stock position(s) (>12h old): " +
+                stocks.joinToString(", ") { "${it.symbol.value} ${it.strategyId}" }
+        }
         return issues
+    }
+
+    /**
+     * An OPEN stock position with no stop order id is holding shares with nothing underneath it.
+     * Recovery re-places the stop when the broker says the order is gone; this catches the case
+     * where the row itself never had one — which no automatic path repairs.
+     */
+    private fun unprotectedStockIssues(live: List<StockPosition>): List<String> {
+        val unprotected = live.filter { it.status == StockPositionStatus.OPEN && it.stopOrderId == null }
+        if (unprotected.isEmpty()) return emptyList()
+        return listOf(
+            "${unprotected.size} OPEN stock position(s) with NO protective stop recorded: " +
+                unprotected.joinToString(", ") { "${it.symbol.value} ×${it.shares}" },
+        )
     }
 
     private suspend fun send(

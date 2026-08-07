@@ -118,6 +118,31 @@ class IbkrStockOrderAdapter(
         return ids
     }
 
+    override suspend fun submitProtectiveStop(
+        symbol: Symbol,
+        shares: Int,
+        stopPrice: BigDecimal,
+    ): Int {
+        val contract = contractFactory.stockContract(symbol)
+        val stop = contractCache.roundToTick(symbol, stopPrice)
+        val orderId = ibkrOrderIdCounter.nextOrderId()
+        val order =
+            Order().apply {
+                action("SELL")
+                orderType("STP")
+                auxPrice(stop.toDouble())
+                totalQuantity(Decimal.get(shares.toLong()))
+                tif("GTC")
+                // No parent and no OCA group: the bracket this belonged to is gone, and pointing at
+                // a dead parent id would leave the order permanently inactive.
+                transmit(true)
+                if (connectionConfig.account.isNotBlank()) account(connectionConfig.account)
+            }
+        logger.warn { "[$symbol] Re-protecting $shares held share(s) with a standalone GTC stop at $stop (order $orderId)" }
+        client.placeOrder(orderId, contract, order)
+        return orderId
+    }
+
     override suspend fun cancelOrder(orderId: Int) {
         logger.info { "Cancelling stock order $orderId" }
         registry.markSelfCancelled(orderId)

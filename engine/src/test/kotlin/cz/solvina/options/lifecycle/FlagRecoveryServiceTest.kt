@@ -4,6 +4,7 @@ import cz.solvina.options.adapters.inbound.lifecycle.FlagRecoveryService
 import cz.solvina.options.domain.features.account.AccountPort
 import cz.solvina.options.domain.features.account.AccountPosition
 import cz.solvina.options.domain.features.account.AccountTradingPort
+import cz.solvina.options.domain.features.account.BrokerPositionsSnapshotService
 import cz.solvina.options.domain.features.account.EffectiveAccountService
 import cz.solvina.options.domain.features.account.PositionsPort
 import cz.solvina.options.domain.features.alert.AlertLevel
@@ -117,7 +118,7 @@ class FlagRecoveryServiceTest {
                         ),
                 ),
             accountTradingPort = accountTradingPort,
-            positionsPort = positionsPort,
+            positionsSnapshot = BrokerPositionsSnapshotService(positionsPort),
             alertPort = CapturingAlertPort,
             connectionStatusPort = ConnectedStatusPort,
             clock = fixedClock,

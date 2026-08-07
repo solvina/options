@@ -296,5 +296,22 @@ stock-strategies:
   # wedge costs a single pass instead of the rest of the session.
   run-timeout-minutes: 10
   max-open-positions: 3
-  limit-tolerance-atr-multiple: 0.25
+  # 0 = rest the entry limit exactly where the strategy asked for it. A tolerance here is added on
+  # top of the Decision's entry price while its stop and target stay anchored to the SIGNAL price,
+  # so widening it degrades the bracket instead of improving the fill (MFI: 25% -> 15% win rate at
+  # 1.0 ATR, commit cc3a7b2). A strategy that wants a tolerance owns it as a parameter, where the
+  # backtest sees it too.
+  limit-tolerance-atr-multiple: 0
   cron: "0 5 9,15 * * MON-FRI"   # just after the EU and US opening auctions print
+  # Re-attaches to positions whose in-memory order tracking was lost (restart, disconnect).
+  recovery:
+    delay-ms: 300000
+    initial-delay-ms: 180000
+  # Nightly top-up of the bars the strategies decide on. Without it nothing refreshes daily bars
+  # on a schedule and the runner ends up refusing every stale signal.
+  bar-refresh:
+    enabled: true
+    cron: "0 30 23 * * MON-FRI"  # after both the EU and US closes, long before the 09:05 run
+    lookback-days: 10
+    pacing-ms: 10000             # ~6 IBKR historical requests/min, well inside the ~60/10min limit
+    timeout-minutes: 60

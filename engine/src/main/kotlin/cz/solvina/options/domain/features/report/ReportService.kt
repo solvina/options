@@ -7,6 +7,9 @@ import cz.solvina.options.domain.features.spread.BearCallSpreadPort
 import cz.solvina.options.domain.features.spread.BullPutSpreadPort
 import cz.solvina.options.domain.features.spread.model.Spread
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
+import cz.solvina.options.domain.features.strategy.live.StockPosition
+import cz.solvina.options.domain.features.strategy.live.StockPositionPort
+import cz.solvina.options.domain.features.strategy.live.StockPositionStatus
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.math.RoundingMode
@@ -37,11 +40,25 @@ private val FLAG_CLOSED_STATUSES =
         FlagStatus.CLOSED_EXTERNAL,
     )
 
+/**
+ * ENTRY_UNFILLED is absent on purpose: no position ever existed, so it is neither a win nor a loss.
+ * It is counted where it means something — as the live-vs-backtest fill rate on the stock positions
+ * endpoint — and folding it in here as a zero-P&L "close" would dilute every win rate on the page.
+ */
+private val STOCK_CLOSED_STATUSES =
+    setOf(
+        StockPositionStatus.CLOSED_TARGET,
+        StockPositionStatus.CLOSED_STOP,
+        StockPositionStatus.CLOSED_MANUAL,
+        StockPositionStatus.CLOSED_EXTERNAL,
+    )
+
 @Service
 class ReportService(
     private val bullPutSpreadPort: BullPutSpreadPort,
     private val bearCallSpreadPort: BearCallSpreadPort,
     private val flagPort: FlagPort,
+    private val stockPositionPort: StockPositionPort,
 ) {
     data class StrategyReport(
         val strategy: String,
@@ -86,14 +103,22 @@ class ReportService(
         val bullPuts = bullPutSpreadPort.findAll().map { it.toFacts() }
         val bearCalls = bearCallSpreadPort.findAll().map { it.toFacts() }
         val flags = flagPort.findAll().map { it.toFacts() }
+        // One row per stock strategy rather than a lumped "stocks": they are independent strategies
+        // that happen to share a host, and the reason this report exists is to judge each one.
+        val stocksByStrategy =
+            stockPositionPort
+                .findAll()
+                .groupBy { it.strategyId }
+                .mapValues { (_, rows) -> rows.map { it.toFacts() } }
 
         val strategies =
             listOf(
                 aggregate("bull_put", bullPuts, start, end),
                 aggregate("bear_call", bearCalls, start, end),
                 aggregate("bull_flag", flags, start, end),
-            )
-        return Summary(from, to, strategies, aggregate("total", bullPuts + bearCalls + flags, start, end))
+            ) + stocksByStrategy.entries.sortedBy { it.key }.map { (id, facts) -> aggregate(id, facts, start, end) }
+        val all = bullPuts + bearCalls + flags + stocksByStrategy.values.flatten()
+        return Summary(from, to, strategies, aggregate("total", all, start, end))
     }
 
     private fun Spread.toFacts() =
@@ -117,6 +142,21 @@ class ReportService(
             filled = status != FlagStatus.PENDING && status != FlagStatus.ENTRY_TIMEOUT,
             openNow = status.hasBrokerPosition,
             cleanlyClosed = status in FLAG_CLOSED_STATUSES,
+            realizedPnl = realizedPnl,
+        )
+
+    /**
+     * [StockPosition.openedAt] is null until the entry fills, so an unfilled row falls back to when
+     * it was signalled — it is excluded from the opened count by [TradeFacts.filled] anyway, and a
+     * nullable open time would only push the same branch into the aggregator.
+     */
+    private fun StockPosition.toFacts() =
+        TradeFacts(
+            openedAt = openedAt ?: signalledAt,
+            closedAt = closedAt,
+            filled = status != StockPositionStatus.PENDING && status != StockPositionStatus.ENTRY_UNFILLED,
+            openNow = status == StockPositionStatus.OPEN,
+            cleanlyClosed = status in STOCK_CLOSED_STATUSES,
             realizedPnl = realizedPnl,
         )
 
