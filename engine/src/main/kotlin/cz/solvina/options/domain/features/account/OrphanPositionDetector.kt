@@ -2,6 +2,8 @@ package cz.solvina.options.domain.features.account
 
 import cz.solvina.options.domain.features.flag.model.FlagPosition
 import cz.solvina.options.domain.features.spread.model.Spread
+import cz.solvina.options.domain.features.strategy.live.StockPosition
+import cz.solvina.options.domain.features.strategy.live.StockPositionStatus
 import cz.solvina.options.domain.models.OptionContract
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
@@ -13,7 +15,8 @@ import java.time.LocalDate
  *
  * Every managed strategy contributes its expected holdings:
  *  - credit spreads (bull put, bear call) — two option legs each, via [Spread];
- *  - bull flags — a long stock position guarded by a live bracket order, via [FlagPosition].
+ *  - bull flags — a long stock position guarded by a live bracket order, via [FlagPosition];
+ *  - strategy-library stock positions — long stock under a live bracket, via [StockPosition].
  *
  * A held position is an orphan only when its signed quantity does not match the sum of what the
  * managed positions expect for that exact contract. Pure logic, no I/O, so it is unit-testable.
@@ -49,6 +52,7 @@ class OrphanPositionDetector {
     fun detect(
         openSpreads: List<Spread>,
         openFlags: List<FlagPosition>,
+        stockPositions: List<StockPosition>,
         accountPositions: List<AccountPosition>,
     ): List<Orphan> {
         // Expected signed quantity per contract key, summed across everything the engine manages.
@@ -62,6 +66,7 @@ class OrphanPositionDetector {
             // strike/right/expiry. If short (bear) flags are ever added, sign must follow direction.
             addLeg(expected, stockKey(flag.symbol.value), flag.shares)
         }
+        addStockPositions(expected, stockPositions)
 
         val orphans = mutableListOf<Orphan>()
         for (p in accountPositions) {
@@ -73,9 +78,9 @@ class OrphanPositionDetector {
                     if (qty != exp) {
                         val reason =
                             if (exp == 0) {
-                                "stock position with no managing OPEN flag (untracked)"
+                                "stock position with no managing OPEN flag or stock strategy (untracked)"
                             } else {
-                                "stock quantity mismatch vs managed flags (expected $exp, held $qty)"
+                                "stock quantity mismatch vs managed flags/stock strategies (expected $exp, held $qty)"
                             }
                         orphans += Orphan(p, reason)
                     }
@@ -108,6 +113,7 @@ class OrphanPositionDetector {
     fun detectMissing(
         openSpreads: List<Spread>,
         openFlags: List<FlagPosition>,
+        stockPositions: List<StockPosition>,
         accountPositions: List<AccountPosition>,
     ): List<MissingLeg> {
         val expected = HashMap<PosKey, Int>()
@@ -125,6 +131,10 @@ class OrphanPositionDetector {
             addLeg(expected, stockKey(flag.symbol.value), flag.shares)
             owners.getOrPut(stockKey(flag.symbol.value)) { mutableListOf() }.add("${flag.symbol.value} flag ×${flag.shares}")
         }
+        for (sp in stockPositions.filter { it.status == StockPositionStatus.OPEN }) {
+            owners.getOrPut(stockKey(sp.symbol.value)) { mutableListOf() }.add("${sp.symbol.value} ${sp.strategyId} ×${sp.shares}")
+        }
+        addStockPositions(expected, stockPositions)
 
         val held = HashMap<PosKey, Int>()
         for (p in accountPositions) {
@@ -143,6 +153,24 @@ class OrphanPositionDetector {
                     "${key.symbol} STK"
                 }
             MissingLeg(description = desc, expected = exp, held = have, owners = owners[key] ?: emptyList())
+        }
+    }
+
+    /**
+     * Strategy-library stock positions hold long stock under a live bracket, exactly like a flag, so
+     * they contribute the same symbol-keyed expectation. Only [StockPositionStatus.OPEN] holds
+     * shares — a PENDING entry limit is still working at the broker and owns nothing yet, and
+     * counting it would invert the bug by reporting a *missing* stock position for every unfilled
+     * entry. Filtering here rather than at the call sites keeps the three callers from having to
+     * remember that distinction; passing `findLive()` straight through stays correct.
+     */
+    private fun addStockPositions(
+        expected: HashMap<PosKey, Int>,
+        stockPositions: List<StockPosition>,
+    ) {
+        for (sp in stockPositions) {
+            if (sp.status != StockPositionStatus.OPEN) continue
+            addLeg(expected, stockKey(sp.symbol.value), sp.shares)
         }
     }
 

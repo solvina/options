@@ -18,6 +18,7 @@ import cz.solvina.options.domain.features.flag.FlagPort
 import cz.solvina.options.domain.features.spread.SpreadCloserRegistry
 import cz.solvina.options.domain.features.spread.SpreadMarkService
 import cz.solvina.options.domain.features.spread.model.Spread
+import cz.solvina.options.domain.features.strategy.live.StockPositionPort
 import cz.solvina.options.domain.models.OptionType
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.http.HttpStatus
@@ -38,6 +39,7 @@ class AccountApiImpl(
     private val accountPort: AccountPort,
     private val spreadClosers: SpreadCloserRegistry,
     private val flagPort: FlagPort,
+    private val stockPositionPort: StockPositionPort,
     private val orphanDetector: OrphanPositionDetector,
     private val positionsPort: PositionsPort,
     private val accountTradingPort: AccountTradingPort,
@@ -70,10 +72,11 @@ class AccountApiImpl(
                 .getOrDefault(emptyList())
 
         // Classify each held IBKR position: is it a leg of a tracked spread, or an orphan (no
-        // managing open spread/flag, or a quantity mismatch)? Reuses the same detector the
-        // reconciliation job uses for alerting, and covers every managed strategy (bull put +
-        // bear call spreads via the closer registry, bull flags via the flag port), so bear-call
-        // legs and flag stock are classified too — not just bull puts.
+        // managing open spread/flag/stock strategy, or a quantity mismatch)? Reuses the same
+        // detector the reconciliation job uses for alerting, and covers every managed strategy
+        // (bull put + bear call spreads via the closer registry, bull flags via the flag port,
+        // strategy-library stock via the stock-position port), so bear-call legs, flag stock and
+        // strategy stock are classified too — not just bull puts.
         val allManagedSpreads =
             runCatching { spreadClosers.allOpen() + spreadClosers.allClosing() }
                 .onFailure { e -> logger.warn(e) { "Failed to load managed spreads: ${e.message}" } }
@@ -82,10 +85,15 @@ class AccountApiImpl(
             runCatching { flagPort.findOpen() }
                 .onFailure { e -> logger.warn(e) { "Failed to load open flags: ${e.message}" } }
                 .getOrDefault(emptyList())
+        val liveStocks =
+            runCatching { stockPositionPort.findLive() }
+                .onFailure { e -> logger.warn(e) { "Failed to load live stock positions: ${e.message}" } }
+                .getOrDefault(emptyList())
         // Orphans keyed by the exact AccountPosition instance the detector was handed.
         val orphanReasons: Map<AccountPosition, String> =
-            runCatching { orphanDetector.detect(allManagedSpreads, openFlags, ibkrPositions).associate { it.position to it.reason } }
-                .onFailure { e -> logger.warn(e) { "Orphan detection failed: ${e.message}" } }
+            runCatching {
+                orphanDetector.detect(allManagedSpreads, openFlags, liveStocks, ibkrPositions).associate { it.position to it.reason }
+            }.onFailure { e -> logger.warn(e) { "Orphan detection failed: ${e.message}" } }
                 .getOrDefault(emptyMap())
         val legMembership: Map<PosKey, LegMembership> = buildLegMembership(allManagedSpreads)
         // Broker-sourced value/P&L for the tracked spreads, so the overview agrees with TWS instead

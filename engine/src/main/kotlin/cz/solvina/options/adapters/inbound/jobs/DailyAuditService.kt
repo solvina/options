@@ -169,17 +169,20 @@ class DailyAuditService(
     private suspend fun reconciliationIssues(): List<String> {
         val openSpreads = spreadClosers.allOpen() + spreadClosers.allClosing()
         val openFlags = flagPort.findOpen()
+        val liveStocks = stockPositions.findLive()
         val positions = runCatching { positionsPort.getPositions() }.getOrNull()
-        if (positions == null || (positions.isEmpty() && (openSpreads.isNotEmpty() || openFlags.isNotEmpty()))) {
+        if (positions == null ||
+            (positions.isEmpty() && (openSpreads.isNotEmpty() || openFlags.isNotEmpty() || liveStocks.isNotEmpty()))
+        ) {
             return listOf("Broker position snapshot unavailable — reconciliation could not run")
         }
         val issues = mutableListOf<String>()
-        val orphans = detector.detect(openSpreads, openFlags, positions)
+        val orphans = detector.detect(openSpreads, openFlags, liveStocks, positions)
         if (orphans.isNotEmpty()) {
             issues += "${orphans.size} orphan position(s) at broker: " +
                 orphans.joinToString(", ") { "${it.position.symbol} ${"%+d".format(it.position.quantity.toInt())}" }
         }
-        val missing = detector.detectMissing(openSpreads, openFlags, positions)
+        val missing = detector.detectMissing(openSpreads, openFlags, liveStocks, positions)
         if (missing.isNotEmpty()) {
             issues += "${missing.size} managed leg(s) NOT held at broker: " +
                 missing.joinToString(", ") { "${it.description} (held ${it.held}/${it.expected})" }

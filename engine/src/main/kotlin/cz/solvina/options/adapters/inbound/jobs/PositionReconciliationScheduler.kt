@@ -7,6 +7,7 @@ import cz.solvina.options.domain.features.alert.AlertPort
 import cz.solvina.options.domain.features.connection.status.ConnectionStatusPort
 import cz.solvina.options.domain.features.flag.FlagPort
 import cz.solvina.options.domain.features.spread.SpreadCloserRegistry
+import cz.solvina.options.domain.features.strategy.live.StockPositionPort
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -32,6 +33,7 @@ private val logger = KotlinLogging.logger {}
 class PositionReconciliationScheduler(
     private val spreadClosers: SpreadCloserRegistry,
     private val flagPort: FlagPort,
+    private val stockPositionPort: StockPositionPort,
     private val positionsPort: PositionsPort,
     private val detector: OrphanPositionDetector,
     private val alertPort: AlertPort,
@@ -73,22 +75,24 @@ class PositionReconciliationScheduler(
     }
 
     private suspend fun runReconcile() {
-        // Everything the engine actively manages: open credit spreads (bull put + bear call) and
-        // open bull-flag stock positions. Anything held outside this set is a true orphan.
+        // Everything the engine actively manages: open credit spreads (bull put + bear call),
+        // open bull-flag stock positions, and strategy-library stock positions. Anything held
+        // outside this set is a true orphan.
         // CLOSING spreads still hold live legs at the broker (close orders in flight or stuck
         // retrying) and ARE managed — without them a stuck-CLOSING spread's legs get falsely
         // flagged as orphans and raise CRITICAL alerts.
         val openSpreads = spreadClosers.allOpen() + spreadClosers.allClosing()
         val openFlags = flagPort.findOpen()
+        val stockPositions = stockPositionPort.findLive()
         val positions = positionsPort.getPositions()
         // An empty snapshot from a feed still warming up looks identical to a flat account — deciding
         // on it would flag EVERY leg of every open position as missing. Skip the run instead.
-        if (positions.isEmpty() && (openSpreads.isNotEmpty() || openFlags.isNotEmpty())) {
+        if (positions.isEmpty() && (openSpreads.isNotEmpty() || openFlags.isNotEmpty() || stockPositions.isNotEmpty())) {
             logger.warn { "Reconciliation skipped: broker position snapshot empty while positions are open (feed warming up?)" }
             return
         }
-        val orphans = detector.detect(openSpreads, openFlags, positions)
-        val missing = detector.detectMissing(openSpreads, openFlags, positions)
+        val orphans = detector.detect(openSpreads, openFlags, stockPositions, positions)
+        val missing = detector.detectMissing(openSpreads, openFlags, stockPositions, positions)
 
         if (orphans.isEmpty() && missing.isEmpty()) {
             if (lastSignature != null) logger.info { "Reconciliation: orphans/missing legs cleared" }

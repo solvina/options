@@ -2,6 +2,7 @@ package cz.solvina.options.account
 
 import cz.solvina.options.domain.features.account.AccountPosition
 import cz.solvina.options.domain.features.account.OrphanPositionDetector
+import cz.solvina.options.domain.features.bars.Timeframe
 import cz.solvina.options.domain.features.flag.model.FlagPosition
 import cz.solvina.options.domain.features.flag.model.FlagStatus
 import cz.solvina.options.domain.features.order.LegAction
@@ -9,6 +10,8 @@ import cz.solvina.options.domain.features.spread.model.BearCallSpread
 import cz.solvina.options.domain.features.spread.model.BullPutSpread
 import cz.solvina.options.domain.features.spread.model.SpreadLeg
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
+import cz.solvina.options.domain.features.strategy.live.StockPosition
+import cz.solvina.options.domain.features.strategy.live.StockPositionStatus
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
 import cz.solvina.options.domain.models.OptionType
@@ -90,6 +93,25 @@ class OrphanPositionDetectorTest {
         openedAt = Instant.now(),
     )
 
+    private fun openStock(
+        sym: String,
+        shares: Int,
+        status: StockPositionStatus = StockPositionStatus.OPEN,
+    ) = StockPosition(
+        id = UUID.randomUUID(),
+        strategyId = "mfi_oversold",
+        assignmentId = UUID.randomUUID(),
+        paramsJson = "{}",
+        symbol = Symbol(sym),
+        timeframe = Timeframe.DAILY,
+        status = status,
+        signalPrice = BigDecimal("123.58"),
+        limitPrice = BigDecimal("123.58"),
+        stopPrice = BigDecimal("119.16"),
+        shares = shares,
+        signalledAt = Instant.now(),
+    )
+
     private fun pos(
         sym: String,
         secType: String,
@@ -120,7 +142,7 @@ class OrphanPositionDetectorTest {
                 pos("AMD", "OPT", qty = -1, strike = "420", right = "P"),
                 pos("AMD", "OPT", qty = 1, strike = "415", right = "P"),
             )
-        assertEquals(0, detector.detect(spreads, emptyList(), positions).size)
+        assertEquals(0, detector.detect(spreads, emptyList(), emptyList(), positions).size)
     }
 
     @Test
@@ -131,20 +153,20 @@ class OrphanPositionDetectorTest {
                 pos("AMD", "OPT", qty = -1, strike = "430", right = "C"),
                 pos("AMD", "OPT", qty = 1, strike = "435", right = "C"),
             )
-        assertEquals(0, detector.detect(spreads, emptyList(), positions).size)
+        assertEquals(0, detector.detect(spreads, emptyList(), emptyList(), positions).size)
     }
 
     @Test
     fun `naked short put with no managing spread is an orphan`() {
         val positions = listOf(pos("AMD", "OPT", qty = -18, strike = "420", right = "P"))
-        val orphans = detector.detect(emptyList(), emptyList(), positions)
+        val orphans = detector.detect(emptyList(), emptyList(), emptyList(), positions)
         assertEquals(1, orphans.size)
         assertTrue(orphans[0].reason.contains("no managing OPEN spread"))
     }
 
     @Test
     fun `stock with no managing flag is an orphan`() {
-        val orphans = detector.detect(emptyList(), emptyList(), listOf(pos("NOW", "STK", qty = -147)))
+        val orphans = detector.detect(emptyList(), emptyList(), emptyList(), listOf(pos("NOW", "STK", qty = -147)))
         assertEquals(1, orphans.size)
         assertTrue(orphans[0].reason.contains("stock position"))
     }
@@ -153,7 +175,7 @@ class OrphanPositionDetectorTest {
     fun `long stock fully explained by an open bull flag produces no orphans`() {
         val flags = listOf(openFlag("TSLA", shares = 58))
         val positions = listOf(pos("TSLA", "STK", qty = 58))
-        assertEquals(0, detector.detect(emptyList(), flags, positions).size)
+        assertEquals(0, detector.detect(emptyList(), flags, emptyList(), positions).size)
     }
 
     @Test
@@ -161,7 +183,7 @@ class OrphanPositionDetectorTest {
         val flags = listOf(openFlag("TSLA", shares = 58))
         // Held 100 shares but the flag only manages 58.
         val positions = listOf(pos("TSLA", "STK", qty = 100))
-        val orphans = detector.detect(emptyList(), flags, positions)
+        val orphans = detector.detect(emptyList(), flags, emptyList(), positions)
         assertEquals(1, orphans.size)
         assertTrue(orphans[0].reason.contains("expected 58, held 100"))
     }
@@ -175,7 +197,7 @@ class OrphanPositionDetectorTest {
                 pos("AMD", "OPT", qty = -18, strike = "420", right = "P"),
                 pos("AMD", "OPT", qty = 1, strike = "415", right = "P"),
             )
-        val orphans = detector.detect(spreads, emptyList(), positions)
+        val orphans = detector.detect(spreads, emptyList(), emptyList(), positions)
         assertEquals(1, orphans.size)
         assertEquals(-18, orphans[0].position.quantity.toInt())
         assertTrue(orphans[0].reason.contains("expected -1, held -18"))
@@ -183,7 +205,8 @@ class OrphanPositionDetectorTest {
 
     @Test
     fun `zero-quantity positions are ignored`() {
-        val orphans = detector.detect(emptyList(), emptyList(), listOf(pos("AMD", "OPT", qty = 0, strike = "420", right = "P")))
+        val positions = listOf(pos("AMD", "OPT", qty = 0, strike = "420", right = "P"))
+        val orphans = detector.detect(emptyList(), emptyList(), emptyList(), positions)
         assertEquals(0, orphans.size)
     }
 
@@ -198,8 +221,8 @@ class OrphanPositionDetectorTest {
         val spreads = listOf(openSpread(sold = "420", bought = "415"))
         val positions = listOf(pos("AMD", "OPT", qty = -1, strike = "420", right = "P"))
 
-        assertEquals(0, detector.detect(spreads, emptyList(), positions).size, "no orphans — the short is tracked")
-        val missing = detector.detectMissing(spreads, emptyList(), positions)
+        assertEquals(0, detector.detect(spreads, emptyList(), emptyList(), positions).size, "no orphans — the short is tracked")
+        val missing = detector.detectMissing(spreads, emptyList(), emptyList(), positions)
         assertEquals(1, missing.size)
         assertEquals(1, missing[0].expected)
         assertEquals(0, missing[0].held)
@@ -215,7 +238,7 @@ class OrphanPositionDetectorTest {
                 pos("AMD", "OPT", qty = -1, strike = "420", right = "P"),
                 pos("AMD", "OPT", qty = 1, strike = "415", right = "P"),
             )
-        assertEquals(0, detector.detectMissing(spreads, emptyList(), positions).size)
+        assertEquals(0, detector.detectMissing(spreads, emptyList(), emptyList(), positions).size)
     }
 
     @Test
@@ -227,14 +250,14 @@ class OrphanPositionDetectorTest {
                 pos("AMD", "OPT", qty = -1, strike = "420", right = "P"),
                 pos("AMD", "OPT", qty = 1, strike = "415", right = "P"),
             )
-        assertEquals(0, detector.detectMissing(spreads, emptyList(), positions).size)
-        assertEquals(0, detector.detect(spreads, emptyList(), positions).size)
+        assertEquals(0, detector.detectMissing(spreads, emptyList(), emptyList(), positions).size)
+        assertEquals(0, detector.detect(spreads, emptyList(), emptyList(), positions).size)
     }
 
     @Test
     fun `flag stock not held at the broker is reported missing`() {
         val flags = listOf(openFlag("TSLA", shares = 58))
-        val missing = detector.detectMissing(emptyList(), flags, listOf(pos("AMD", "STK", qty = 5)))
+        val missing = detector.detectMissing(emptyList(), flags, emptyList(), listOf(pos("AMD", "STK", qty = 5)))
         assertEquals(1, missing.size)
         assertEquals(58, missing[0].expected)
         assertEquals(0, missing[0].held)
@@ -249,9 +272,58 @@ class OrphanPositionDetectorTest {
                 pos("AMD", "OPT", qty = -2, strike = "420", right = "P"),
                 pos("AMD", "OPT", qty = 1, strike = "415", right = "P"),
             )
-        val missing = detector.detectMissing(spreads, emptyList(), positions)
+        val missing = detector.detectMissing(spreads, emptyList(), emptyList(), positions)
         assertEquals(1, missing.size)
         assertEquals(2, missing[0].expected)
         assertEquals(1, missing[0].held)
+    }
+
+    // -------------------------------------------------------------------------
+    // Strategy-library stock positions (AEP mfi_oversold false orphan, 2026-08-17)
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `long stock fully explained by an OPEN strategy position produces no orphans`() {
+        val stocks = listOf(openStock("AEP", shares = 45))
+        val positions = listOf(pos("AEP", "STK", qty = 45))
+        assertEquals(0, detector.detect(emptyList(), emptyList(), stocks, positions).size)
+    }
+
+    @Test
+    fun `stock quantity mismatch against a managed strategy position is flagged`() {
+        val stocks = listOf(openStock("AEP", shares = 45))
+        val positions = listOf(pos("AEP", "STK", qty = 60))
+        val orphans = detector.detect(emptyList(), emptyList(), stocks, positions)
+        assertEquals(1, orphans.size)
+        assertTrue(orphans[0].reason.contains("expected 45, held 60"))
+    }
+
+    @Test
+    fun `a PENDING strategy position expects no shares`() {
+        // The entry limit is still working at the broker — nothing is held yet, so a PENDING row
+        // must neither explain a holding nor be reported as a missing stock position.
+        val stocks = listOf(openStock("AEP", shares = 45, status = StockPositionStatus.PENDING))
+        assertEquals(1, detector.detect(emptyList(), emptyList(), stocks, listOf(pos("AEP", "STK", qty = 45))).size)
+        assertEquals(0, detector.detectMissing(emptyList(), emptyList(), stocks, emptyList()).size)
+    }
+
+    @Test
+    fun `strategy stock not held at the broker is reported missing`() {
+        val stocks = listOf(openStock("AEP", shares = 45))
+        val missing = detector.detectMissing(emptyList(), emptyList(), stocks, emptyList())
+        assertEquals(1, missing.size)
+        assertEquals(45, missing[0].expected)
+        assertEquals(0, missing[0].held)
+        assertTrue(missing[0].owners.any { it.contains("mfi_oversold") })
+    }
+
+    @Test
+    fun `a flag and a strategy position on the same symbol sum rather than overwrite`() {
+        val flags = listOf(openFlag("AEP", shares = 20))
+        val stocks = listOf(openStock("AEP", shares = 45))
+        assertEquals(0, detector.detect(emptyList(), flags, stocks, listOf(pos("AEP", "STK", qty = 65))).size)
+        val orphans = detector.detect(emptyList(), flags, stocks, listOf(pos("AEP", "STK", qty = 45)))
+        assertEquals(1, orphans.size)
+        assertTrue(orphans[0].reason.contains("expected 65, held 45"))
     }
 }
