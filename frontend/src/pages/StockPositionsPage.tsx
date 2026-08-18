@@ -19,6 +19,8 @@ type StockPosition = {
   signalledAt: string
   openedAt: string | null
   closedAt: string | null
+  brokerUnrealizedPnl: number | null
+  brokerDataStale: boolean
 }
 
 type Summary = {
@@ -40,6 +42,16 @@ const STATUS_STYLE: Record<string, string> = {
   CLOSED_STOP: 'bg-red-500/15 text-red-600',
   CLOSED_MANUAL: 'bg-muted text-muted-foreground',
   CLOSED_EXTERNAL: 'bg-orange-500/15 text-orange-600',
+}
+
+/**
+ * Realized P&L once the position closes, IBKR's unrealized figure from the portfolio push until
+ * then. realizedPnl is null on every OPEN row by construction, so reading it alone left the column
+ * blank for exactly the positions worth watching.
+ */
+function displayPnl(p: StockPosition): { value: number | null; realized: boolean; stale: boolean } {
+  if (p.realizedPnl != null) return { value: p.realizedPnl, realized: true, stale: false }
+  return { value: p.brokerUnrealizedPnl, realized: false, stale: p.brokerDataStale }
 }
 
 function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
@@ -127,7 +139,9 @@ export function StockPositionsPage() {
             </tr>
           </thead>
           <tbody>
-            {positions.map((p) => (
+            {positions.map((p) => {
+              const pnl = displayPnl(p)
+              return (
               <tr key={p.id} className="border-b last:border-0">
                 <td className="py-2 font-medium">{p.symbol}</td>
                 <td className="text-muted-foreground">{p.strategyId}</td>
@@ -144,12 +158,23 @@ export function StockPositionsPage() {
                   {p.entrySlippage?.toFixed(3) ?? '—'}
                 </td>
                 <td className="text-right tabular-nums">{p.stopPrice.toFixed(2)}</td>
-                <td className={`text-right tabular-nums ${(p.realizedPnl ?? 0) < 0 ? 'text-red-600' : (p.realizedPnl ?? 0) > 0 ? 'text-emerald-600' : ''}`}>
-                  {p.realizedPnl?.toFixed(2) ?? '—'}
+                <td
+                  className={`text-right tabular-nums ${pnl.stale ? 'opacity-60' : ''} ${(pnl.value ?? 0) < 0 ? 'text-red-600' : (pnl.value ?? 0) > 0 ? 'text-emerald-600' : ''}`}
+                  title={
+                    pnl.value == null
+                      ? 'No P&L yet'
+                      : pnl.realized
+                        ? 'Realized P&L'
+                        : `IBKR unrealized P&L${pnl.stale ? ' (last push is stale)' : ''}`
+                  }
+                >
+                  {pnl.value?.toFixed(2) ?? '—'}
+                  {pnl.stale && <span className="ml-1 text-muted-foreground text-xs">~</span>}
                 </td>
                 <td className="text-muted-foreground text-xs">{new Date(p.signalledAt).toLocaleString()}</td>
               </tr>
-            ))}
+              )
+            })}
           </tbody>
         </table>
       )}
