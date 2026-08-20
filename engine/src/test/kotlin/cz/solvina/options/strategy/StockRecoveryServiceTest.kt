@@ -125,7 +125,9 @@ class StockRecoveryServiceTest {
             assertEquals(listOf(Symbol("AAPL") to BigDecimal("95.00")), orders.protectiveStops)
             val row = positions.rows.single()
             assertEquals(StockPositionStatus.OPEN, row.status)
-            assertEquals(FakeOrders.NEW_STOP_ID, row.stopOrderId)
+            // NOT the freshly submitted id: unacknowledged is not the same as working, and writing it
+            // over the stored one is what left AEP unable to recognise its own live stop (2026-08-20).
+            assertEquals(STOP_ID, row.stopOrderId)
         }
 
     @Test
@@ -143,6 +145,104 @@ class StockRecoveryServiceTest {
             assertEquals(1, orders.protectiveStops.size)
         }
 
+    // ── AEP, 2026-08-20: 55 stops overnight against a stop that was working the whole time ──
+
+    @Test
+    fun `a working stop at the broker is adopted instead of submitting another`() =
+        runTest {
+            val positions = FakePositions(open().copy(stopOrderId = 999, targetOrderId = null))
+            val orders = FakeOrders()
+            val service =
+                service(positions, orders = orders, held = 10, openOrders = listOf(listOf(stopOrder(71616))))
+
+            service.recover()
+
+            assertTrue(orders.protectiveStops.isEmpty(), "a working stop needs no second one")
+            assertEquals(71616, positions.rows.single().stopOrderId)
+        }
+
+    @Test
+    fun `an acknowledged stop is adopted on the pass that sees it`() =
+        runTest {
+            val positions = FakePositions(open())
+            val orders = FakeOrders()
+            val service =
+                service(
+                    positions,
+                    orders = orders,
+                    held = 10,
+                    openOrders = listOf(emptyList(), listOf(stopOrder(FakeOrders.NEW_STOP_ID))),
+                )
+
+            service.recover()
+            assertEquals(STOP_ID, positions.rows.single().stopOrderId)
+
+            service.recover()
+            assertEquals(1, orders.protectiveStops.size, "the acknowledged stop must not be duplicated")
+            assertEquals(FakeOrders.NEW_STOP_ID, positions.rows.single().stopOrderId)
+        }
+
+    @Test
+    fun `submissions stop at the attempt ceiling instead of looping forever`() =
+        runTest {
+            val positions = FakePositions(open())
+            val orders = FakeOrders()
+            val service =
+                service(
+                    positions,
+                    orders = orders,
+                    held = 10,
+                    // Each read advances an hour, so every pass clears the 10-minute ack grace.
+                    clock = SteppingClock(Instant.parse("2026-08-07T14:00:00Z"), java.time.Duration.ofHours(1)),
+                )
+
+            repeat(20) { service.recover() }
+
+            assertTrue(
+                orders.protectiveStops.size <= 5,
+                "expected the ceiling to hold, got ${orders.protectiveStops.size} stops",
+            )
+        }
+
+    @Test
+    fun `a second working stop is never joined by a third`() =
+        runTest {
+            val positions = FakePositions(open().copy(stopOrderId = 999, targetOrderId = null))
+            val orders = FakeOrders()
+            val alerts = RecordingAlertPort()
+            val service =
+                service(
+                    positions,
+                    orders = orders,
+                    held = 10,
+                    openOrders = listOf(listOf(stopOrder(71616), stopOrder(93452))),
+                    alertPort = alerts,
+                )
+
+            service.recover()
+
+            assertTrue(orders.protectiveStops.isEmpty(), "duplicate stops would sell twice the position")
+            assertEquals(1, alerts.sent.count { it.first == AlertLevel.CRITICAL })
+        }
+
+    @Test
+    fun `the unprotected alert is raised once, not every pass`() =
+        runTest {
+            val positions = FakePositions(open())
+            val alerts = RecordingAlertPort()
+            val service =
+                service(
+                    positions,
+                    held = 10,
+                    clock = SteppingClock(Instant.parse("2026-08-07T14:00:00Z"), java.time.Duration.ofHours(1)),
+                    alertPort = alerts,
+                )
+
+            repeat(20) { service.recover() }
+
+            assertEquals(1, alerts.sent.count { it.first == AlertLevel.CRITICAL })
+        }
+
     // ── helpers ──────────────────────────────────────────────────────────────────────────────
 
     private fun service(
@@ -151,9 +251,19 @@ class StockRecoveryServiceTest {
         openOrderIds: List<Int> = emptyList(),
         held: Int = 0,
         positionsPort: PositionsPort? = null,
+        clock: Clock = fixedClock,
+        /** Full order rows when the test needs side/type, not just presence. */
+        openOrders: List<List<AccountOpenOrder>>? = null,
+        alertPort: AlertPort = NoopAlertPort,
     ): StockRecoveryService {
         val accountTradingPort = mockk<AccountTradingPort>()
-        coEvery { accountTradingPort.getOpenOrders() } returns openOrderIds.map { openOrder(it) }
+        if (openOrders != null) {
+            // One element per recover() pass, the last repeating — lets a test show a stop being
+            // acknowledged on a later pass than the one that submitted it.
+            coEvery { accountTradingPort.getOpenOrders() } returnsMany openOrders andThen openOrders.last()
+        } else {
+            coEvery { accountTradingPort.getOpenOrders() } returns openOrderIds.map { openOrder(it) }
+        }
         val feed =
             positionsPort ?: object : PositionsPort {
                 override suspend fun getPositions() = if (held > 0) listOf(stockPosition(held)) else emptyList()
@@ -165,10 +275,28 @@ class StockRecoveryServiceTest {
                 StockPositionLifecycleService(positions, NoopOrderLifecyclePort, CoroutineScope(StandardTestDispatcher())),
             accountTradingPort = accountTradingPort,
             positionsSnapshot = BrokerPositionsSnapshotService(feed),
-            alertPort = NoopAlertPort,
+            alertPort = alertPort,
             connectionStatusPort = ConnectedStatusPort,
-            clock = fixedClock,
+            clock = clock,
         )
+    }
+
+    /** A working protective sell-stop, the shape [StockRecoveryService] adopts rather than duplicates. */
+    private fun stopOrder(id: Int) = openOrder(id).copy(action = "SELL", orderType = "STP", limitPrice = BigDecimal.ZERO)
+
+    /** Advances on every read, so the acknowledgement grace can actually elapse between passes. */
+    private class SteppingClock(
+        private var now: Instant,
+        private val step: java.time.Duration,
+    ) : Clock() {
+        override fun instant(): Instant {
+            now = now.plus(step)
+            return now
+        }
+
+        override fun getZone() = ZoneOffset.UTC
+
+        override fun withZone(zone: java.time.ZoneId) = this
     }
 
     private fun openOrder(id: Int) =
@@ -290,6 +418,18 @@ class StockRecoveryServiceTest {
             title: String,
             body: String,
         ) {}
+    }
+
+    private class RecordingAlertPort : AlertPort {
+        val sent = mutableListOf<Triple<AlertLevel, String, String>>()
+
+        override suspend fun send(
+            level: AlertLevel,
+            title: String,
+            body: String,
+        ) {
+            sent += Triple(level, title, body)
+        }
     }
 
     private object ConnectedStatusPort : ConnectionStatusPort {

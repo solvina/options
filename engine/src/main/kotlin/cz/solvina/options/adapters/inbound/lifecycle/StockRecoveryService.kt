@@ -1,5 +1,6 @@
 package cz.solvina.options.adapters.inbound.lifecycle
 
+import cz.solvina.options.domain.features.account.AccountOpenOrder
 import cz.solvina.options.domain.features.account.AccountTradingPort
 import cz.solvina.options.domain.features.account.BrokerPositionsSnapshotService
 import cz.solvina.options.domain.features.alert.AlertLevel
@@ -40,6 +41,17 @@ private val REPROTECT_ACK_GRACE = 10.minutes
 
 /** Consecutive unacknowledged submissions for one symbol before escalating to a CRITICAL alert. */
 private const val REPROTECT_ALERT_AFTER = 3
+
+/**
+ * Hard ceiling on consecutive unacknowledged submissions. Past this the engine stops submitting and
+ * leaves it to the human the alert already summoned.
+ *
+ * AEP, 2026-08-20: an IBKR disconnect (error 10328 on every in-flight order) meant `getOpenOrders()`
+ * returned nothing, so a stop that was working the whole time looked absent. 55 stops went out
+ * overnight, one per pass, because nothing ever stopped the loop. Re-submitting forever cannot fix a
+ * broker that is not answering, and each attempt burns an order id.
+ */
+private const val REPROTECT_MAX_ATTEMPTS = 5
 
 /**
  * Re-attaches the engine to stock-strategy positions it stopped watching.
@@ -83,6 +95,12 @@ class StockRecoveryService(
 
     private val lastReprotect = ConcurrentHashMap<String, ReprotectAttempt>()
 
+    /**
+     * Symbols already escalated to CRITICAL. One alert per run of failures, not one per pass — AEP
+     * re-alerted for hours. Cleared the moment the symbol is protected again.
+     */
+    private val alerted = ConcurrentHashMap.newKeySet<String>()
+
     @Scheduled(
         fixedDelayString = "\${stock-strategies.recovery.delay-ms:300000}",
         initialDelayString = "\${stock-strategies.recovery.initial-delay-ms:180000}",
@@ -105,12 +123,11 @@ class StockRecoveryService(
             if (live.isEmpty()) return@withLock
 
             logger.info { "Stock recovery: reconciling ${live.size} PENDING/OPEN row(s)" }
-            val openOrderIds =
+            val openOrders =
                 runCatching { accountTradingPort.getOpenOrders() }
                     .onFailure { e -> logger.warn(e) { "Stock recovery: cannot fetch open orders — skipping this run" } }
-                    .getOrNull()
-                    ?.map { it.orderId }
-                    ?.toSet() ?: return@withLock
+                    .getOrNull() ?: return@withLock
+            val openOrderIds = openOrders.map { it.orderId }.toSet()
 
             // Rows with working orders resolve without the position snapshot. Shares they account for
             // are claimed, so a second row on the same symbol cannot claim them again.
@@ -127,8 +144,9 @@ class StockRecoveryService(
                     }
                     protectiveIds.any { it in openOrderIds } -> {
                         // A protective child only activates once its parent fills — so the entry filled.
+                        val repaired = repairStopOrderId(row, openOrders, openOrderIds)
                         val open =
-                            if (row.status == StockPositionStatus.PENDING) {
+                            if (repaired.status == StockPositionStatus.PENDING) {
                                 logger.info {
                                     "Stock recovery: [${row.symbol.value}] protective order working for a PENDING row — " +
                                         "entry filled while unwatched, promoting to OPEN"
@@ -137,14 +155,16 @@ class StockRecoveryService(
                                 // null keeps it out of the slippage average rather than inventing a
                                 // number, and openedAt records when we noticed, not when it filled.
                                 positions.save(
-                                    row.copy(
+                                    repaired.copy(
                                         status = StockPositionStatus.OPEN,
-                                        openedAt = row.openedAt ?: Instant.now(clock),
+                                        openedAt = repaired.openedAt ?: Instant.now(clock),
                                     ),
                                 )
                             } else {
-                                row
+                                repaired
                             }
+                        lastReprotect.remove(row.symbol.value)
+                        alerted.remove(row.symbol.value)
                         claimed.merge(row.symbol.value, row.shares, Int::plus)
                         lifecycle.register(open)
                     }
@@ -171,7 +191,7 @@ class StockRecoveryService(
                 when {
                     available >= row.shares -> {
                         availableLong.merge(row.symbol.value, -row.shares, Int::plus)
-                        reprotect(row, openOrderIds)
+                        reprotect(row, openOrders, openOrderIds)
                     }
                     row.status == StockPositionStatus.PENDING -> {
                         logger.info { "Stock recovery: [${row.symbol.value}] entry order gone and shares not held — entry never filled" }
@@ -213,38 +233,118 @@ class StockRecoveryService(
         }
 
     /**
+     * Working protective sell-stops the broker holds for this symbol. Matched on symbol/side/type
+     * because [AccountOpenOrder] carries no quantity —
+     * enough to recognise "a stop is guarding this symbol", not enough to prove it guards exactly
+     * these shares, which is why adoption below refuses to guess when there is more than one.
+     */
+    private fun workingStops(
+        symbol: String,
+        openOrders: List<AccountOpenOrder>,
+    ) = openOrders.filter { it.symbol == symbol && it.action == "SELL" && it.orderType == "STP" }
+
+    /**
+     * Points [StockPosition.stopOrderId] back at the stop the broker is actually working.
+     *
+     * Before the AEP incident every re-arm persisted its own unacknowledged order id, so one spurious
+     * pass overwrote the pointer to the real stop and the row could never recognise its own protection
+     * again. The row is repaired here rather than only in [reprotect] because a row whose *target* is
+     * still working never reaches that path — which is exactly how AEP stayed corrupted after the
+     * re-arm loop itself had stopped.
+     */
+    private suspend fun repairStopOrderId(
+        row: StockPosition,
+        openOrders: List<AccountOpenOrder>,
+        openOrderIds: Set<Int>,
+    ): StockPosition {
+        if (row.stopOrderId != null && row.stopOrderId in openOrderIds) return row
+        val stops = workingStops(row.symbol.value, openOrders)
+        val adopted = stops.singleOrNull() ?: return row
+        if (adopted.orderId == row.stopOrderId) return row
+        logger.warn {
+            "Stock recovery: [${row.symbol.value}] stored stop ${row.stopOrderId} is not working but order " +
+                "${adopted.orderId} is — repairing the row to track the live stop"
+        }
+        return positions.save(row.copy(stopOrderId = adopted.orderId))
+    }
+
+    /**
      * Shares are held with no protective order working — re-place the stop at the price the strategy
      * chose, which for these strategies never moves after entry (no trailing), so the stored value is
      * still the right one.
+     *
+     * Adopting an existing stop is tried first: a broker that has one working needs no second, and
+     * submitting anyway is how a position ends up double-protected (a dip through the stop then sells
+     * twice the shares and flips the position short).
      */
     private suspend fun reprotect(
         row: StockPosition,
+        openOrders: List<AccountOpenOrder>,
         openOrderIds: Set<Int>,
     ) {
         val symbol = row.symbol.value
         val previous = lastReprotect[symbol]
+
+        // The broker already guards these shares — adopt rather than pile on. Covers both a stop we
+        // submitted and lost track of, and one placed by hand in TWS.
+        val stops = workingStops(symbol, openOrders)
+        if (stops.size > 1) {
+            logger.error { "Stock recovery: [$symbol] ${stops.size} working stops — refusing to add another" }
+            alertOnce(
+                symbol,
+                "$symbol has ${stops.size} working protective stops for ${row.shares} shares. A fill would sell more " +
+                    "than the position holds and flip it short. Cancel the extras in TWS.",
+            )
+            return
+        }
+        val existing = stops.singleOrNull()
+        if (existing != null) {
+            lastReprotect.remove(symbol)
+            alerted.remove(symbol)
+            val adopted =
+                positions.save(
+                    row.copy(
+                        status = StockPositionStatus.OPEN,
+                        stopOrderId = existing.orderId,
+                        openedAt = row.openedAt ?: Instant.now(clock),
+                    ),
+                )
+            lifecycle.register(adopted)
+            logger.info { "Stock recovery: [$symbol] adopted working stop ${existing.orderId} — no new order needed" }
+            return
+        }
+
         if (previous != null) {
             if (previous.orderId in openOrderIds) {
-                // The broker took it after all; this row is protected and the attempt record is stale.
+                // The broker took it after all; persist it now that it is real and stop counting.
                 lastReprotect.remove(symbol)
-            } else {
-                val waited = Duration.between(previous.at, Instant.now(clock))
-                if (waited < REPROTECT_ACK_GRACE.toJavaDuration()) {
-                    logger.warn {
-                        "Stock recovery: [$symbol] stop ${previous.orderId} submitted ${waited.toSeconds()}s ago has still " +
-                            "not appeared in open orders — waiting for acknowledgement instead of submitting another"
-                    }
-                    return
+                alerted.remove(symbol)
+                lifecycle.register(positions.save(row.copy(stopOrderId = previous.orderId)))
+                logger.info { "Stock recovery: [$symbol] stop ${previous.orderId} acknowledged — tracking it" }
+                return
+            }
+            val waited = Duration.between(previous.at, Instant.now(clock))
+            if (waited < REPROTECT_ACK_GRACE.toJavaDuration()) {
+                logger.warn {
+                    "Stock recovery: [$symbol] stop ${previous.orderId} submitted ${waited.toSeconds()}s ago has still " +
+                        "not appeared in open orders — waiting for acknowledgement instead of submitting another"
                 }
-                if (previous.consecutiveUnacked + 1 >= REPROTECT_ALERT_AFTER) {
-                    alertPort.send(
-                        AlertLevel.CRITICAL,
-                        "Cannot protect stock position: $symbol",
-                        "${row.shares} shares of $symbol are held with NO working protective order. " +
-                            "${previous.consecutiveUnacked + 1} stops have been submitted and none was ever acknowledged " +
-                            "by the broker — automatic re-protection is not working. Place a stop or close the position in TWS.",
-                    )
+                return
+            }
+            if (previous.consecutiveUnacked >= REPROTECT_MAX_ATTEMPTS) {
+                logger.error {
+                    "Stock recovery: [$symbol] ${previous.consecutiveUnacked} unacknowledged stops — giving up, " +
+                        "manual intervention required"
                 }
+                return
+            }
+            if (previous.consecutiveUnacked + 1 >= REPROTECT_ALERT_AFTER) {
+                alertOnce(
+                    symbol,
+                    "${row.shares} shares of $symbol are held with NO working protective order. " +
+                        "${previous.consecutiveUnacked + 1} stops have been submitted and none was ever acknowledged " +
+                        "by the broker — automatic re-protection is not working. Place a stop or close the position in TWS.",
+                )
             }
         }
 
@@ -252,29 +352,31 @@ class StockRecoveryService(
             runCatching { orders.submitProtectiveStop(row.symbol, row.shares, row.stopPrice) }
                 .getOrElse { e ->
                     logger.error(e) { "Stock recovery: [$symbol] failed to re-place protective stop: ${e.message}" }
-                    alertPort.send(
-                        AlertLevel.CRITICAL,
-                        "Cannot protect stock position: $symbol",
-                        "${row.shares} shares of $symbol are held with no protective order and re-placing one failed: " +
-                            "${e.message}. Place a stop or close the position in TWS.",
+                    alertOnce(
+                        symbol,
+                        "${row.shares} shares of $symbol are held with no protective order and re-placing one " +
+                            "failed: ${e.message}. Place a stop or close the position in TWS.",
                     )
                     return
                 }
+        // Deliberately NOT persisted to the row yet: an id the broker never acknowledges is not this
+        // position's stop, and writing it over a good one is what made AEP unrecoverable. It is
+        // adopted above on the pass that sees it in open orders.
         lastReprotect[symbol] =
             ReprotectAttempt(
                 at = Instant.now(clock),
                 orderId = newOrderId,
                 consecutiveUnacked = (previous?.consecutiveUnacked ?: 0) + 1,
             )
-        val open =
-            positions.save(
-                row.copy(
-                    status = StockPositionStatus.OPEN,
-                    stopOrderId = newOrderId,
-                    openedAt = row.openedAt ?: Instant.now(clock),
-                ),
-            )
-        lifecycle.register(open)
         logger.warn { "Stock recovery: [$symbol] re-armed protective stop at ${row.stopPrice} (order $newOrderId)" }
+    }
+
+    /** One CRITICAL per run of failures — the old code re-alerted every pass for as long as it looped. */
+    private suspend fun alertOnce(
+        symbol: String,
+        body: String,
+    ) {
+        if (!alerted.add(symbol)) return
+        alertPort.send(AlertLevel.CRITICAL, "Cannot protect stock position: $symbol", body)
     }
 }
