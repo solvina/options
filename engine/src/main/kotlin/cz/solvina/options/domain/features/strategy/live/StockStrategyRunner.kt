@@ -123,7 +123,7 @@ class StockStrategyRunner(
         // Warmup + a margin: the strategy declares how many bars it needs, and a signal computed on
         // a short series is not the signal the backtest produced.
         val needed = strategy.inputs.warmupBars + 2
-        val to = Instant.now()
+        val to = Instant.now(clock)
         val from = to.minus(Duration.ofDays(StrategyWarmup.calendarDays(needed, assignment.timeframe)))
         val bars = barStore.readBars(symbol, from, to, assignment.timeframe)
         if (bars.size < needed) {
@@ -198,7 +198,7 @@ class StockStrategyRunner(
                         .subtract(decision.stopLossPrice)
                         .multiply(BigDecimal(decision.shares))
                         .setScale(2, RoundingMode.HALF_UP),
-                signalledAt = Instant.now(),
+                signalledAt = Instant.now(clock),
             )
 
         // Persist BEFORE submitting. A row with no order is a recoverable inconsistency the
