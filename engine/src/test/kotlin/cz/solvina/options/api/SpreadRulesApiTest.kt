@@ -47,6 +47,8 @@ class SpreadRulesApiTest {
             assertEquals(0, BigDecimal("45").compareTo(bp.ivRankThreshold))
             assertEquals(0, BigDecimal.ZERO.compareTo(bp.stopLossPercent))
             assertEquals(21, bp.timeProfitDte)
+            assertEquals(true, bp.underlyingStopEnabled)
+            assertEquals(0, BigDecimal.ZERO.compareTo(bp.underlyingStopBufferPct))
             assertEquals(true, bc.enabled)
             assertEquals(BigDecimal("0.90"), bc.minCreditPerShare)
             assertEquals(20, rules.portfolio.maxOpenSpreads)

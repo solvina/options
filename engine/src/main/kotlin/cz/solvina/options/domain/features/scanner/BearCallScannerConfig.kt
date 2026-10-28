@@ -36,6 +36,9 @@ data class BearCallScannerConfig(
     // Basis is the ENTRY MID (fair value at fill), not the fill credit — 1.00 = exit when the
     // spread is worth 2× what it was at entry. See SpreadManagementService SL threshold.
     val stopLossPercent: Double = 1.00,
+    // Close when the underlying trades through the short strike (see [StrategyParams]).
+    val underlyingStopEnabled: Boolean = true,
+    val underlyingStopBufferPct: Double = 0.0,
     val timeProfitDte: Int = 21,
     val driftProtectionPct: Double = 0.05,
     // Dividend assignment protection (US/American-style only; wired in Phase 3 with the data pipeline)
@@ -61,6 +64,8 @@ data class BearCallScannerConfig(
             maxRiskPercent = maxRiskPercent,
             takeProfitPercent = takeProfitPercent,
             stopLossPercent = stopLossPercent,
+            underlyingStopEnabled = underlyingStopEnabled,
+            underlyingStopBufferPct = underlyingStopBufferPct,
             timeProfitDte = timeProfitDte,
             driftProtectionPct = driftProtectionPct,
         )

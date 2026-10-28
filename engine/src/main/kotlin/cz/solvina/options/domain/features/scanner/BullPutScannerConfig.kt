@@ -37,6 +37,9 @@ data class BullPutScannerConfig(
     // Exit rules
     val takeProfitPercent: Double = 0.50,
     val stopLossPercent: Double = 0.50,
+    // Close when the underlying trades through the short strike (see [StrategyParams]).
+    val underlyingStopEnabled: Boolean = true,
+    val underlyingStopBufferPct: Double = 0.0,
     val timeProfitDte: Int = 14,
     // Execution
     val driftProtectionPct: Double = 0.01,
@@ -60,6 +63,8 @@ data class BullPutScannerConfig(
             maxRiskPercent = maxRiskPercent,
             takeProfitPercent = takeProfitPercent,
             stopLossPercent = stopLossPercent,
+            underlyingStopEnabled = underlyingStopEnabled,
+            underlyingStopBufferPct = underlyingStopBufferPct,
             timeProfitDte = timeProfitDte,
             driftProtectionPct = driftProtectionPct,
         )

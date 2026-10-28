@@ -103,6 +103,12 @@ export function RulesPage() {
             ({p.entryCooldownMinutes} min cooldown).
           </li>
           <li>
+            Cut losers on the stock, not the option price:{' '}
+            {bp.underlyingStopEnabled
+              ? `close once the underlying trades through the short strike${bp.underlyingStopBufferPct > 0 ? ` (${pct(bp.underlyingStopBufferPct)} before it)` : ''}.`
+              : 'underlying stop is off.'}
+          </li>
+          <li>
             Take profit at {pct(bp.takeProfitPercent)} of the credit; close everything at {bp.timeProfitDte} days to
             expiry.
           </li>
@@ -130,6 +136,15 @@ export function RulesPage() {
         strategies={s}
         rows={[
           ['Take profit at', (x) => `${pct(x.takeProfitPercent)} of credit`],
+          [
+            'Underlying stop',
+            (x) =>
+              x.underlyingStopEnabled ? (
+                x.underlyingStopBufferPct > 0 ? `${pct(x.underlyingStopBufferPct)} before short strike` : 'At short strike'
+              ) : (
+                <Off />
+              ),
+          ],
           ['Value stop', (x) => (x.stopLossPercent > 0 ? `${+(1 + x.stopLossPercent).toFixed(2)}× entry mid` : <Off />)],
           ['Time exit', (x) => `≤ ${x.timeProfitDte} DTE`],
         ]}

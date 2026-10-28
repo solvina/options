@@ -18,6 +18,7 @@ import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.features.volatility.VolatilityPort
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
+import cz.solvina.options.domain.models.OptionType
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -445,12 +446,10 @@ class SpreadManagementService(
         // mid with a credit-multiple stop starts life already stopped out (LITE, NBIS 2026-07-06/07).
         // Rows persisted before entry mids were recorded fall back to the credit.
         //
-        // stopLossPercent <= 0 DISABLES the value stop (2026-07-18): the spread is defined-risk —
-        // max loss is capped by the width and already sized by max-risk-percent — while a value
-        // stop fires on vol expansion and converts recoverable drawdowns into realized losses
-        // (TXN was stopped 2026-07-17 with the underlying still ABOVE the short strike). With the
-        // stop disabled the managed exits are TP 50% and the timeProfitDte rule; a full-width loss
-        // is an accepted, bounded outcome, not an emergency.
+        // stopLossPercent <= 0 DISABLES the value stop (2026-07-18): a value stop fires on vol
+        // expansion and option-mid noise (TXN was stopped 2026-07-17 with the underlying still ABOVE
+        // the short strike). Losses are cut instead by the underlying stop below, which watches spot
+        // against the short strike and is immune to that noise.
         val tpThreshold = spread.creditPerShare.multiply(BigDecimal.ONE.subtract(BigDecimal(takeProfitPercent)))
         val slBasis = spread.entryMidPerShare ?: spread.creditPerShare
         val slThreshold =
@@ -462,8 +461,30 @@ class SpreadManagementService(
                 "(basis=\$${"%.4f".format(slBasis)}) DTE=$dte quote=$quoteStatus"
         }
 
-        val slBreached = slThreshold != null && currentSpreadValue != null && currentSpreadValue >= slThreshold
-        if (currentSpreadValue != null && !slBreached) {
+        val valueStopBreached = slThreshold != null && currentSpreadValue != null && currentSpreadValue >= slThreshold
+
+        // Underlying stop (2026-10-28): the replacement for "no stop at all". HON 230/220 broke its
+        // short strike on 2026-08-11 with 38 DTE left and slid to a near-full-width loss while nothing
+        // reacted — the 21-DTE exit came 17 days later with spot at 217. Spot is read from the held
+        // legs' option-computation ticks (free); the snapshot fallback only runs when this stop is on.
+        val underlyingNow =
+            marketDataPort.streamedUnderlyingPrice(spread.symbol)?.amount
+                ?: if (strat.underlyingStopEnabled) {
+                    runCatching { marketDataPort.getUnderlyingPrice(spread.symbol).amount }.getOrNull()
+                } else {
+                    null
+                }
+        val underlyingStopTrigger =
+            if (strat.underlyingStopEnabled) underlyingStopTrigger(spread, strat.underlyingStopBufferPct) else null
+        val underlyingStopBreached =
+            underlyingStopTrigger != null &&
+                underlyingNow != null &&
+                when (spread.soldLeg.contract.type) {
+                    OptionType.PUT -> underlyingNow <= underlyingStopTrigger
+                    OptionType.CALL -> underlyingNow >= underlyingStopTrigger
+                }
+        val slBreached = valueStopBreached || underlyingStopBreached
+        if ((currentSpreadValue != null || underlyingNow != null) && !slBreached) {
             // Breaches must be CONSECUTIVE across VALUED observations — a real quote below the
             // threshold resets the count. A BLIND cycle (null value) is no information, not an
             // all-clear: resetting on it let flapping quotes starve the 2-cycle confirmation so the
@@ -476,7 +497,13 @@ class SpreadManagementService(
                 currentSpreadValue != null && currentSpreadValue <= tpThreshold ->
                     SpreadStatus.CLOSED_PROFIT to "TP: spread value \$$currentSpreadValue ≤ \$$tpThreshold"
                 slBreached && stopLossConfirmed(spread) ->
-                    SpreadStatus.CLOSED_STOP to "SL: spread value \$$currentSpreadValue ≥ \$$slThreshold"
+                    SpreadStatus.CLOSED_STOP to
+                        if (underlyingStopBreached) {
+                            "SL: underlying \$$underlyingNow through short strike " +
+                                "${spread.soldLeg.contract.strike} (trigger \$$underlyingStopTrigger)"
+                        } else {
+                            "SL: spread value \$$currentSpreadValue ≥ \$$slThreshold"
+                        }
                 dte <= timeProfitDte ->
                     SpreadStatus.CLOSED_TIME to "DTE: $dte ≤ $timeProfitDte"
                 else -> null
@@ -500,10 +527,10 @@ class SpreadManagementService(
                 // Prefer the underlying IBKR already ships on the held legs' option-computation
                 // ticks — this is display/telemetry only, and reading it costs no market-data line,
                 // where the snapshot fallback burns one subscribe→cancel per position per cycle.
-                val underlyingNow =
-                    marketDataPort.streamedUnderlyingPrice(spread.symbol)?.amount
+                val spot =
+                    underlyingNow
                         ?: runCatching { marketDataPort.getUnderlyingPrice(spread.symbol).amount }.getOrNull()
-                closers.forSpread(spread).recordLastValue(spread, currentSpreadValue, underlyingNow)
+                closers.forSpread(spread).recordLastValue(spread, currentSpreadValue, spot)
             } else {
                 logger.debug { "[${spread.symbol}] No live option quotes — skipping price-based exit checks this cycle (DTE=$dte)" }
             }
@@ -562,6 +589,22 @@ class SpreadManagementService(
         if (closeStatus == SpreadStatus.CLOSED_STOP) {
             executionPort.blockEntry(spread.symbol, Duration.ofHours(config.stopLossCooldownHours))
         }
+    }
+
+    /**
+     * Underlying price at which the underlying stop fires: the short strike, moved [bufferPct] of it
+     * to the safe side — above the strike for a short put, below it for a short call.
+     */
+    private fun underlyingStopTrigger(
+        spread: Spread,
+        bufferPct: Double,
+    ): BigDecimal {
+        val strike = spread.soldLeg.contract.strike
+        val shift = strike.multiply(BigDecimal(bufferPct))
+        return when (spread.soldLeg.contract.type) {
+            OptionType.PUT -> strike.add(shift)
+            OptionType.CALL -> strike.subtract(shift)
+        }.setScale(2, RoundingMode.HALF_UP)
     }
 
     /**

@@ -503,6 +503,8 @@ components:
         - maxRiskPercent
         - takeProfitPercent
         - stopLossPercent
+        - underlyingStopEnabled
+        - underlyingStopBufferPct
         - timeProfitDte
         - driftProtectionPct
       properties:
@@ -540,6 +542,12 @@ components:
         stopLossPercent:
           type: number
           description: Option-value stop as a multiple of entry mid; 0 or less = disabled
+        underlyingStopEnabled:
+          type: boolean
+          description: Close once the underlying trades through the short strike (less the buffer)
+        underlyingStopBufferPct:
+          type: number
+          description: Fraction of the short strike the trigger sits on the safe side of it; 0 = at the strike
         timeProfitDte:
           type: integer
           description: Close any position at or below this many days to expiry

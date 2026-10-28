@@ -146,6 +146,14 @@ export type StrategyRulesDto = {
      */
     stopLossPercent: number;
     /**
+     * Close once the underlying trades through the short strike (less the buffer)
+     */
+    underlyingStopEnabled: boolean;
+    /**
+     * Fraction of the short strike the trigger sits on the safe side of it; 0 = at the strike
+     */
+    underlyingStopBufferPct: number;
+    /**
      * Close any position at or below this many days to expiry
      */
     timeProfitDte: number;

@@ -158,6 +158,7 @@ class SpreadManagementServiceTest {
         clock: Clock = clockAtEntry,
         positionsPort: cz.solvina.options.domain.features.account.PositionsPort? = null,
         config: ScannerConfig = this.config,
+        strategyParams: StrategyParamsRegistry = this.strategyParams,
     ): SpreadManagementService {
         // New MarketDataPort stream methods (2026-07-21): default to snapshot-fallback (null) and a
         // no-op reconcile so the existing per-contract getOptionMidLive stubs drive every test.
@@ -481,6 +482,132 @@ class SpreadManagementServiceTest {
             // No close: the only update is recordLastValue, which keeps the spread OPEN.
             assertEquals(SpreadStatus.OPEN, updated.captured.status)
             coVerify(exactly = 0) { orderPort.placeMarketOrder(any(), any(), any()) }
+        }
+
+    // -------------------------------------------------------------------------
+    // Underlying stop (2026-10-28) — spot through the short strike, immune to option-mid noise
+    // -------------------------------------------------------------------------
+
+    /**
+     * Runs one exit sweep for the default bull put (short 480P) with the spread value parked at
+     * $1.10 — inside both the TP ($0.50) and value-stop ($1.50) thresholds, so only the underlying
+     * stop can act — and the underlying at [spot].
+     */
+    private suspend fun sweepBullPutWithSpot(
+        spot: String,
+        strategyParams: StrategyParamsRegistry = this.strategyParams,
+    ): Pair<BullPutSpread, OrderPort> {
+        val spreadPort = mockk<BullPutSpreadPort>()
+        val marketDataPort = mockMarketData()
+        val orderPort = mockk<OrderPort>()
+        coEvery { spreadPort.findOpen() } returns listOf(buildOpenSpread())
+        coEvery { spreadPort.findByStatus(SpreadStatus.CLOSING) } returns emptyList()
+        coEvery { marketDataPort.getOptionMid(soldContract) } returns Money(BigDecimal("1.20"))
+        coEvery { marketDataPort.getOptionMidLive(soldContract) } returns Money(BigDecimal("1.20"))
+        coEvery { marketDataPort.getOptionMid(boughtContract) } returns Money(BigDecimal("0.10"))
+        coEvery { marketDataPort.getOptionMidLive(boughtContract) } returns Money(BigDecimal("0.10"))
+        coEvery { marketDataPort.getUnderlyingPrice(any()) } returns Money(BigDecimal(spot))
+        coEvery { orderPort.placeMarketOrder(any(), any(), any()) } returns filledOrder
+        val updated = slot<BullPutSpread>()
+        coEvery { spreadPort.update(capture(updated)) } answers { firstArg() }
+
+        buildService(spreadPort, marketDataPort, orderPort, strategyParams = strategyParams).checkExits()
+        return updated.captured to orderPort
+    }
+
+    @Test
+    fun `underlying stop closes a bull put once spot trades through the short strike`() =
+        runTest {
+            // HON shape: the option value alone would hold, but spot (479) is below the 480 short put.
+            val (spread, _) = sweepBullPutWithSpot("479")
+
+            assertEquals(SpreadStatus.CLOSED_STOP, spread.status)
+            assertTrue(spread.closeReason!!.contains("underlying"), "reason was: ${spread.closeReason}")
+        }
+
+    @Test
+    fun `underlying stop holds while spot is still above the short put strike`() =
+        runTest {
+            // TXN shape: a scary-looking option mark with spot still on the safe side must NOT stop.
+            val (spread, orderPort) = sweepBullPutWithSpot("481")
+
+            assertEquals(SpreadStatus.OPEN, spread.status)
+            coVerify(exactly = 0) { orderPort.placeMarketOrder(any(), any(), any()) }
+        }
+
+    @Test
+    fun `underlying stop buffer moves the trigger to the safe side of the strike`() =
+        runTest {
+            // 2% buffer on a 480 put → trigger 489.60; spot 489 is still above the strike but past the trigger.
+            val buffered =
+                StrategyParamsRegistry(listOf(BullPutScannerConfig(underlyingStopBufferPct = 0.02), BearCallScannerConfig()))
+
+            val (spread, _) = sweepBullPutWithSpot("489", buffered)
+
+            assertEquals(SpreadStatus.CLOSED_STOP, spread.status)
+        }
+
+    @Test
+    fun `underlying stop disabled holds the spot breach`() =
+        runTest {
+            val disabled =
+                StrategyParamsRegistry(listOf(BullPutScannerConfig(underlyingStopEnabled = false), BearCallScannerConfig()))
+
+            val (spread, _) = sweepBullPutWithSpot("470", disabled)
+
+            assertEquals(SpreadStatus.OPEN, spread.status)
+        }
+
+    @Test
+    fun `underlying stop closes a bear call once spot trades up through the short call strike`() =
+        runTest {
+            val bearPort = InMemoryBearCallSpreadPort()
+            val soldCall = OptionContract(symbol, expiry, BigDecimal("520"), OptionType.CALL)
+            val boughtCall = OptionContract(symbol, expiry, BigDecimal("525"), OptionType.CALL)
+            val bearSpread =
+                BearCallSpread(
+                    id = UUID.randomUUID(),
+                    symbol = symbol,
+                    soldLeg = SpreadLeg(soldCall, LegAction.SELL, Money(BigDecimal("1.50")), orderId = 1),
+                    boughtLeg = SpreadLeg(boughtCall, LegAction.BUY, Money(BigDecimal("0.50")), orderId = 2),
+                    creditPerShare = BigDecimal("1.00"),
+                    maxRiskPerShare = BigDecimal("4.00"),
+                    status = SpreadStatus.OPEN,
+                    ivRankAtEntry = 50.0,
+                    underlyingPriceAtEntry = BigDecimal("500"),
+                    openedAt = Instant.now(clockAtEntry),
+                )
+            bearPort.save(bearSpread)
+            val marketDataPort = mockMarketData()
+            // value 1.20 − 0.10 = 1.10: inside TP (0.50) and the bear-call value stop (2.00) — only spot can act.
+            coEvery { marketDataPort.getOptionMid(any()) } returns Money(BigDecimal("1.00"))
+            coEvery { marketDataPort.getOptionMidLive(soldCall) } returns Money(BigDecimal("1.20"))
+            coEvery { marketDataPort.getOptionMidLive(boughtCall) } returns Money(BigDecimal("0.10"))
+            coEvery { marketDataPort.getUnderlyingPrice(any()) } returns Money(BigDecimal("520.50"))
+            val orderPort = mockk<OrderPort>()
+            coEvery { orderPort.placeMarketOrder(any(), any(), any()) } returns filledOrder
+
+            SpreadManagementService(
+                closers =
+                    SpreadCloserRegistry(
+                        listOf(
+                            BullPutSpreadCloser(mockk<BullPutSpreadPort>(relaxed = true), clockAtEntry),
+                            BearCallSpreadCloser(bearPort, clockAtEntry),
+                        ),
+                    ),
+                marketDataPort = marketDataPort,
+                orderPort = orderPort,
+                universePort = universePort,
+                volatilityPort = mockk(relaxed = true),
+                executionPort = mockk(relaxed = true),
+                config = config,
+                clock = clockAtEntry,
+                quoteHealthService = mockk(relaxed = true),
+                strategyRegistry = strategyRegistry,
+                strategyParams = strategyParams,
+            ).checkExits()
+
+            assertEquals(SpreadStatus.CLOSED_STOP, bearPort.findById(bearSpread.id!!)?.status)
         }
 
     @Test

@@ -135,20 +135,27 @@ scanner:
     max-risk-percent: 0.025
     take-profit-percent: 0.50
     # 2026-07-18: 1.00 → 0 = value stop DISABLED (0 or negative disables it; see
-    # SpreadManagementService). The spread is defined-risk — max loss is capped by the width and
-    # max-risk-percent already sizes for it — while the 2×-mid stop converted recoverable
-    # drawdowns into realized losses (TXN stopped 2026-07-17 with the underlying still ABOVE the
-    # short strike). Managed exits are now TP 50% + the 21-DTE time exit; occasional full-width
-    # losses are accepted by design. History: 2026-07-07 2.00 → 1.00 + basis moved to entry mid.
+    # SpreadManagementService). The 2×-mid stop fired on option-mid noise and vol expansion
+    # (TXN stopped 2026-07-17 with the underlying still ABOVE the short strike).
+    # History: 2026-07-07 2.00 → 1.00 + basis moved to entry mid.
     stop-loss-percent: 0
+    # 2026-10-28: losses are cut by the UNDERLYING instead — close once spot trades through the
+    # short strike (2 consecutive monitor checks, same grace windows as the value stop). Replaces
+    # "full-width losses accepted by design": HON 230/220 broke its short strike 2026-08-11 with
+    # 38 DTE left and rode to ~max loss. Buffer 0 = trigger AT the strike; 0.02 = 2% before it.
+    underlying-stop-enabled: true
+    underlying-stop-buffer-pct: 0.0
     time-profit-dte: 21            # manage/close at 21 DTE (tastytrade-style); was 14
     drift-protection-pct: 0.05     # Conservative: 0.01 → 0.05 (allow 5% movement, not 1%)
   # ---- Bear call strategy params (scanner.bear-call.*) ----
-  # 2026-07-18: same exit/entry policy as bull put — value stop disabled (defined-risk + 21-DTE
-  # management) and the credit floor raised to ≈18% of width. `enabled` stays in the rpi profile.
+  # 2026-07-18: same exit/entry policy as bull put — value stop disabled and the credit floor
+  # raised to ≈18% of width. 2026-10-28: underlying stop on, as for bull put (spot at or ABOVE the
+  # short call strike). `enabled` stays in the rpi profile.
   bear-call:
     min-credit-per-share: 0.90
     stop-loss-percent: 0
+    underlying-stop-enabled: true
+    underlying-stop-buffer-pct: 0.0
 
 # Next-earnings dates: refreshed daily into instrument_universe.next_earnings_date from the public
 # Nasdaq earnings-date API (Zacks data). The scanners skip any entry whose expiry spans a known

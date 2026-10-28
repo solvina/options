@@ -124,6 +124,8 @@ class ScannerApiImpl(
             maxRiskPercent = maxRiskPercent.toBigDecimal(),
             takeProfitPercent = takeProfitPercent.toBigDecimal(),
             stopLossPercent = stopLossPercent.toBigDecimal(),
+            underlyingStopEnabled = underlyingStopEnabled,
+            underlyingStopBufferPct = underlyingStopBufferPct.toBigDecimal(),
             timeProfitDte = timeProfitDte,
             driftProtectionPct = driftProtectionPct.toBigDecimal(),
         )

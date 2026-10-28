@@ -3,6 +3,31 @@
 Notable strategy, engine and operations changes. Newest first. Rendered in the frontend under
 **Maintenance › Changelog**.
 
+## 2026-10-28 — Spreads get a stop again: the underlying through the short strike
+
+Since 2026-07-18 a spread had no stop at all. The option-value stop was switched off
+(`stop-loss-percent: 0`) and the config said "occasional full-width losses are accepted by
+design"; the only exits were take-profit at 50% and the 21-DTE time exit. HON 230/220 shows what
+that means: it broke its 230 short strike on 2026-08-11 with 38 days left, was at 217 when the
+21-DTE exit came due on 2026-08-28, and would have closed for about −$750 of a possible −$800.
+Nothing in the rules reacted for those 17 days.
+
+- **New underlying stop, on for bull put and bear call.** A spread closes once the stock trades
+  through the short strike: at or below it for a short put, at or above it for a short call.
+  `underlying-stop-buffer-pct` (default 0) moves the trigger that fraction of the strike to the
+  safe side, if we want out before the strike is touched.
+- **It is not the stop that was switched off.** That one watched the option price, which jumps on
+  volatility and wide quotes — TXN was stopped on 2026-07-17 with the stock still above its short
+  strike. The stock price has no such noise, so the TXN case holds and the HON case closes
+  (roughly −$200 to −$250 on 2026-08-11–12 instead of ~−$750).
+- **Same safety gates as before:** two consecutive breaching monitor checks (~1 min apart), none in
+  the first 15 minutes after entry or the first 30 minutes of the session, and a 24-hour re-entry
+  block afterwards. It closes with marketable limits, escalating to market if they don't fill.
+- **Spot comes from the option legs' own data** (no extra market-data line). Only if that is
+  missing does the engine take a one-off snapshot of the stock.
+- The option-value stop stays off. Take-profit 50% and the 21-DTE exit are unchanged. Both new
+  settings show on the Trading Rules page. There is no per-symbol override for them yet.
+
 ## 2026-10-28 — Trading Rules page
 
 A one-screen summary of how the spread strategies trade, under **Overview › Trading Rules**:

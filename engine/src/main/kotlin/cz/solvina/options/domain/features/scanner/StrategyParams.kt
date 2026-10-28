@@ -40,6 +40,12 @@ data class StrategyParams(
     // ---- Exit rules ----
     val takeProfitPercent: Double,
     val stopLossPercent: Double,
+    // Underlying stop: close once the underlying trades through the short strike — at or below it
+    // for a short put, at or above it for a short call. The buffer moves the trigger to the safe
+    // side of the strike by that fraction of it (0.02 on a 230 put = 234.60); 0 = at the strike.
+    // Spot has none of the option-mid noise that made the value stop fire on TXN (2026-07-17).
+    val underlyingStopEnabled: Boolean = false,
+    val underlyingStopBufferPct: Double = 0.0,
     val timeProfitDte: Int,
     // ---- Execution ----
     val driftProtectionPct: Double,
