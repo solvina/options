@@ -3,6 +3,25 @@
 Notable strategy, engine and operations changes. Newest first. Rendered in the frontend under
 **Maintenance › Changelog**.
 
+## 2026-10-28 — Trading Rules page
+
+A one-screen summary of how the spread strategies trade, under **Overview › Trading Rules**:
+the principles, then the entry and exit rules side by side for bull put and bear call, the
+portfolio caps, the stop gates and any per-symbol overrides.
+
+- **Every number is live.** The page reads a new read-only endpoint, `GET /scanner/rules`, which
+  serves the values the engine actually bound at startup — `application.yml` plus profile
+  overrides, resolved per strategy through `StrategyParamsRegistry` — and the overrides stored on
+  universe rows. Nothing is re-typed into the frontend, so the page cannot drift the way
+  hand-written parameter docs always have.
+- **Disabled rules show as "Off"**, highlighted. Today that includes the option-value stop on both
+  strategies.
+
+Also: `StockStrategyRunner` read its bar window and stamped signals with `Instant.now()` instead
+of its injected clock. Production was unaffected (that clock is the system clock), but the
+runner's tests pin the clock to 2026-08-07 and began failing once the wall clock moved more than
+a warmup window past that date.
+
 ## 2026-08-07 — MFI oversold joins the daily paper session
 
 The stock-strategy host shipped dark in Phase 7 and had never actually run. Arming it for the

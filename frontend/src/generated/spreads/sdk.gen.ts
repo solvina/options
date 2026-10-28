@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { ForceCloseSpreadData, ForceCloseSpreadErrors, ForceCloseSpreadResponses, GetScannerStatusData, GetScannerStatusResponses, GetSpreadAnalyticsData, GetSpreadAnalyticsResponses, GetSpreadByIdData, GetSpreadByIdErrors, GetSpreadByIdResponses, GetTickerStatusData, GetTickerStatusResponses, ListSpreadsData, ListSpreadsResponses, PauseMonitorData, PauseMonitorResponses, PauseScannerData, PauseScannerResponses, RefreshSpreadPnlData, RefreshSpreadPnlErrors, RefreshSpreadPnlResponses, ResumeMonitorData, ResumeMonitorResponses, ResumeScannerData, ResumeScannerResponses, SoftCloseSpreadData, SoftCloseSpreadErrors, SoftCloseSpreadResponses, TriggerScanData, TriggerScanResponses } from './types.gen';
+import type { ForceCloseSpreadData, ForceCloseSpreadErrors, ForceCloseSpreadResponses, GetScannerStatusData, GetScannerStatusResponses, GetSpreadAnalyticsData, GetSpreadAnalyticsResponses, GetSpreadByIdData, GetSpreadByIdErrors, GetSpreadByIdResponses, GetSpreadRulesData, GetSpreadRulesResponses, GetTickerStatusData, GetTickerStatusResponses, ListSpreadsData, ListSpreadsResponses, PauseMonitorData, PauseMonitorResponses, PauseScannerData, PauseScannerResponses, RefreshSpreadPnlData, RefreshSpreadPnlErrors, RefreshSpreadPnlResponses, ResumeMonitorData, ResumeMonitorResponses, ResumeScannerData, ResumeScannerResponses, SoftCloseSpreadData, SoftCloseSpreadErrors, SoftCloseSpreadResponses, TriggerScanData, TriggerScanResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean> = Options2<TData, ThrowOnError> & {
     /**
@@ -65,6 +65,14 @@ export const getScannerStatus = <ThrowOnError extends boolean = false>(options?:
  *
  */
 export const getTickerStatus = <ThrowOnError extends boolean = false>(options?: Options<GetTickerStatusData, ThrowOnError>) => (options?.client ?? client).get<GetTickerStatusResponses, unknown, ThrowOnError>({ url: '/scanner/ticker-status', ...options });
+
+/**
+ * Effective spread trading rules (live configuration, read-only)
+ *
+ * The entry, exit and portfolio rules the engine is running with right now — resolved from application.yml plus profile overrides, and the per-symbol overrides stored in the universe. Backs the Trading Rules page so it can never drift from the engine.
+ *
+ */
+export const getSpreadRules = <ThrowOnError extends boolean = false>(options?: Options<GetSpreadRulesData, ThrowOnError>) => (options?.client ?? client).get<GetSpreadRulesResponses, unknown, ThrowOnError>({ url: '/scanner/rules', ...options });
 
 /**
  * Pause new-entry scanner (existing positions are unaffected)

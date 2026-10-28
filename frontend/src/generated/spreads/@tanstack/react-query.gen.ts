@@ -3,8 +3,8 @@
 import { type DefaultError, type InfiniteData, infiniteQueryOptions, queryOptions, type UseMutationOptions } from '@tanstack/react-query';
 
 import { client } from '../client.gen';
-import { forceCloseSpread, getScannerStatus, getSpreadAnalytics, getSpreadById, getTickerStatus, listSpreads, type Options, pauseMonitor, pauseScanner, refreshSpreadPnl, resumeMonitor, resumeScanner, softCloseSpread, triggerScan } from '../sdk.gen';
-import type { ForceCloseSpreadData, ForceCloseSpreadResponse, GetScannerStatusData, GetScannerStatusResponse, GetSpreadAnalyticsData, GetSpreadAnalyticsResponse, GetSpreadByIdData, GetSpreadByIdResponse, GetTickerStatusData, GetTickerStatusResponse, ListSpreadsData, ListSpreadsResponse, PauseMonitorData, PauseMonitorResponse, PauseScannerData, PauseScannerResponse, RefreshSpreadPnlData, RefreshSpreadPnlResponse, ResumeMonitorData, ResumeMonitorResponse, ResumeScannerData, ResumeScannerResponse, SoftCloseSpreadData, SoftCloseSpreadResponse, TriggerScanData } from '../types.gen';
+import { forceCloseSpread, getScannerStatus, getSpreadAnalytics, getSpreadById, getSpreadRules, getTickerStatus, listSpreads, type Options, pauseMonitor, pauseScanner, refreshSpreadPnl, resumeMonitor, resumeScanner, softCloseSpread, triggerScan } from '../sdk.gen';
+import type { ForceCloseSpreadData, ForceCloseSpreadResponse, GetScannerStatusData, GetScannerStatusResponse, GetSpreadAnalyticsData, GetSpreadAnalyticsResponse, GetSpreadByIdData, GetSpreadByIdResponse, GetSpreadRulesData, GetSpreadRulesResponse, GetTickerStatusData, GetTickerStatusResponse, ListSpreadsData, ListSpreadsResponse, PauseMonitorData, PauseMonitorResponse, PauseScannerData, PauseScannerResponse, RefreshSpreadPnlData, RefreshSpreadPnlResponse, ResumeMonitorData, ResumeMonitorResponse, ResumeScannerData, ResumeScannerResponse, SoftCloseSpreadData, SoftCloseSpreadResponse, TriggerScanData } from '../types.gen';
 
 export type QueryKey<TOptions extends Options> = [
     Pick<TOptions, 'baseUrl' | 'body' | 'headers' | 'path' | 'query'> & {
@@ -254,6 +254,27 @@ export const getTickerStatusOptions = (options?: Options<GetTickerStatusData>) =
         return data;
     },
     queryKey: getTickerStatusQueryKey(options)
+});
+
+export const getSpreadRulesQueryKey = (options?: Options<GetSpreadRulesData>) => createQueryKey('getSpreadRules', options);
+
+/**
+ * Effective spread trading rules (live configuration, read-only)
+ *
+ * The entry, exit and portfolio rules the engine is running with right now — resolved from application.yml plus profile overrides, and the per-symbol overrides stored in the universe. Backs the Trading Rules page so it can never drift from the engine.
+ *
+ */
+export const getSpreadRulesOptions = (options?: Options<GetSpreadRulesData>) => queryOptions<GetSpreadRulesResponse, DefaultError, GetSpreadRulesResponse, ReturnType<typeof getSpreadRulesQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await getSpreadRules({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: getSpreadRulesQueryKey(options)
 });
 
 /**

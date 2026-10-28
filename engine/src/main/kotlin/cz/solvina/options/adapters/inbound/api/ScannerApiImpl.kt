@@ -1,14 +1,25 @@
 package cz.solvina.options.adapters.inbound.api
 
+import cz.solvina.options.domain.features.regime.RegimeConfig
+import cz.solvina.options.domain.features.scanner.BearCallScannerConfig
 import cz.solvina.options.domain.features.scanner.ScannerConfig
 import cz.solvina.options.domain.features.scanner.ScannerPort
 import cz.solvina.options.domain.features.scanner.ScannerService
+import cz.solvina.options.domain.features.scanner.StrategyParams
+import cz.solvina.options.domain.features.scanner.StrategyParamsRegistry
 import cz.solvina.options.domain.features.scanner.SymbolScanStatus
 import cz.solvina.options.domain.features.scanner.TradingKillSwitch
 import cz.solvina.options.domain.features.spread.SpreadQueryFacade
+import cz.solvina.options.domain.features.spread.model.StrategyId
+import cz.solvina.options.domain.features.universe.InstrumentConfig
+import cz.solvina.options.domain.features.universe.UniversePort
 import `cz.solvina.options.spreads`.api.MonitorApi
 import `cz.solvina.options.spreads`.api.ScannerApi
+import `cz.solvina.options.spreads`.dto.PortfolioRulesDto
 import `cz.solvina.options.spreads`.dto.ScannerStatusDto
+import `cz.solvina.options.spreads`.dto.SpreadRulesDto
+import `cz.solvina.options.spreads`.dto.StrategyRulesDto
+import `cz.solvina.options.spreads`.dto.SymbolRuleOverrideDto
 import `cz.solvina.options.spreads`.dto.SymbolScanStatusDto
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CoroutineScope
@@ -31,6 +42,10 @@ class ScannerApiImpl(
     private val spreadQuery: SpreadQueryFacade,
     private val killSwitch: TradingKillSwitch,
     private val scannerConfig: ScannerConfig,
+    private val strategyParams: StrategyParamsRegistry,
+    private val bearCallConfig: BearCallScannerConfig,
+    private val regimeConfig: RegimeConfig,
+    private val universePort: UniversePort,
 ) : ScannerApi,
     MonitorApi {
     private val backgroundScope = CoroutineScope(Dispatchers.Default)
@@ -59,6 +74,76 @@ class ScannerApiImpl(
             )
         return ResponseEntity.ok(dto)
     }
+
+    // Read-only view of the rules the engine is actually running with: every value comes from the
+    // bound config beans and the universe table, so the Trading Rules page cannot drift from them.
+    override suspend fun getSpreadRules(): ResponseEntity<SpreadRulesDto> {
+        val strategies =
+            listOf(
+                strategyParams.forStrategy(StrategyId.BULL_PUT).toRulesDto(enabled = true),
+                strategyParams.forStrategy(StrategyId.BEAR_CALL).toRulesDto(enabled = bearCallConfig.enabled),
+            )
+        val portfolio =
+            PortfolioRulesDto(
+                tradingEnabled = scannerConfig.tradingEnabled,
+                maxOpenSpreads = scannerConfig.maxOpenSpreads,
+                maxOpenSpreadsPerSector = scannerConfig.maxOpenSpreadsPerSector,
+                maxNewEntriesPerDay = scannerConfig.maxNewEntriesPerDay,
+                entryMinFillPctOfMid = scannerConfig.entryMinFillPctOfMid.toBigDecimal(),
+                stopLossConfirmCycles = scannerConfig.stopLossConfirmCycles,
+                stopLossGraceMinutesAfterEntry = scannerConfig.stopLossGraceMinutesAfterEntry,
+                stopLossSkipFirstRthMinutes = scannerConfig.stopLossSkipFirstRthMinutes,
+                stopLossCooldownHours = scannerConfig.stopLossCooldownHours,
+                entryCooldownMinutes = scannerConfig.entryCooldownMinutes,
+                directionalGateEnabled = regimeConfig.gatingEnabled,
+                scanCron = scannerConfig.cron,
+            )
+        val overrides =
+            universePort
+                .getAll()
+                .mapNotNull { inst -> inst.ruleOverrides().takeIf { it.isNotEmpty() }?.let { inst.symbol.value to it } }
+                .sortedBy { it.first }
+                .map { (symbol, values) -> SymbolRuleOverrideDto(symbol = symbol, overrides = values) }
+        return ResponseEntity.ok(SpreadRulesDto(strategies = strategies, portfolio = portfolio, symbolOverrides = overrides))
+    }
+
+    private fun StrategyParams.toRulesDto(enabled: Boolean): StrategyRulesDto =
+        StrategyRulesDto(
+            strategyId = strategyId.name,
+            enabled = enabled,
+            ivRankThreshold = ivRankThreshold.toBigDecimal(),
+            minDte = minDte,
+            maxDte = maxDte,
+            preferredDte = preferredDte,
+            targetDelta = targetDelta.toBigDecimal(),
+            deltaMin = deltaMin.toBigDecimal(),
+            deltaMax = deltaMax.toBigDecimal(),
+            spreadWidthUsd = spreadWidthUsd,
+            minCreditPerShare = minCreditPerShare,
+            maxCreditPctOfWidth = maxCreditPctOfWidth.toBigDecimal(),
+            maxRiskPercent = maxRiskPercent.toBigDecimal(),
+            takeProfitPercent = takeProfitPercent.toBigDecimal(),
+            stopLossPercent = stopLossPercent.toBigDecimal(),
+            timeProfitDte = timeProfitDte,
+            driftProtectionPct = driftProtectionPct.toBigDecimal(),
+        )
+
+    private fun InstrumentConfig.ruleOverrides(): Map<String, String> =
+        listOfNotNull(
+            ivRankThreshold?.let { "ivRankThreshold" to it.toString() },
+            minDte?.let { "minDte" to it.toString() },
+            maxDte?.let { "maxDte" to it.toString() },
+            preferredDte?.let { "preferredDte" to it.toString() },
+            targetDelta?.let { "targetDelta" to it.toString() },
+            deltaMin?.let { "deltaMin" to it.toString() },
+            deltaMax?.let { "deltaMax" to it.toString() },
+            spreadWidthUsd?.let { "spreadWidthUsd" to it.toPlainString() },
+            minCreditPerShare?.let { "minCreditPerShare" to it.toPlainString() },
+            maxRiskPercent?.let { "maxRiskPercent" to it.toString() },
+            takeProfitPercent?.let { "takeProfitPercent" to it.toString() },
+            stopLossPercent?.let { "stopLossPercent" to it.toString() },
+            timeProfitDte?.let { "timeProfitDte" to it.toString() },
+        ).toMap()
 
     override fun getTickerStatus(): ResponseEntity<Flow<SymbolScanStatusDto>> =
         ResponseEntity.ok(scannerService.getScanStatus().map { it.toDto() }.asFlow())

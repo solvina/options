@@ -192,6 +192,24 @@ paths:
                 items:
                   $ref: '#/components/schemas/SymbolScanStatusDto'
 
+  /scanner/rules:
+    get:
+      tags:
+        - Scanner
+      summary: Effective spread trading rules (live configuration, read-only)
+      description: >
+        The entry, exit and portfolio rules the engine is running with right now — resolved from
+        application.yml plus profile overrides, and the per-symbol overrides stored in the universe.
+        Backs the Trading Rules page so it can never drift from the engine.
+      operationId: getSpreadRules
+      responses:
+        '200':
+          description: Effective spread rules
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpreadRulesDto'
+
   /scanner/pause:
     post:
       tags:
@@ -447,6 +465,145 @@ components:
           type: number
         cumulativePnl:
           type: number
+
+    SpreadRulesDto:
+      type: object
+      required:
+        - strategies
+        - portfolio
+        - symbolOverrides
+      properties:
+        strategies:
+          type: array
+          items:
+            $ref: '#/components/schemas/StrategyRulesDto'
+        portfolio:
+          $ref: '#/components/schemas/PortfolioRulesDto'
+        symbolOverrides:
+          type: array
+          description: Symbols whose universe row overrides any strategy default (empty = none)
+          items:
+            $ref: '#/components/schemas/SymbolRuleOverrideDto'
+
+    StrategyRulesDto:
+      type: object
+      required:
+        - strategyId
+        - enabled
+        - ivRankThreshold
+        - minDte
+        - maxDte
+        - preferredDte
+        - targetDelta
+        - deltaMin
+        - deltaMax
+        - spreadWidthUsd
+        - minCreditPerShare
+        - maxCreditPctOfWidth
+        - maxRiskPercent
+        - takeProfitPercent
+        - stopLossPercent
+        - timeProfitDte
+        - driftProtectionPct
+      properties:
+        strategyId:
+          type: string
+          description: BULL_PUT or BEAR_CALL
+        enabled:
+          type: boolean
+        ivRankThreshold:
+          type: number
+        minDte:
+          type: integer
+        maxDte:
+          type: integer
+        preferredDte:
+          type: integer
+        targetDelta:
+          type: number
+        deltaMin:
+          type: number
+        deltaMax:
+          type: number
+        spreadWidthUsd:
+          type: number
+        minCreditPerShare:
+          type: number
+        maxCreditPctOfWidth:
+          type: number
+        maxRiskPercent:
+          type: number
+          description: Max loss of one spread as a fraction of account capital
+        takeProfitPercent:
+          type: number
+          description: Close once this fraction of the fill credit is captured
+        stopLossPercent:
+          type: number
+          description: Option-value stop as a multiple of entry mid; 0 or less = disabled
+        timeProfitDte:
+          type: integer
+          description: Close any position at or below this many days to expiry
+        driftProtectionPct:
+          type: number
+
+    PortfolioRulesDto:
+      type: object
+      required:
+        - tradingEnabled
+        - maxOpenSpreads
+        - maxOpenSpreadsPerSector
+        - maxNewEntriesPerDay
+        - entryMinFillPctOfMid
+        - stopLossConfirmCycles
+        - stopLossGraceMinutesAfterEntry
+        - stopLossSkipFirstRthMinutes
+        - stopLossCooldownHours
+        - entryCooldownMinutes
+        - directionalGateEnabled
+        - scanCron
+      properties:
+        tradingEnabled:
+          type: boolean
+        maxOpenSpreads:
+          type: integer
+        maxOpenSpreadsPerSector:
+          type: integer
+        maxNewEntriesPerDay:
+          type: integer
+        entryMinFillPctOfMid:
+          type: number
+        stopLossConfirmCycles:
+          type: integer
+        stopLossGraceMinutesAfterEntry:
+          type: integer
+          format: int64
+        stopLossSkipFirstRthMinutes:
+          type: integer
+          format: int64
+        stopLossCooldownHours:
+          type: integer
+          format: int64
+        entryCooldownMinutes:
+          type: integer
+          format: int64
+        directionalGateEnabled:
+          type: boolean
+        scanCron:
+          type: string
+
+    SymbolRuleOverrideDto:
+      type: object
+      required:
+        - symbol
+        - overrides
+      properties:
+        symbol:
+          type: string
+        overrides:
+          type: object
+          description: Parameter name to overriding value
+          additionalProperties:
+            type: string
 
     ScannerStatusDto:
       type: object

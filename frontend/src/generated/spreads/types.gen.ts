@@ -108,6 +108,75 @@ export type PnlTimelinePointDto = {
     cumulativePnl: number;
 };
 
+export type SpreadRulesDto = {
+    strategies: Array<StrategyRulesDto>;
+    portfolio: PortfolioRulesDto;
+    /**
+     * Symbols whose universe row overrides any strategy default (empty = none)
+     */
+    symbolOverrides: Array<SymbolRuleOverrideDto>;
+};
+
+export type StrategyRulesDto = {
+    /**
+     * BULL_PUT or BEAR_CALL
+     */
+    strategyId: string;
+    enabled: boolean;
+    ivRankThreshold: number;
+    minDte: number;
+    maxDte: number;
+    preferredDte: number;
+    targetDelta: number;
+    deltaMin: number;
+    deltaMax: number;
+    spreadWidthUsd: number;
+    minCreditPerShare: number;
+    maxCreditPctOfWidth: number;
+    /**
+     * Max loss of one spread as a fraction of account capital
+     */
+    maxRiskPercent: number;
+    /**
+     * Close once this fraction of the fill credit is captured
+     */
+    takeProfitPercent: number;
+    /**
+     * Option-value stop as a multiple of entry mid; 0 or less = disabled
+     */
+    stopLossPercent: number;
+    /**
+     * Close any position at or below this many days to expiry
+     */
+    timeProfitDte: number;
+    driftProtectionPct: number;
+};
+
+export type PortfolioRulesDto = {
+    tradingEnabled: boolean;
+    maxOpenSpreads: number;
+    maxOpenSpreadsPerSector: number;
+    maxNewEntriesPerDay: number;
+    entryMinFillPctOfMid: number;
+    stopLossConfirmCycles: number;
+    stopLossGraceMinutesAfterEntry: number;
+    stopLossSkipFirstRthMinutes: number;
+    stopLossCooldownHours: number;
+    entryCooldownMinutes: number;
+    directionalGateEnabled: boolean;
+    scanCron: string;
+};
+
+export type SymbolRuleOverrideDto = {
+    symbol: string;
+    /**
+     * Parameter name to overriding value
+     */
+    overrides: {
+        [key: string]: string;
+    };
+};
+
 export type ScannerStatusDto = {
     lastRunAt?: string | null;
     openSpreadCount: number;
@@ -362,6 +431,22 @@ export type GetTickerStatusResponses = {
 };
 
 export type GetTickerStatusResponse = GetTickerStatusResponses[keyof GetTickerStatusResponses];
+
+export type GetSpreadRulesData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/scanner/rules';
+};
+
+export type GetSpreadRulesResponses = {
+    /**
+     * Effective spread rules
+     */
+    200: SpreadRulesDto;
+};
+
+export type GetSpreadRulesResponse = GetSpreadRulesResponses[keyof GetSpreadRulesResponses];
 
 export type PauseScannerData = {
     body?: never;

@@ -20,6 +20,7 @@ import { SweepsPage } from './pages/SweepsPage'
 import { SweepNewPage } from './pages/SweepNewPage'
 import { SweepResultsPage } from './pages/SweepResultsPage'
 import { ChangelogPage } from './pages/ChangelogPage'
+import { RulesPage } from './pages/RulesPage'
 
 function App() {
   return (
@@ -28,6 +29,7 @@ function App() {
         <Route element={<Layout />}>
           <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<DashboardPage />} />
+          <Route path="/rules" element={<RulesPage />} />
           {/* Reports merged into the dashboard as its Performance section — keep the old path working. */}
           <Route path="/reports" element={<Navigate to="/dashboard" replace />} />
           <Route path="/spreads" element={<Navigate to="/spreads/positions" replace />} />
