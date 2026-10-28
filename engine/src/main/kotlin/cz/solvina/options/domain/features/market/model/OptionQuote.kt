@@ -10,4 +10,7 @@ data class OptionQuote(
     val ask: Money,
     val mid: Money,
     val greeks: OptionGreeks,
+    // True when IBKR sent no option-computation tick for this strike and [greeks] were estimated
+    // from live neighbouring strikes (see GreeksEstimator). Delta is NaN when even that failed.
+    val greeksEstimated: Boolean = false,
 )

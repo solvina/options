@@ -32,6 +32,8 @@ data class BearCallScannerConfig(
     val minCreditPerShare: BigDecimal = BigDecimal("0.40"),
     val maxCreditPctOfWidth: Double = 0.40,
     val maxRiskPercent: Double = 0.025,
+    val maxWidthMultiple: Double = 2.0,
+    val minComboBidPctOfMid: Double = 0.60,
     val takeProfitPercent: Double = 0.50,
     // Basis is the ENTRY MID (fair value at fill), not the fill credit — 1.00 = exit when the
     // spread is worth 2× what it was at entry. See SpreadManagementService SL threshold.
@@ -62,6 +64,8 @@ data class BearCallScannerConfig(
             minCreditPerShare = minCreditPerShare,
             maxCreditPctOfWidth = maxCreditPctOfWidth,
             maxRiskPercent = maxRiskPercent,
+            maxWidthMultiple = maxWidthMultiple,
+            minComboBidPctOfMid = minComboBidPctOfMid,
             takeProfitPercent = takeProfitPercent,
             stopLossPercent = stopLossPercent,
             underlyingStopEnabled = underlyingStopEnabled,

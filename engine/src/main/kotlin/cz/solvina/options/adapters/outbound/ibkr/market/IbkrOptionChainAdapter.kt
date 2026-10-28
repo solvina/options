@@ -5,6 +5,7 @@ import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
 import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrOptionParamsCache
 import cz.solvina.options.adapters.outbound.ibkr.cache.OptionContractKey
 import cz.solvina.options.adapters.outbound.ibkr.cache.OptionParams
+import cz.solvina.options.domain.features.market.GreeksEstimator
 import cz.solvina.options.domain.features.market.OptionChainPort
 import cz.solvina.options.domain.features.market.model.ChainCoverage
 import cz.solvina.options.domain.features.market.model.OptionQuote
@@ -22,8 +23,10 @@ import kotlinx.coroutines.coroutineScope
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
 import java.math.RoundingMode
+import java.time.Clock
 import java.time.Instant
 import java.time.LocalDate
+import java.time.temporal.ChronoUnit
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 
@@ -36,6 +39,7 @@ class IbkrOptionChainAdapter(
     private val optionParamsCache: IbkrOptionParamsCache,
     private val contractCache: IbkrContractCache,
     private val contractFactory: IbkrContractFactory,
+    private val clock: Clock,
 ) : OptionChainPort {
     // Greek-delivery coverage of the most recent chain fetch per symbol. Observational only; read by
     // the scan-status table to expose market-data starvation (many strikes requested, few greeks back).
@@ -155,18 +159,29 @@ class IbkrOptionChainAdapter(
         // concurrency is bounded by the scanner request gate inside reqMktDataSnapshot. This is the
         // scan-time win: ~candidateCount x snapshot-timeout serial worst case collapses to
         // ~ceil(count / scanner-line-concurrency).
-        return coroutineScope {
-            candidateStrikes
-                .map { strike -> async { fetchQuote(symbol, expiry, strike, optionType, params) } }
-                .awaitAll()
-                .filterNotNull()
-        }.also { quotes ->
-            coverageBySymbol[symbol.value] =
-                ChainCoverage(
-                    strikesRequested = candidateStrikes.size,
-                    strikesWithGreeks = quotes.size,
-                    fetchedAt = Instant.now(),
-                )
+        val fetched =
+            coroutineScope {
+                candidateStrikes
+                    .map { strike -> async { fetchQuote(symbol, expiry, strike, optionType, params) } }
+                    .awaitAll()
+                    .filterNotNull()
+            }
+        coverageBySymbol[symbol.value] =
+            ChainCoverage(
+                strikesRequested = candidateStrikes.size,
+                strikesWithGreeks = fetched.count { GreeksEstimator.hasLiveGreeks(it) },
+                fetchedAt = Instant.now(),
+            )
+        // Strikes that arrived priced but without greeks get them estimated from live neighbours;
+        // any left NaN remain long-leg candidates only (the short-leg delta band never matches NaN).
+        val years = ChronoUnit.DAYS.between(LocalDate.now(clock), expiry).coerceAtLeast(1) / 365.0
+        return GreeksEstimator.fillMissing(fetched, spot.toDouble(), years).also { quotes ->
+            quotes.filter { it.greeksEstimated }.forEach { q ->
+                logger.info {
+                    "[$symbol] Estimated greeks for strike ${q.contract.strike} $expiry from live neighbours " +
+                        "(delta=${"%.3f".format(q.greeks.delta)} iv=${"%.3f".format(q.greeks.iv)})"
+                }
+            }
         }
     }
 
@@ -213,32 +228,41 @@ class IbkrOptionChainAdapter(
                     SnapshotReady.OPTION_QUOTE,
                 )
 
-            // Live market data only — never fabricate prices/greeks. A NaN delta means no live
-            // option-computation tick arrived. Skip the strike and log it for investigation
-            // instead of falling back to Black-Scholes.
-            if (snapshot.delta.isNaN()) {
-                logger.warn {
-                    "[$symbol] No live greeks for strike $strike $expiry " +
-                        "(bid=${snapshot.bid} ask=${snapshot.ask}, via $requestDesc) — skipping, no BS fallback"
-                }
-                return@runCatching null
-            }
-
+            // Prices are never fabricated. A NaN delta means no option-computation tick arrived: a
+            // strike with a real two-sided quote is kept (greeks NaN, estimated from live neighbours
+            // by the caller); one without a usable quote is skipped as before.
             val bid = snapshot.bid.takeIf { !it.isNaN() } ?: 0.0
             val ask = snapshot.ask.takeIf { !it.isNaN() } ?: 0.0
+            if (snapshot.delta.isNaN()) {
+                if (bid <= 0.0 || ask < bid) {
+                    logger.warn {
+                        "[$symbol] No live greeks and no two-sided quote for strike $strike $expiry " +
+                            "(bid=${snapshot.bid} ask=${snapshot.ask}, via $requestDesc) — skipping"
+                    }
+                    return@runCatching null
+                }
+                logger.info {
+                    "[$symbol] No live greeks for strike $strike $expiry (bid=$bid ask=$ask, via $requestDesc) — " +
+                        "kept for estimation / long leg"
+                }
+            }
             OptionQuote(
                 contract = contract,
                 bid = Money(BigDecimal(bid).setScale(4, RoundingMode.HALF_UP)),
                 ask = Money(BigDecimal(ask).setScale(4, RoundingMode.HALF_UP)),
                 mid = Money(midPrice(bid, ask)),
                 greeks =
-                    OptionGreeks(
-                        delta = snapshot.delta,
-                        gamma = snapshot.gamma.takeIf { !it.isNaN() } ?: 0.0,
-                        theta = snapshot.theta.takeIf { !it.isNaN() } ?: 0.0,
-                        vega = snapshot.vega.takeIf { !it.isNaN() } ?: 0.0,
-                        iv = snapshot.impliedVol.takeIf { !it.isNaN() } ?: 0.0,
-                    ),
+                    if (snapshot.delta.isNaN()) {
+                        OptionGreeks(delta = Double.NaN, gamma = Double.NaN, theta = Double.NaN, vega = Double.NaN, iv = Double.NaN)
+                    } else {
+                        OptionGreeks(
+                            delta = snapshot.delta,
+                            gamma = snapshot.gamma.takeIf { !it.isNaN() } ?: 0.0,
+                            theta = snapshot.theta.takeIf { !it.isNaN() } ?: 0.0,
+                            vega = snapshot.vega.takeIf { !it.isNaN() } ?: 0.0,
+                            iv = snapshot.impliedVol.takeIf { !it.isNaN() } ?: 0.0,
+                        )
+                    },
             )
         }.getOrElse { e ->
             logger.warn { "[$symbol] Failed to get greeks for strike $strike: ${e.message}" }

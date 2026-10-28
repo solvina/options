@@ -5,6 +5,8 @@ import cz.solvina.options.domain.features.market.OptionChainPort
 import cz.solvina.options.domain.features.market.model.OptionQuote
 import cz.solvina.options.domain.features.scanner.BullPutCandidateSelector
 import cz.solvina.options.domain.features.scanner.BullPutScannerConfig
+import cz.solvina.options.domain.features.scanner.CandidateResult
+import cz.solvina.options.domain.features.scanner.RejectReason
 import cz.solvina.options.domain.features.scanner.requestOrNull
 import cz.solvina.options.domain.features.spread.model.StrategyId
 import cz.solvina.options.domain.features.universe.InstrumentConfig
@@ -290,6 +292,80 @@ class BullPutCandidateSelectorTest {
                 ).select(symbol, capitalOf50k).requestOrNull
 
             assertNull(result, "Symbol-level IV Rank threshold must override the global default")
+        }
+
+    // -------------------------------------------------------------------------
+    // Width, market quality and earnings-aware expiry (2026-10-28)
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `a long strike with no greeks still completes the target width`() =
+        runTest {
+            // ORCL 2026-10-28: the exact-width strike came back priced but without delta and used to be
+            // dropped, widening the spread past it. The long leg needs a price, not a delta.
+            val chain =
+                listOf(
+                    put(strike = soldStrike, delta = -0.15, bid = 1.40, ask = 1.60),
+                    put(strike = boughtStrike, delta = Double.NaN, bid = 0.65, ask = 0.75),
+                    put(strike = BigDecimal("470"), delta = -0.05, bid = 0.30, ask = 0.40),
+                )
+
+            val result = buildSelector(chain = chain).select(symbol, capitalOf50k).requestOrNull
+
+            assertNotNull(result)
+            assertEquals(boughtContract, result.boughtContract)
+        }
+
+    @Test
+    fun `a long strike beyond twice the target width is rejected`() =
+        runTest {
+            // QCOM 2026-08-04: 145/130 on a $5 target once 140 and 135 were missing.
+            val chain =
+                listOf(
+                    put(strike = soldStrike, delta = -0.15, bid = 1.40, ask = 1.60),
+                    put(strike = BigDecimal("465"), delta = -0.04, bid = 0.20, ask = 0.30),
+                )
+
+            val result = buildSelector(chain = chain).select(symbol, capitalOf50k)
+
+            assertEquals(RejectReason.WIDTH_EXCEEDS_CAP, (result as CandidateResult.Rejected).reason)
+        }
+
+    @Test
+    fun `a market whose achievable credit is far below mid is rejected`() =
+        runTest {
+            // CRM 2026-10-21 shape: mid credit looks fine, the market would only pay ~40% of it.
+            val chain =
+                listOf(
+                    put(strike = soldStrike, delta = -0.15, bid = 1.10, ask = 2.00), // mid 1.55
+                    put(strike = boughtStrike, delta = -0.08, bid = 0.65, ask = 0.75), // mid 0.70 → credit 0.85, cross 0.35
+                )
+
+            val result = buildSelector(chain = chain).select(symbol, capitalOf50k)
+
+            assertEquals(RejectReason.MARKET_TOO_WIDE, (result as CandidateResult.Rejected).reason)
+        }
+
+    @Test
+    fun `an earlier in-band expiry that finishes before earnings is used instead of rejecting`() =
+        runTest {
+            // CRM 2026-10-28: the preferred expiry spans earnings, an earlier one in the band does not.
+            val early = today.plusDays(31)
+            val chain =
+                listOf(
+                    put(strike = soldStrike, delta = -0.15, bid = 1.40, ask = 1.60, expiry = early),
+                    put(strike = boughtStrike, delta = -0.08, bid = 0.65, ask = 0.75, expiry = early),
+                )
+
+            val result =
+                buildSelector(
+                    expirations = setOf(expiry38d, early),
+                    chain = chain,
+                    instrumentConfig = InstrumentConfig(symbol = symbol, nextEarningsDate = today.plusDays(35)),
+                ).select(symbol, capitalOf50k).requestOrNull
+
+            assertNotNull(result)
+            assertEquals(early, result.soldContract.expiry)
         }
 
     // -------------------------------------------------------------------------

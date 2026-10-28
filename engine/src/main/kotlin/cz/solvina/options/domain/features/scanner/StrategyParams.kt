@@ -37,6 +37,12 @@ data class StrategyParams(
     // sold at 49.5% of width and a BE candidate hit 90% during the 2026-07-06/07 spike.
     val maxCreditPctOfWidth: Double,
     val maxRiskPercent: Double,
+    // Reject when the long leg lands further than this multiple of the target width from the short
+    // (the next listed strike can be far beyond target: QCOM 145/130 and CRM 265/280 on a $5 target).
+    val maxWidthMultiple: Double = 2.0,
+    // Reject when the achievable combo credit (BAG bid, or leg cross) is below this fraction of the
+    // mid credit: the market is too wide for the mid to mean anything (CRM: 1.20 vs 2.61 = 46%).
+    val minComboBidPctOfMid: Double = 0.60,
     // ---- Exit rules ----
     val takeProfitPercent: Double,
     val stopLossPercent: Double,

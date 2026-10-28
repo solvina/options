@@ -133,6 +133,12 @@ scanner:
     min-credit-per-share: 0.90
     max-credit-pct-of-width: 0.40  # crash-pricing guard: mid > 40% of width = near-even ITM odds, skip
     max-risk-percent: 0.025
+    # 2026-10-28: the long leg is the first LISTED strike ≥ one width away; reject when that lands
+    # beyond 2× target (QCOM 145/130, CRM 265/280 on a $5 target). $10-grid names (MU, AMD) still pass.
+    max-width-multiple: 2.0
+    # Reject when the achievable combo credit is below 60% of mid — the market is too wide for mid
+    # to be a real price (CRM 265/280: achievable 1.20 vs mid 2.61).
+    min-combo-bid-pct-of-mid: 0.60
     take-profit-percent: 0.50
     # 2026-07-18: 1.00 → 0 = value stop DISABLED (0 or negative disables it; see
     # SpreadManagementService). The 2×-mid stop fired on option-mid noise and vol expansion
@@ -153,6 +159,8 @@ scanner:
   # short call strike). `enabled` stays in the rpi profile.
   bear-call:
     min-credit-per-share: 0.90
+    max-width-multiple: 2.0
+    min-combo-bid-pct-of-mid: 0.60
     stop-loss-percent: 0
     underlying-stop-enabled: true
     underlying-stop-buffer-pct: 0.0

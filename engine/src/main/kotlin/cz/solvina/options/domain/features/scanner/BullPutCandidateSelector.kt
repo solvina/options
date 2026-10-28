@@ -71,35 +71,41 @@ class BullPutCandidateSelector(
         val underlyingPrice = marketDataPort.getUnderlyingPrice(symbol)
         detail = detail.copy(underlyingPrice = underlyingPrice.amount)
 
-        // 2. Select expiry
+        // 2. Select expiry — the in-band expiry nearest the preferred DTE that finishes before the next
+        // earnings report. Holding a short spread through a scheduled binary event is uncompensated
+        // risk at 20–30 delta pricing (MRVL −22% / IONQ −25%, week of 2026-07-13). The date is
+        // refreshed daily by EarningsRefreshService; null or a past date imposes no gate.
         val today = LocalDate.now(clock)
-        val availableExpirations = optionChainPort.getAvailableExpirations(symbol)
+        val earnings = inst?.nextEarningsDate
         val expiry =
-            availableExpirations
-                .filter { exp ->
-                    val dte = ChronoUnit.DAYS.between(today, exp).toInt()
-                    dte in minDte..maxDte
-                }.minByOrNull { exp ->
-                    abs(ChronoUnit.DAYS.between(today, exp).toInt() - preferredDte)
+            when (
+                val pick =
+                    SpreadSelectionRules.pickExpiry(
+                        optionChainPort.getAvailableExpirations(symbol),
+                        today,
+                        minDte,
+                        maxDte,
+                        preferredDte,
+                        earnings,
+                    )
+            ) {
+                is SpreadSelectionRules.ExpiryPick.Picked -> pick.expiry
+                SpreadSelectionRules.ExpiryPick.NoneInBand -> {
+                    logger.info { "[$symbol] No valid expiry in [$minDte, $maxDte] DTE, skipping" }
+                    return reject(RejectReason.NO_EXPIRY_IN_DTE)
                 }
-        if (expiry == null) {
-            logger.info { "[$symbol] No valid expiry in [$minDte, $maxDte] DTE, skipping" }
-            return reject(RejectReason.NO_EXPIRY_IN_DTE)
-        }
+                is SpreadSelectionRules.ExpiryPick.AllSpanEarnings -> {
+                    logger.info {
+                        "[$symbol] Skipping entry — earnings ${pick.earnings} inside every in-band expiry " +
+                            "(preferred ${pick.preferred})"
+                    }
+                    tradeLogger.info { "SKIP   $symbol  earnings=${pick.earnings} before expiry=${pick.preferred}" }
+                    return reject(RejectReason.EARNINGS_BEFORE_EXPIRY)
+                }
+            }
         val dte = ChronoUnit.DAYS.between(today, expiry).toInt()
         detail = detail.copy(expiry = expiry, dte = dte)
         logger.info { "[$symbol] Selected expiry $expiry ($dte DTE)" }
-
-        // 2b. Earnings gate — never open a position whose life spans a scheduled earnings report:
-        // a binary gap (MRVL −22%, IONQ −25%, week of 2026-07-13) is uncompensated risk at
-        // 20–30 delta pricing. Date is refreshed daily by EarningsRefreshService; null or a past
-        // date (stale history) imposes no gate.
-        val earnings = inst?.nextEarningsDate
-        if (earnings != null && !earnings.isBefore(today) && !earnings.isAfter(expiry)) {
-            logger.info { "[$symbol] Skipping entry — earnings $earnings inside position window (expiry $expiry)" }
-            tradeLogger.info { "SKIP   $symbol  earnings=$earnings before expiry=$expiry" }
-            return reject(RejectReason.EARNINGS_BEFORE_EXPIRY)
-        }
 
         // 3. Get option chain and find the best put
         val chain = optionChainPort.getOptionChain(symbol, expiry, underlyingPrice, StrategyId.BULL_PUT)
@@ -136,6 +142,17 @@ class BullPutCandidateSelector(
             return reject(RejectReason.NO_BOUGHT_LEG)
         }
         detail = detail.copy(longStrike = boughtQuote.contract.strike)
+
+        // 4b. Width cap — the long leg is the first listed strike at least one target width away, which
+        // can be far past target on a sparse strike grid or when nearer strikes had no quote.
+        val listedWidth = soldQuote.contract.strike.subtract(boughtQuote.contract.strike)
+        if (SpreadSelectionRules.widthExceedsCap(listedWidth, spreadWidthUsd, config.maxWidthMultiple)) {
+            logger.info {
+                "[$symbol] Width \$$listedWidth > ${config.maxWidthMultiple}× target \$$spreadWidthUsd, skipping"
+            }
+            tradeLogger.info { "SKIP   $symbol  width=\$$listedWidth > ${config.maxWidthMultiple}x target=\$$spreadWidthUsd" }
+            return reject(RejectReason.WIDTH_EXCEEDS_CAP)
+        }
 
         // 5. Credit check — use mid for filters, bid side for the initial order price
         val midCredit =
@@ -219,6 +236,32 @@ class BullPutCandidateSelector(
         }
 
         val floorCredit = bidCredit.max(minCreditPerShare).setScale(4, RoundingMode.HALF_UP)
+
+        // Market-quality gate: when the achievable credit is far below mid, the mid is not a price
+        // anyone will pay and the order would only ever rest unfilled (CRM 265/280: 1.20 vs 2.61).
+        val bidPctOfMid = SpreadSelectionRules.comboBidPctOfMid(bidCredit, midCredit) ?: 0.0
+        if (bidPctOfMid < config.minComboBidPctOfMid) {
+            logger.info {
+                "[$symbol] Achievable credit \$$bidCredit is ${"%.0f".format(bidPctOfMid * 100)}% of mid \$$midCredit " +
+                    "(min ${"%.0f".format(config.minComboBidPctOfMid * 100)}%) — market too wide, skipping"
+            }
+            tradeLogger.info {
+                "SKIP   $symbol  combo_bid/mid=${"%.0f".format(bidPctOfMid * 100)}% < " +
+                    "${"%.0f".format(config.minComboBidPctOfMid * 100)}%"
+            }
+            return reject(RejectReason.MARKET_TOO_WIDE)
+        }
+
+        // Risk budget at the WORST credit the order may fill at (the floor), not at mid — the earlier
+        // mid-based check understates the loss of a below-mid fill.
+        val worstRiskPerContract = actualSpreadWidth.subtract(floorCredit).multiply(BigDecimal("100"))
+        val budget = totalCapital.amount.multiply(BigDecimal(maxRiskPercent))
+        if (worstRiskPerContract > budget) {
+            logger.info {
+                "[$symbol] Max risk at floor \$$worstRiskPerContract > allowed \$${"%.2f".format(budget)}, skipping"
+            }
+            return reject(RejectReason.RISK_EXCEEDS_BUDGET)
+        }
 
         logger.info {
             "[$symbol] Launching execution: SELL ${soldQuote.contract.strike}P / BUY ${boughtQuote.contract.strike}P " +

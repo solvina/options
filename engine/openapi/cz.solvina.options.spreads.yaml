@@ -501,6 +501,8 @@ components:
         - minCreditPerShare
         - maxCreditPctOfWidth
         - maxRiskPercent
+        - maxWidthMultiple
+        - minComboBidPctOfMid
         - takeProfitPercent
         - stopLossPercent
         - underlyingStopEnabled
@@ -536,6 +538,12 @@ components:
         maxRiskPercent:
           type: number
           description: Max loss of one spread as a fraction of account capital
+        maxWidthMultiple:
+          type: number
+          description: Reject when the listed long strike is further than this multiple of the target width
+        minComboBidPctOfMid:
+          type: number
+          description: Reject when the achievable combo credit is below this fraction of the mid credit
         takeProfitPercent:
           type: number
           description: Close once this fraction of the fill credit is captured

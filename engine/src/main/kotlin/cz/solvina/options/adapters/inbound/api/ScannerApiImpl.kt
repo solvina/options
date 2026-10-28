@@ -122,6 +122,8 @@ class ScannerApiImpl(
             minCreditPerShare = minCreditPerShare,
             maxCreditPctOfWidth = maxCreditPctOfWidth.toBigDecimal(),
             maxRiskPercent = maxRiskPercent.toBigDecimal(),
+            maxWidthMultiple = maxWidthMultiple.toBigDecimal(),
+            minComboBidPctOfMid = minComboBidPctOfMid.toBigDecimal(),
             takeProfitPercent = takeProfitPercent.toBigDecimal(),
             stopLossPercent = stopLossPercent.toBigDecimal(),
             underlyingStopEnabled = underlyingStopEnabled,

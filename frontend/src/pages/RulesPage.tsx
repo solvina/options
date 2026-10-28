@@ -93,7 +93,14 @@ export function RulesPage() {
               ? 'trend + RSI pick bull put (bullish) or bear call (bearish); the other side is suppressed.'
               : 'directional gate is off — both sides may be scanned.'}
           </li>
-          <li>Never hold through earnings: skip any symbol whose earnings date falls before expiry.</li>
+          <li>
+            Never hold through earnings: use the latest in-band expiry that finishes before the report, or skip the
+            symbol.
+          </li>
+          <li>
+            Only trade real markets: skip when the long strike is more than {bp.maxWidthMultiple}× the target width away,
+            or when the market would pay less than {pct(bp.minComboBidPctOfMid)} of mid.
+          </li>
           <li>
             A full loss on one spread is sized to ≤ {pct(bp.maxRiskPercent)} of the account; at most {p.maxOpenSpreads}{' '}
             open, {p.maxOpenSpreadsPerSector} per sector, {p.maxNewEntriesPerDay} new per day.
@@ -123,9 +130,10 @@ export function RulesPage() {
           ['IV rank ≥', (x) => x.ivRankThreshold],
           ['Days to expiry', (x) => `${x.minDte}–${x.maxDte} (prefer ${x.preferredDte})`],
           ['Short-leg delta', (x) => `${x.deltaMin}–${x.deltaMax} (target ${x.targetDelta})`],
-          ['Width', (x) => usd(x.spreadWidthUsd)],
+          ['Width', (x) => `${usd(x.spreadWidthUsd)} (max ${x.maxWidthMultiple}×)`],
           ['Min credit / share', (x) => usd(x.minCreditPerShare)],
           ['Max credit, % of width', (x) => pct(x.maxCreditPctOfWidth)],
+          ['Achievable credit ≥ % of mid', (x) => pct(x.minComboBidPctOfMid)],
           ['Max risk / spread, % of account', (x) => pct(x.maxRiskPercent)],
           ['Abort if underlying drifts', (x) => pct(x.driftProtectionPct)],
         ]}

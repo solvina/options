@@ -51,6 +51,9 @@ class BearCallCandidateSelector(
     ): CandidateResult {
         // Accumulates what we learn about this symbol; snapshotted into the reject/select result so the
         // scan-status table shows the full evaluation, not just entries.
+        // Per-symbol width override (universe row), as for bull put; other bear-call params are global.
+        val spreadWidthUsd = universePort.get(symbol)?.spreadWidthUsd ?: config.spreadWidthUsd
+
         var detail = ScanDetail(strategyId = StrategyId.BEAR_CALL, ivRankThreshold = config.ivRankThreshold.toDouble())
 
         fun reject(reason: RejectReason) = CandidateResult.Rejected(reason, detail)
@@ -79,33 +82,41 @@ class BearCallCandidateSelector(
         val underlyingPrice = marketDataPort.getUnderlyingPrice(symbol)
         detail = detail.copy(underlyingPrice = underlyingPrice.amount)
 
-        // 2. Select expiry
+        // 2. Select expiry — the in-band expiry nearest the preferred DTE that finishes before the next
+        // earnings report. Holding a short spread through a scheduled binary event is uncompensated
+        // risk at 20–30 delta pricing (MRVL −22% / IONQ −25%, week of 2026-07-13). The date is
+        // refreshed daily by EarningsRefreshService; null or a past date imposes no gate.
         val today = LocalDate.now(clock)
-        val availableExpirations = optionChainPort.getAvailableExpirations(symbol)
+        val earnings = universePort.get(symbol)?.nextEarningsDate
         val expiry =
-            availableExpirations
-                .filter { exp ->
-                    val dte = ChronoUnit.DAYS.between(today, exp).toInt()
-                    dte in config.minDte..config.maxDte
-                }.minByOrNull { exp ->
-                    abs(ChronoUnit.DAYS.between(today, exp).toInt() - config.preferredDte)
+            when (
+                val pick =
+                    SpreadSelectionRules.pickExpiry(
+                        optionChainPort.getAvailableExpirations(symbol),
+                        today,
+                        config.minDte,
+                        config.maxDte,
+                        config.preferredDte,
+                        earnings,
+                    )
+            ) {
+                is SpreadSelectionRules.ExpiryPick.Picked -> pick.expiry
+                SpreadSelectionRules.ExpiryPick.NoneInBand -> {
+                    logger.info { "[$symbol] (bear-call) No valid expiry in [${config.minDte}, ${config.maxDte}] DTE, skipping" }
+                    return reject(RejectReason.NO_EXPIRY_IN_DTE)
                 }
-        if (expiry == null) {
-            logger.info { "[$symbol] (bear-call) No valid expiry in [${config.minDte}, ${config.maxDte}] DTE, skipping" }
-            return reject(RejectReason.NO_EXPIRY_IN_DTE)
-        }
+                is SpreadSelectionRules.ExpiryPick.AllSpanEarnings -> {
+                    logger.info {
+                        "[$symbol] (bear-call) Skipping entry — earnings ${pick.earnings} inside every in-band expiry " +
+                            "(preferred ${pick.preferred})"
+                    }
+                    tradeLogger.info { "SKIP   $symbol  (bear-call) earnings=${pick.earnings} before expiry=${pick.preferred}" }
+                    return reject(RejectReason.EARNINGS_BEFORE_EXPIRY)
+                }
+            }
         val dte = ChronoUnit.DAYS.between(today, expiry).toInt()
         detail = detail.copy(expiry = expiry, dte = dte)
         logger.info { "[$symbol] (bear-call) Selected expiry $expiry ($dte DTE)" }
-
-        // 2b. Earnings gate — mirror of the bull-put rule: never open a position whose life spans
-        // a scheduled earnings report (see BullPutCandidateSelector for rationale).
-        val earnings = universePort.get(symbol)?.nextEarningsDate
-        if (earnings != null && !earnings.isBefore(today) && !earnings.isAfter(expiry)) {
-            logger.info { "[$symbol] (bear-call) Skipping entry — earnings $earnings inside position window (expiry $expiry)" }
-            tradeLogger.info { "SKIP   $symbol  (bear-call) earnings=$earnings before expiry=$expiry" }
-            return reject(RejectReason.EARNINGS_BEFORE_EXPIRY)
-        }
 
         // 3. Get option chain and find the best call to SELL (short leg, lower strike)
         val chain = optionChainPort.getOptionChain(symbol, expiry, underlyingPrice, StrategyId.BEAR_CALL)
@@ -132,7 +143,7 @@ class BearCallCandidateSelector(
         logger.info { "[$symbol] (bear-call) Selected sold call strike=${soldQuote.contract.strike} delta=${soldQuote.greeks.delta}" }
 
         // 4. Find bought strike — the protective long call sits ABOVE the short (soldStrike + width)
-        val targetBoughtStrike = soldQuote.contract.strike.add(config.spreadWidthUsd)
+        val targetBoughtStrike = soldQuote.contract.strike.add(spreadWidthUsd)
         val boughtQuote =
             calls
                 .filter { it.contract.strike >= targetBoughtStrike }
@@ -142,6 +153,17 @@ class BearCallCandidateSelector(
             return reject(RejectReason.NO_BOUGHT_LEG)
         }
         detail = detail.copy(longStrike = boughtQuote.contract.strike)
+
+        // 4b. Width cap — the long leg is the first listed strike at least one target width away, which
+        // can be far past target on a sparse strike grid or when nearer strikes had no quote.
+        val listedWidth = boughtQuote.contract.strike.subtract(soldQuote.contract.strike)
+        if (SpreadSelectionRules.widthExceedsCap(listedWidth, spreadWidthUsd, config.maxWidthMultiple)) {
+            logger.info {
+                "[$symbol] (bear-call) Width \$$listedWidth > ${config.maxWidthMultiple}× target \$$spreadWidthUsd, skipping"
+            }
+            tradeLogger.info { "SKIP   $symbol  (bear-call) width=\$$listedWidth > ${config.maxWidthMultiple}x target=\$$spreadWidthUsd" }
+            return reject(RejectReason.WIDTH_EXCEEDS_CAP)
+        }
 
         // 5. Credit check — use mid for filters, bid side for the initial order price
         val midCredit =
@@ -220,6 +242,32 @@ class BearCallCandidateSelector(
 
         val floorCredit = bidCredit.max(config.minCreditPerShare).setScale(4, RoundingMode.HALF_UP)
 
+        // Market-quality gate: when the achievable credit is far below mid, the mid is not a price
+        // anyone will pay and the order would only ever rest unfilled (CRM 265/280: 1.20 vs 2.61).
+        val bidPctOfMid = SpreadSelectionRules.comboBidPctOfMid(bidCredit, midCredit) ?: 0.0
+        if (bidPctOfMid < config.minComboBidPctOfMid) {
+            logger.info {
+                "[$symbol] (bear-call) Achievable credit \$$bidCredit is ${"%.0f".format(bidPctOfMid * 100)}% of mid \$$midCredit " +
+                    "(min ${"%.0f".format(config.minComboBidPctOfMid * 100)}%) — market too wide, skipping"
+            }
+            tradeLogger.info {
+                "SKIP   $symbol  (bear-call) combo_bid/mid=${"%.0f".format(bidPctOfMid * 100)}% < " +
+                    "${"%.0f".format(config.minComboBidPctOfMid * 100)}%"
+            }
+            return reject(RejectReason.MARKET_TOO_WIDE)
+        }
+
+        // Risk budget at the WORST credit the order may fill at (the floor), not at mid — the earlier
+        // mid-based check understates the loss of a below-mid fill.
+        val worstRiskPerContract = actualSpreadWidth.subtract(floorCredit).multiply(BigDecimal("100"))
+        val budget = totalCapital.amount.multiply(BigDecimal(config.maxRiskPercent))
+        if (worstRiskPerContract > budget) {
+            logger.info {
+                "[$symbol] (bear-call) Max risk at floor \$$worstRiskPerContract > allowed \$${"%.2f".format(budget)}, skipping"
+            }
+            return reject(RejectReason.RISK_EXCEEDS_BUDGET)
+        }
+
         logger.info {
             "[$symbol] (bear-call) Launching execution: SELL ${soldQuote.contract.strike}C / BUY ${boughtQuote.contract.strike}C " +
                 "target(mid)=\$$midCredit floor(bid)=\$$bidCredit maxRisk=\$$maxRiskPerShare"
@@ -255,7 +303,7 @@ class BearCallCandidateSelector(
                 midCredit = midCredit,
                 bidCredit = bidCredit,
                 minCreditPerShare = config.minCreditPerShare,
-                targetWidth = config.spreadWidthUsd,
+                targetWidth = spreadWidthUsd,
                 actualWidth = actualSpreadWidth,
                 maxRiskPerShare = maxRiskPerShare,
                 totalCapital = totalCapital.amount,

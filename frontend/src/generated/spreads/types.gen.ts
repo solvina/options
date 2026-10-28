@@ -138,6 +138,14 @@ export type StrategyRulesDto = {
      */
     maxRiskPercent: number;
     /**
+     * Reject when the listed long strike is further than this multiple of the target width
+     */
+    maxWidthMultiple: number;
+    /**
+     * Reject when the achievable combo credit is below this fraction of the mid credit
+     */
+    minComboBidPctOfMid: number;
+    /**
      * Close once this fraction of the fill credit is captured
      */
     takeProfitPercent: number;

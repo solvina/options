@@ -3,6 +3,36 @@
 Notable strategy, engine and operations changes. Newest first. Rendered in the frontend under
 **Maintenance › Changelog**.
 
+## 2026-10-28 — Spread selection: real widths, real markets, expiries that miss earnings
+
+Emails kept proposing spreads far wider than the $5 target (CRM 265/280, QCOM 145/130, ORCL
+118/110). The long leg was always chosen by width, as designed. Two things went wrong under that
+rule.
+
+- **Strikes with a price but no delta were thrown away**, even as the long leg, which needs no
+  delta at all. IBKR sometimes sends a strike's bid/ask without its greeks (ORCL 115 today:
+  bid 3.00 / ask 3.30, no delta). The engine then skipped to the next strike out, so a $5 spread
+  became $8 or $15. Such strikes are now kept. Their greeks are **estimated with Black-Scholes**
+  from the volatility of live neighbouring strikes; the strike's own price is trusted only when
+  it agrees with them within 25%. An estimated strike may also be the short leg. With no live
+  neighbour nothing is estimated, and the strike can only be a long leg. Quote requests are
+  unchanged — the estimate uses data the scan already has.
+- **Width cap: 2× target** (`max-width-multiple`). The long leg is still the first listed strike
+  at least one width away. If that is more than $10 on a $5 target the symbol is skipped
+  (`WIDTH_EXCEEDS_CAP`). Names quoting only $10 strikes that far out (MU, AMD, DE) still trade.
+- **Market-quality gate** (`min-combo-bid-pct-of-mid: 0.60`). If the market would pay less than
+  60% of the mid credit, the mid is not a real price and the order could only rest unfilled
+  (CRM: 1.20 vs 2.61 = 46%). Skipped as `MARKET_TOO_WIDE`.
+- **Risk budget checked at the worst accepted credit**, not at mid, so a below-mid fill can't
+  exceed the per-trade risk limit.
+- **Earnings-aware expiry.** The engine used to pick the expiry nearest 45 days and reject the
+  symbol if earnings fell inside it — even when an earlier expiry inside the 30–50 day band
+  would have finished first (CRM today: Dec 4 rejected for Dec 2 earnings; Nov 27 was never
+  considered). It now takes the in-band expiry nearest 45 days that ends before earnings.
+- Bear calls now honour a per-symbol width override, as bull puts already did.
+
+The new limits are on the Trading Rules page; the new skip reasons show in the scanner table.
+
 ## 2026-10-28 — Spreads get a stop again: the underlying through the short strike
 
 Since 2026-07-18 a spread had no stop at all. The option-value stop was switched off

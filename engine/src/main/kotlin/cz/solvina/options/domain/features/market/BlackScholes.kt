@@ -1,5 +1,6 @@
 package cz.solvina.options.domain.features.market
 
+import cz.solvina.options.domain.models.OptionType
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.exp
@@ -7,7 +8,8 @@ import kotlin.math.ln
 import kotlin.math.sqrt
 
 /**
- * European put option pricing via the Black-Scholes-Merton model.
+ * European option pricing via the Black-Scholes-Merton model (no dividends). The put-only functions
+ * back the spread backtest; the [OptionType]-generic ones cover calls too (bear-call legs).
  *
  * Conventions:
  *   spot   — underlying spot price
@@ -112,6 +114,82 @@ object BlackScholes {
         }
         return null
     }
+
+    fun callPrice(
+        spot: Double,
+        strike: Double,
+        t: Double,
+        r: Double,
+        sigma: Double,
+    ): Double {
+        if (t <= 0.0) return maxOf(spot - strike, 0.0)
+        val (d1, d2) = d1d2(spot, strike, t, r, sigma)
+        return spot * cnd(d1) - strike * exp(-r * t) * cnd(d2)
+    }
+
+    fun price(
+        type: OptionType,
+        spot: Double,
+        strike: Double,
+        t: Double,
+        r: Double,
+        sigma: Double,
+    ): Double =
+        when (type) {
+            OptionType.PUT -> putPrice(spot, strike, t, r, sigma)
+            OptionType.CALL -> callPrice(spot, strike, t, r, sigma)
+        }
+
+    /** Negative for puts (−1 … 0), positive for calls (0 … 1) — the sign IBKR reports. */
+    fun delta(
+        type: OptionType,
+        spot: Double,
+        strike: Double,
+        t: Double,
+        r: Double,
+        sigma: Double,
+    ): Double =
+        when (type) {
+            OptionType.PUT -> putDelta(spot, strike, t, r, sigma)
+            OptionType.CALL -> putDelta(spot, strike, t, r, sigma) + 1.0
+        }
+
+    /** Time decay per calendar day. */
+    fun theta(
+        type: OptionType,
+        spot: Double,
+        strike: Double,
+        t: Double,
+        r: Double,
+        sigma: Double,
+    ): Double {
+        if (t <= 0.0) return 0.0
+        return when (type) {
+            OptionType.PUT -> putTheta(spot, strike, t, r, sigma)
+            OptionType.CALL -> {
+                // Put-call parity: callTheta = putTheta − r·K·e^(−rt) per year.
+                putTheta(spot, strike, t, r, sigma) - r * strike * exp(-r * t) / 365.0
+            }
+        }
+    }
+
+    /** Implied volatility of a put or call from its market price; null when no volatility fits. */
+    fun impliedVol(
+        type: OptionType,
+        marketPrice: Double,
+        spot: Double,
+        strike: Double,
+        t: Double,
+        r: Double,
+    ): Double? =
+        when (type) {
+            OptionType.PUT -> impliedVol(marketPrice, spot, strike, t, r)
+            OptionType.CALL -> {
+                // Same volatility prices both sides: convert the call to its parity put.
+                val parityPut = marketPrice - spot + strike * exp(-r * t)
+                if (parityPut <= 0.0) null else impliedVol(parityPut, spot, strike, t, r)
+            }
+        }
 
     private fun d1d2(
         spot: Double,

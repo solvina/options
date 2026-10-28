@@ -51,6 +51,12 @@ enum class RejectReason {
 
     /** The selected expiry spans the symbol's next scheduled earnings report. */
     EARNINGS_BEFORE_EXPIRY,
+
+    /** The nearest listed long strike is more than maxWidthMultiple × the target width away. */
+    WIDTH_EXCEEDS_CAP,
+
+    /** Achievable combo credit is below minComboBidPctOfMid of the mid credit — market too wide. */
+    MARKET_TOO_WIDE,
 }
 
 /**
