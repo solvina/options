@@ -1,5 +1,7 @@
 package cz.solvina.options.domain.features.notification
 
+import cz.solvina.options.domain.features.market.BlackScholes
+import cz.solvina.options.domain.features.market.GreeksEstimator
 import cz.solvina.options.domain.features.market.model.OptionQuote
 import cz.solvina.options.domain.features.spread.model.StrategyId
 import cz.solvina.options.domain.models.Symbol
@@ -49,6 +51,8 @@ data class SpreadOpportunity(
     // ---- Planned management (config-driven exits) ----
     val takeProfitPercent: Double,
     val stopLossPercent: Double,
+    val underlyingStopEnabled: Boolean,
+    val underlyingStopBufferPct: Double,
     val timeProfitDte: Int,
     val driftProtectionPct: Double,
 ) {
@@ -76,4 +80,44 @@ data class SpreadOpportunity(
 
     val allowedRiskPerTrade: BigDecimal
         get() = totalCapital.multiply(BigDecimal(maxRiskPercent)).setScale(2, RoundingMode.HALF_UP)
+
+    /** Underlying price at which the underlying stop closes the spread; null when that stop is off. */
+    val underlyingStopTrigger: BigDecimal?
+        get() {
+            if (!underlyingStopEnabled) return null
+            val k = shortLeg.contract.strike
+            val shift = k.multiply(BigDecimal(underlyingStopBufferPct))
+            return (if (isBullPut) k.add(shift) else k.subtract(shift)).setScale(2, RoundingMode.HALF_UP)
+        }
+
+    /**
+     * Model value of the spread per share: Black-Scholes on each leg's own volatility (IBKR's, or
+     * estimated from neighbours). In a wide market this is a better "fair" than the quoted mid; null
+     * when either leg has no usable volatility.
+     */
+    val fairCredit: BigDecimal?
+        get() {
+            val t = dte.coerceAtLeast(1) / 365.0
+            val spot = underlyingPrice.toDouble()
+
+            fun value(q: OptionQuote): Double? =
+                q.greeks.iv.takeIf { it.isFinite() && it > 0.0 }?.let { iv ->
+                    BlackScholes.price(q.contract.type, spot, q.contract.strike.toDouble(), t, GreeksEstimator.RISK_FREE_RATE, iv)
+                }
+            val short = value(shortLeg) ?: return null
+            val long = value(longLeg) ?: return null
+            return BigDecimal(short - long).setScale(2, RoundingMode.HALF_UP).takeIf { it.signum() > 0 }
+        }
+
+    /**
+     * Suggested resting limit for a manual order: the better of mid and fair value, rounded UP to a
+     * nickel. A resting limit costs nothing if it never fills; this is the price we would be glad to
+     * get, not the one the engine chases down to.
+     */
+    val suggestedLimit: BigDecimal
+        get() {
+            val best = fairCredit?.max(midCredit) ?: midCredit
+            val nickel = BigDecimal("0.05")
+            return best.divide(nickel, 0, RoundingMode.CEILING).multiply(nickel).setScale(2)
+        }
 }

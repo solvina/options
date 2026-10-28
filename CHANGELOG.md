@@ -3,6 +3,21 @@
 Notable strategy, engine and operations changes. Newest first. Rendered in the frontend under
 **Maintenance › Changelog**.
 
+## 2026-10-28 — Opportunity emails: fair value, suggested limit, the real stop
+
+For placing engine candidates by hand on the live account, and for testing whether live fills
+near mid while paper does not.
+
+- **Fair value.** Each email now shows the spread's model value: Black-Scholes on each leg's own
+  volatility (IBKR's, or estimated from neighbours). In a wide market this is a better reference
+  than the quoted mid. CRM 265/280 on 2026-10-21: fair $2.45 against a mid of $2.61.
+- **Suggested resting limit:** the better of fair value and mid, rounded up to $0.05. This is the
+  price to ask for and leave working — the price we would be glad to get, not the one the engine
+  chases down to. A limit that never fills costs nothing.
+- **The stop line shows what actually runs:** e.g. "Stop: underlying ≥ $265.00 (short strike);
+  option-price stop off". It used to print "Stop-loss 0.0% credit", which read as "no stop".
+- Estimated deltas are marked "(est.)"; missing values show "n/a" instead of NaN.
+
 ## 2026-10-28 — Spread selection: real widths, real markets, expiries that miss earnings
 
 Emails kept proposing spreads far wider than the $5 target (CRM 265/280, QCOM 145/130, ORCL

@@ -151,19 +151,19 @@ class SmtpOpportunityNotifier(
             appendLine("  IV Rank:          ${pct(o.ivRank)}  (threshold ≥ ${pct(o.ivRankThreshold)})")
             appendLine("  Expiry / DTE:     ${o.expiry} · ${o.dte} DTE  (band ${o.minDte}–${o.maxDte}, prefer ${o.preferredDte})")
             appendLine(
-                "  Short-leg delta:  ${greek(s.greeks.delta)}  " +
+                "  Short-leg delta:  ${delta(s)}  " +
                     "(target ${dec(o.targetDelta)}, band ${dec(o.deltaMin)}–${dec(o.deltaMax)})",
             )
             appendLine("  Underlying:       \$${money(o.underlyingPrice)}")
             appendLine()
             appendLine("THE SPREAD (per 1 contract = 100 shares, qty ${o.quantity})")
             appendLine(
-                "  SELL ${strike(s.contract.strike)}$right   delta ${greek(s.greeks.delta)}  iv ${pct(s.greeks.iv * 100)}  " +
+                "  SELL ${strike(s.contract.strike)}$right   delta ${delta(s)}  iv ${ivPct(s)}  " +
                     "theta ${greek(s.greeks.theta)}  gamma ${greek(s.greeks.gamma)}  vega ${greek(s.greeks.vega)}",
             )
             appendLine("       bid/ask/mid: ${money(s.bid.amount)} / ${money(s.ask.amount)} / ${money(s.mid.amount)}")
             appendLine(
-                "  BUY  ${strike(l.contract.strike)}$right   delta ${greek(l.greeks.delta)}  iv ${pct(l.greeks.iv * 100)}  " +
+                "  BUY  ${strike(l.contract.strike)}$right   delta ${delta(l)}  iv ${ivPct(l)}  " +
                     "theta ${greek(l.greeks.theta)}  gamma ${greek(l.greeks.gamma)}  vega ${greek(l.greeks.vega)}",
             )
             appendLine("       bid/ask/mid: ${money(l.bid.amount)} / ${money(l.ask.amount)} / ${money(l.mid.amount)}")
@@ -171,6 +171,7 @@ class SmtpOpportunityNotifier(
             appendLine("PRICING & RISK")
             appendLine("  Net credit (mid/target):     \$${money(o.midCredit)} /share → \$${money(o.maxProfitPerContract)}")
             appendLine("  Achievable combo bid (floor): \$${money(o.bidCredit)} /share  (min floor \$${money(o.minCreditPerShare)})")
+            appendLine("  Suggested resting limit:      ${limitText(o)}")
             appendLine("  Spread width:                 \$${money(o.targetWidth)} target / \$${money(o.actualWidth)} actual")
             appendLine("  Max risk / share:             \$${money(o.maxRiskPerShare)} → max loss \$${money(o.maxLossPerContract)}")
             appendLine("  Max profit:                   \$${money(o.maxProfitPerContract)}")
@@ -182,7 +183,7 @@ class SmtpOpportunityNotifier(
             appendLine()
             appendLine("PLANNED MANAGEMENT (from config)")
             appendLine(
-                "  Take-profit ${pct(o.takeProfitPercent * 100)} credit · Stop-loss ${pct(o.stopLossPercent * 100)} credit · " +
+                "  Take-profit at ${pct(o.takeProfitPercent * 100)} of credit · ${stopText(o)} · " +
                     "Time-exit ${o.timeProfitDte} DTE · Drift protection ${pct(o.driftProtectionPct * 100)}",
             )
             appendLine()
@@ -204,7 +205,7 @@ class SmtpOpportunityNotifier(
                     listOf("Expiry / DTE", "${o.expiry} &middot; <b>${o.dte} DTE</b>", "${o.minDte}-${o.maxDte}, prefer ${o.preferredDte}"),
                     listOf(
                         "Short-leg delta",
-                        "<b>${greek(s.greeks.delta)}</b>",
+                        "<b>${delta(s)}</b>",
                         "target ${dec(o.targetDelta)} (${dec(o.deltaMin)}-${dec(o.deltaMax)})",
                     ),
                     listOf("Underlying price", "\$${money(o.underlyingPrice)}", "drift anchor"),
@@ -216,8 +217,8 @@ class SmtpOpportunityNotifier(
                 leg,
                 action,
                 "\$${strike(q.contract.strike)} $right",
-                greek(q.greeks.delta),
-                pct(q.greeks.iv * 100),
+                delta(q),
+                ivPct(q),
                 greek(q.greeks.theta),
                 "${money(q.bid.amount)} / ${money(q.ask.amount)} / <b>${money(q.mid.amount)}</b>",
             )
@@ -237,6 +238,7 @@ class SmtpOpportunityNotifier(
                 listOf(
                     listOf("Net credit (mid / target)", creditCell),
                     listOf("Achievable combo bid (floor)", "\$${money(o.bidCredit)}/share (min floor \$${money(o.minCreditPerShare)})"),
+                    listOf("Suggested resting limit", "<b>${limitText(o)}</b>"),
                     listOf("Spread width", "\$${money(o.targetWidth)} target / \$${money(o.actualWidth)} actual"),
                     listOf("Max risk / share", riskCell),
                     listOf("Max profit", "\$${money(o.maxProfitPerContract)}"),
@@ -246,7 +248,7 @@ class SmtpOpportunityNotifier(
             )
 
         val management =
-            "Take-profit at ${pct(o.takeProfitPercent * 100)} credit &middot; Stop-loss at ${pct(o.stopLossPercent * 100)} credit " +
+            "Take-profit at ${pct(o.takeProfitPercent * 100)} of credit &middot; ${stopText(o)} " +
                 "&middot; Time-exit at ${o.timeProfitDte} DTE &middot; Drift protection ${pct(o.driftProtectionPct * 100)}"
 
         return """
@@ -294,5 +296,41 @@ class SmtpOpportunityNotifier(
 
     private fun dec(v: Double): String = "%.2f".format(v)
 
-    private fun greek(v: Double): String = "%.3f".format(v)
+    private fun greek(v: Double): String = if (v.isFinite()) "%.3f".format(v) else "n/a"
+
+    /** Delta with an "est." marker when IBKR sent no greeks and they were estimated from neighbours. */
+    private fun delta(q: OptionQuote): String = greek(q.greeks.delta) + if (q.greeksEstimated) " (est.)" else ""
+
+    private fun ivPct(q: OptionQuote): String = if (q.greeks.iv.isFinite()) pct(q.greeks.iv * 100) else "n/a"
+
+    private fun stopText(o: SpreadOpportunity): String {
+        val trigger = o.underlyingStopTrigger
+        val side = if (o.isBullPut) "≤" else "≥"
+        val underlying =
+            if (trigger == null) {
+                "underlying stop off"
+            } else {
+                "underlying $side \$${money(trigger)}" +
+                    if (o.underlyingStopBufferPct >
+                        0
+                    ) {
+                        " (${pct(o.underlyingStopBufferPct * 100)} before short strike)"
+                    } else {
+                        " (short strike)"
+                    }
+            }
+        val value =
+            if (o.stopLossPercent >
+                0
+            ) {
+                "option-price stop at ${"%.2f".format(1 + o.stopLossPercent)}× entry mid"
+            } else {
+                "option-price stop off"
+            }
+        return "Stop: $underlying; $value"
+    }
+
+    private fun limitText(o: SpreadOpportunity): String =
+        "\$${money(o.suggestedLimit)} credit" +
+            (o.fairCredit?.let { " (fair value \$${money(it)}, mid \$${money(o.midCredit)})" } ?: " (mid; no model value)")
 }

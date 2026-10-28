@@ -311,6 +311,8 @@ class BearCallCandidateSelector(
                 quantity = 1,
                 takeProfitPercent = config.takeProfitPercent,
                 stopLossPercent = config.stopLossPercent,
+                underlyingStopEnabled = config.underlyingStopEnabled,
+                underlyingStopBufferPct = config.underlyingStopBufferPct,
                 timeProfitDte = config.timeProfitDte,
                 driftProtectionPct = config.driftProtectionPct,
             ),
