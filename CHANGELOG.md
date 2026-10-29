@@ -3,6 +3,28 @@
 Notable strategy, engine and operations changes. Newest first. Rendered in the frontend under
 **Maintenance › Changelog**.
 
+## 2026-10-29 — Engine watchdog stops making outages worse
+
+`options-engine-monitor.timer` runs `monitor-engine.sh` every 5 minutes. It used to probe
+`/health/ibkr` with a 5-second timeout and `kill -9` the engine on any miss. That killed every
+engine that was still booting: both "out of memory" signal-9 kills during the 2026-10-28 deploys
+were this script, not memory. And when IB Gateway itself hung (2026-10-28, Gateway Java heap
+`OutOfMemoryError`), it killed the engine 24 times in two hours, which can't fix a hung Gateway.
+
+The rewrite (now versioned as `deploy/monitor-engine.sh`, installed to
+`/home/solvina/options/monitor-engine.sh`):
+
+- **Boot grace:** no check in the engine's first 5 minutes.
+- **Liveness only:** probes `/actuator/health` (3 tries, 10 s each). IBKR connection state is the
+  engine's own job and has its own alerts.
+- **If the engine is unresponsive, check Gateway first** with the real IBKR API handshake (a TCP
+  accept proves nothing — the 2026-07-31 wedge accepted TCP). If Gateway doesn't answer, send a
+  Telegram alert (mentioning a Gateway `OutOfMemoryError` if its log shows one) and **do not**
+  kill the engine — recovering Gateway is a human decision.
+- **Only if Gateway answers and the engine doesn't** is the engine killed (with an alert);
+  systemd's `Restart=on-failure` brings it back.
+- Alerts repeat at most hourly and reset once the engine is healthy. The bot token is never logged.
+
 ## 2026-10-28 — Opportunity emails: fair value, suggested limit, the real stop
 
 For placing engine candidates by hand on the live account, and for testing whether live fills
