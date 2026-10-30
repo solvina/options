@@ -12,6 +12,7 @@ const navGroups = [
     items: [
       { to: '/dashboard', label: 'Dashboard' },
       { to: '/rules', label: 'Trading Rules' },
+      { to: '/would-be', label: 'Would-be Trades' },
     ],
   },
   {

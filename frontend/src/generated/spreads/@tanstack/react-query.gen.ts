@@ -3,8 +3,8 @@
 import { type DefaultError, type InfiniteData, infiniteQueryOptions, queryOptions, type UseMutationOptions } from '@tanstack/react-query';
 
 import { client } from '../client.gen';
-import { forceCloseSpread, getScannerStatus, getSpreadAnalytics, getSpreadById, getSpreadRules, getTickerStatus, listSpreads, type Options, pauseMonitor, pauseScanner, refreshSpreadPnl, resumeMonitor, resumeScanner, softCloseSpread, triggerScan } from '../sdk.gen';
-import type { ForceCloseSpreadData, ForceCloseSpreadResponse, GetScannerStatusData, GetScannerStatusResponse, GetSpreadAnalyticsData, GetSpreadAnalyticsResponse, GetSpreadByIdData, GetSpreadByIdResponse, GetSpreadRulesData, GetSpreadRulesResponse, GetTickerStatusData, GetTickerStatusResponse, ListSpreadsData, ListSpreadsResponse, PauseMonitorData, PauseMonitorResponse, PauseScannerData, PauseScannerResponse, RefreshSpreadPnlData, RefreshSpreadPnlResponse, ResumeMonitorData, ResumeMonitorResponse, ResumeScannerData, ResumeScannerResponse, SoftCloseSpreadData, SoftCloseSpreadResponse, TriggerScanData } from '../types.gen';
+import { forceCloseSpread, getScannerStatus, getSpreadAnalytics, getSpreadById, getSpreadRules, getTickerStatus, listShadowSpreads, listSpreads, type Options, pauseMonitor, pauseScanner, refreshSpreadPnl, resumeMonitor, resumeScanner, softCloseSpread, triggerScan } from '../sdk.gen';
+import type { ForceCloseSpreadData, ForceCloseSpreadResponse, GetScannerStatusData, GetScannerStatusResponse, GetSpreadAnalyticsData, GetSpreadAnalyticsResponse, GetSpreadByIdData, GetSpreadByIdResponse, GetSpreadRulesData, GetSpreadRulesResponse, GetTickerStatusData, GetTickerStatusResponse, ListShadowSpreadsData, ListShadowSpreadsResponse, ListSpreadsData, ListSpreadsResponse, PauseMonitorData, PauseMonitorResponse, PauseScannerData, PauseScannerResponse, RefreshSpreadPnlData, RefreshSpreadPnlResponse, ResumeMonitorData, ResumeMonitorResponse, ResumeScannerData, ResumeScannerResponse, SoftCloseSpreadData, SoftCloseSpreadResponse, TriggerScanData } from '../types.gen';
 
 export type QueryKey<TOptions extends Options> = [
     Pick<TOptions, 'baseUrl' | 'body' | 'headers' | 'path' | 'query'> & {
@@ -275,6 +275,27 @@ export const getSpreadRulesOptions = (options?: Options<GetSpreadRulesData>) => 
         return data;
     },
     queryKey: getSpreadRulesQueryKey(options)
+});
+
+export const listShadowSpreadsQueryKey = (options?: Options<ListShadowSpreadsData>) => createQueryKey('listShadowSpreads', options);
+
+/**
+ * Would-be spreads — unfilled paper attempts followed as if filled at mid
+ *
+ * Every spread paper did not fill (or rejected only on leg bid/ask width) is tracked as if filled at mid, revalued daily from real quotes and closed by the same exit rules as a real spread. An estimate of live results; nothing here places orders.
+ *
+ */
+export const listShadowSpreadsOptions = (options?: Options<ListShadowSpreadsData>) => queryOptions<ListShadowSpreadsResponse, DefaultError, ListShadowSpreadsResponse, ReturnType<typeof listShadowSpreadsQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await listShadowSpreads({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: listShadowSpreadsQueryKey(options)
 });
 
 /**

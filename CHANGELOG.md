@@ -3,6 +3,29 @@
 Notable strategy, engine and operations changes. Newest first. Rendered in the frontend under
 **Maintenance › Changelog**.
 
+## 2026-10-30 — Would-be trades: what paper can't fill, followed as if it had
+
+No spread order has filled on paper since August. Paper's simulator fills a limit order only
+when the visible bid reaches it, while the user's own live orders on the same candidates (ORCL,
+NUE, WELL) filled at 99–100% of mid. Paper therefore can't answer the real question: does the
+strategy make money if the fills happen?
+
+- **Recording.** Every spread attempt that ends unfilled (`FLOOR_REACHED`, `TIMED_OUT`), or is
+  rejected only because a leg's bid/ask looked too wide on screen (`LIQUIDITY_REJECTED`, never
+  ordered), is saved as a would-be position assumed filled at mid. Mid, achievable floor and the
+  natural price are kept for comparison. Repeated attempts on the same spread are recorded once.
+  Recording can never change an execution result.
+- **Daily revaluation**, 30 minutes before each market's close (in that market's timezone), from
+  real option quotes — two quotes per position, a few dozen requests a day. The same rules as a
+  real spread close it: take-profit at 50% of the mid credit, the stock-price stop at the short
+  strike, the 21-DTE time exit, and settlement at intrinsic value at expiry. With no live quote it
+  waits for the next day. Checking once a day means an intraday-only touch is caught at the next
+  check.
+- **Overview › Would-be Trades** page: win rate, average win and loss, total P&L at mid and at 95%
+  of mid (how much the fill assumption matters), open positions marked to their last value, and
+  every row with its reason. Per 1 contract, before commissions. Back-filled history, once added,
+  is shown separately as approximate.
+
 ## 2026-10-29 — Engine watchdog stops making outages worse
 
 `options-engine-monitor.timer` runs `monitor-engine.sh` every 5 minutes. It used to probe

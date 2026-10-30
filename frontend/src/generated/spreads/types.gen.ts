@@ -108,6 +108,40 @@ export type PnlTimelinePointDto = {
     cumulativePnl: number;
 };
 
+export type ShadowSpreadDto = {
+    id: string;
+    strategyId: string;
+    symbol: string;
+    optionType: string;
+    expiry: string;
+    soldStrike: number;
+    boughtStrike: number;
+    width: number;
+    openedAt: string;
+    sourceOutcome: string;
+    midCredit: number;
+    floorCredit?: number | null;
+    naturalCredit?: number | null;
+    underlyingAtEntry?: number | null;
+    ivRankAtEntry?: number | null;
+    status: string;
+    closeReason?: string | null;
+    closedAt?: string | null;
+    exitValue?: number | null;
+    lastValue?: number | null;
+    lastUnderlying?: number | null;
+    lastValuedAt?: string | null;
+    /**
+     * USD per contract if filled at mid — realized when closed, marked to the last value while open
+     */
+    pnlAtMid?: number | null;
+    /**
+     * Same, if filled at 95% of mid
+     */
+    pnlAt95PctMid?: number | null;
+    backfilled: boolean;
+};
+
 export type SpreadRulesDto = {
     strategies: Array<StrategyRulesDto>;
     portfolio: PortfolioRulesDto;
@@ -463,6 +497,22 @@ export type GetSpreadRulesResponses = {
 };
 
 export type GetSpreadRulesResponse = GetSpreadRulesResponses[keyof GetSpreadRulesResponses];
+
+export type ListShadowSpreadsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/shadow-spreads';
+};
+
+export type ListShadowSpreadsResponses = {
+    /**
+     * All shadow spreads, newest first
+     */
+    200: Array<ShadowSpreadDto>;
+};
+
+export type ListShadowSpreadsResponse = ListShadowSpreadsResponses[keyof ListShadowSpreadsResponses];
 
 export type PauseScannerData = {
     body?: never;

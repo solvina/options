@@ -21,6 +21,7 @@ import { SweepNewPage } from './pages/SweepNewPage'
 import { SweepResultsPage } from './pages/SweepResultsPage'
 import { ChangelogPage } from './pages/ChangelogPage'
 import { RulesPage } from './pages/RulesPage'
+import { ShadowSpreadsPage } from './pages/ShadowSpreadsPage'
 
 function App() {
   return (
@@ -30,6 +31,7 @@ function App() {
           <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/rules" element={<RulesPage />} />
+          <Route path="/would-be" element={<ShadowSpreadsPage />} />
           {/* Reports merged into the dashboard as its Performance section — keep the old path working. */}
           <Route path="/reports" element={<Navigate to="/dashboard" replace />} />
           <Route path="/spreads" element={<Navigate to="/spreads/positions" replace />} />

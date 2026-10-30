@@ -210,6 +210,26 @@ paths:
               schema:
                 $ref: '#/components/schemas/SpreadRulesDto'
 
+  /shadow-spreads:
+    get:
+      tags:
+        - ShadowSpreads
+      summary: Would-be spreads — unfilled paper attempts followed as if filled at mid
+      description: >
+        Every spread paper did not fill (or rejected only on leg bid/ask width) is tracked as if filled
+        at mid, revalued daily from real quotes and closed by the same exit rules as a real spread.
+        An estimate of live results; nothing here places orders.
+      operationId: listShadowSpreads
+      responses:
+        '200':
+          description: All shadow spreads, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ShadowSpreadDto'
+
   /scanner/pause:
     post:
       tags:
@@ -465,6 +485,42 @@ components:
           type: number
         cumulativePnl:
           type: number
+
+    ShadowSpreadDto:
+      type: object
+      required: [id, strategyId, symbol, optionType, expiry, soldStrike, boughtStrike, width, openedAt, sourceOutcome, midCredit, status, backfilled]
+      properties:
+        id: { type: string, format: uuid }
+        strategyId: { type: string }
+        symbol: { type: string }
+        optionType: { type: string }
+        expiry: { type: string, format: date }
+        soldStrike: { type: number }
+        boughtStrike: { type: number }
+        width: { type: number }
+        openedAt: { type: string, format: date-time }
+        sourceOutcome: { type: string }
+        midCredit: { type: number }
+        floorCredit: { type: number, nullable: true }
+        naturalCredit: { type: number, nullable: true }
+        underlyingAtEntry: { type: number, nullable: true }
+        ivRankAtEntry: { type: number, nullable: true }
+        status: { type: string }
+        closeReason: { type: string, nullable: true }
+        closedAt: { type: string, format: date-time, nullable: true }
+        exitValue: { type: number, nullable: true }
+        lastValue: { type: number, nullable: true }
+        lastUnderlying: { type: number, nullable: true }
+        lastValuedAt: { type: string, format: date-time, nullable: true }
+        pnlAtMid:
+          type: number
+          nullable: true
+          description: USD per contract if filled at mid — realized when closed, marked to the last value while open
+        pnlAt95PctMid:
+          type: number
+          nullable: true
+          description: Same, if filled at 95% of mid
+        backfilled: { type: boolean }
 
     SpreadRulesDto:
       type: object

@@ -1,0 +1,49 @@
+databaseChangeLog:
+  # ---------------------------------------------------------------------------
+  # Would-be ("shadow") spreads (2026-10-30).
+  #
+  # Paper's fill simulator only fills when the visible bid reaches the limit, so since August not
+  # one spread order has filled — while the user's own live orders on the same candidates (ORCL,
+  # NUE, WELL) filled at 99–100% of mid. Paper therefore cannot say whether the strategy makes money.
+  # Every unfilled attempt (FLOOR_REACHED, TIMED_OUT) and every candidate rejected only on leg
+  # bid/ask width (LIQUIDITY_REJECTED) is recorded here as if filled at mid, revalued once a day
+  # from real option quotes, and closed by the same rules a real spread follows.
+  #
+  # One OPEN row per (strategy, symbol, strikes, expiry): repeated attempts on the same spread do
+  # not multiply it. backfilled = rows reconstructed afterwards from daily closes and a model price
+  # (approximate, shown separately).
+  # ---------------------------------------------------------------------------
+  - changeSet:
+      id: v41__shadow_spreads
+      author: claude
+      changes:
+        - createTable:
+            tableName: shadow_spreads
+            columns:
+              - column: { name: id, type: UUID, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: strategy_id, type: TEXT, constraints: { nullable: false } }
+              - column: { name: symbol, type: TEXT, constraints: { nullable: false } }
+              - column: { name: option_type, type: TEXT, constraints: { nullable: false } }
+              - column: { name: expiry, type: DATE, constraints: { nullable: false } }
+              - column: { name: sold_strike, type: NUMERIC(10, 2), constraints: { nullable: false } }
+              - column: { name: bought_strike, type: NUMERIC(10, 2), constraints: { nullable: false } }
+              - column: { name: opened_at, type: TIMESTAMP WITH TIME ZONE, constraints: { nullable: false } }
+              - column: { name: source_outcome, type: TEXT, constraints: { nullable: false } }
+              - column: { name: mid_credit, type: NUMERIC(10, 4), constraints: { nullable: false } }
+              - column: { name: floor_credit, type: NUMERIC(10, 4) }
+              - column: { name: natural_credit, type: NUMERIC(10, 4) }
+              - column: { name: underlying_at_entry, type: NUMERIC(10, 2) }
+              - column: { name: iv_rank_at_entry, type: NUMERIC(5, 2) }
+              - column: { name: status, type: TEXT, constraints: { nullable: false } }
+              - column: { name: close_reason, type: TEXT }
+              - column: { name: closed_at, type: TIMESTAMP WITH TIME ZONE }
+              - column: { name: exit_value, type: NUMERIC(10, 4) }
+              - column: { name: last_value, type: NUMERIC(10, 4) }
+              - column: { name: last_underlying, type: NUMERIC(10, 2) }
+              - column: { name: last_valued_at, type: TIMESTAMP WITH TIME ZONE }
+              - column: { name: backfilled, type: BOOLEAN, defaultValueBoolean: false, constraints: { nullable: false } }
+        - createIndex:
+            tableName: shadow_spreads
+            indexName: idx_shadow_spreads_status
+            columns:
+              - column: { name: status }

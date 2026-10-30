@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { ForceCloseSpreadData, ForceCloseSpreadErrors, ForceCloseSpreadResponses, GetScannerStatusData, GetScannerStatusResponses, GetSpreadAnalyticsData, GetSpreadAnalyticsResponses, GetSpreadByIdData, GetSpreadByIdErrors, GetSpreadByIdResponses, GetSpreadRulesData, GetSpreadRulesResponses, GetTickerStatusData, GetTickerStatusResponses, ListSpreadsData, ListSpreadsResponses, PauseMonitorData, PauseMonitorResponses, PauseScannerData, PauseScannerResponses, RefreshSpreadPnlData, RefreshSpreadPnlErrors, RefreshSpreadPnlResponses, ResumeMonitorData, ResumeMonitorResponses, ResumeScannerData, ResumeScannerResponses, SoftCloseSpreadData, SoftCloseSpreadErrors, SoftCloseSpreadResponses, TriggerScanData, TriggerScanResponses } from './types.gen';
+import type { ForceCloseSpreadData, ForceCloseSpreadErrors, ForceCloseSpreadResponses, GetScannerStatusData, GetScannerStatusResponses, GetSpreadAnalyticsData, GetSpreadAnalyticsResponses, GetSpreadByIdData, GetSpreadByIdErrors, GetSpreadByIdResponses, GetSpreadRulesData, GetSpreadRulesResponses, GetTickerStatusData, GetTickerStatusResponses, ListShadowSpreadsData, ListShadowSpreadsResponses, ListSpreadsData, ListSpreadsResponses, PauseMonitorData, PauseMonitorResponses, PauseScannerData, PauseScannerResponses, RefreshSpreadPnlData, RefreshSpreadPnlErrors, RefreshSpreadPnlResponses, ResumeMonitorData, ResumeMonitorResponses, ResumeScannerData, ResumeScannerResponses, SoftCloseSpreadData, SoftCloseSpreadErrors, SoftCloseSpreadResponses, TriggerScanData, TriggerScanResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean> = Options2<TData, ThrowOnError> & {
     /**
@@ -73,6 +73,14 @@ export const getTickerStatus = <ThrowOnError extends boolean = false>(options?: 
  *
  */
 export const getSpreadRules = <ThrowOnError extends boolean = false>(options?: Options<GetSpreadRulesData, ThrowOnError>) => (options?.client ?? client).get<GetSpreadRulesResponses, unknown, ThrowOnError>({ url: '/scanner/rules', ...options });
+
+/**
+ * Would-be spreads — unfilled paper attempts followed as if filled at mid
+ *
+ * Every spread paper did not fill (or rejected only on leg bid/ask width) is tracked as if filled at mid, revalued daily from real quotes and closed by the same exit rules as a real spread. An estimate of live results; nothing here places orders.
+ *
+ */
+export const listShadowSpreads = <ThrowOnError extends boolean = false>(options?: Options<ListShadowSpreadsData, ThrowOnError>) => (options?.client ?? client).get<ListShadowSpreadsResponses, unknown, ThrowOnError>({ url: '/shadow-spreads', ...options });
 
 /**
  * Pause new-entry scanner (existing positions are unaffected)

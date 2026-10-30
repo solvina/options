@@ -14,6 +14,7 @@ import cz.solvina.options.domain.features.order.optionTickFor
 import cz.solvina.options.domain.features.order.roundToOptionTick
 import cz.solvina.options.domain.features.scanner.ScannerConfig
 import cz.solvina.options.domain.features.scanner.StrategyParamsRegistry
+import cz.solvina.options.domain.features.shadow.ShadowSpreadService
 import cz.solvina.options.domain.features.spread.SpreadQueryFacade
 import cz.solvina.options.domain.features.spread.model.Spread
 import cz.solvina.options.domain.features.spread.model.SpreadStatus
@@ -66,6 +67,9 @@ class TradeExecutionService(
     private val strategyParams: StrategyParamsRegistry,
     private val clock: Clock,
     private val scope: CoroutineScope,
+    // Would-be spread tracking (paper can't fill near mid; see ShadowSpreadService). Optional so unit
+    // tests need not supply it; recording never influences the execution result.
+    private val shadowSpreads: ShadowSpreadService? = null,
 ) : TradeExecutionPort {
     private val inFlightSymbols = ConcurrentHashMap<Symbol, Unit>()
     private val cooldownUntil = ConcurrentHashMap<Symbol, Instant>()
@@ -79,6 +83,15 @@ class TradeExecutionService(
     // -------------------------------------------------------------------------
 
     override suspend fun execute(request: TradeExecutionRequest): TradeExecutionResult {
+        val result = executeOnce(request)
+        shadowSpreads?.let { shadows ->
+            runCatching { shadows.record(request, result.outcome) }
+                .onFailure { e -> logger.warn { "[${request.underlyingSymbol}] shadow spread not recorded: ${e.message}" } }
+        }
+        return result
+    }
+
+    private suspend fun executeOnce(request: TradeExecutionRequest): TradeExecutionResult {
         if (!config.tradingEnabled) {
             logger.info {
                 "[${request.underlyingSymbol}] DIAGNOSTIC: would enter " +

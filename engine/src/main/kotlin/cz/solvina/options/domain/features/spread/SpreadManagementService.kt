@@ -18,7 +18,6 @@ import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.features.volatility.VolatilityPort
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
-import cz.solvina.options.domain.models.OptionType
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -479,10 +478,7 @@ class SpreadManagementService(
         val underlyingStopBreached =
             underlyingStopTrigger != null &&
                 underlyingNow != null &&
-                when (spread.soldLeg.contract.type) {
-                    OptionType.PUT -> underlyingNow <= underlyingStopTrigger
-                    OptionType.CALL -> underlyingNow >= underlyingStopTrigger
-                }
+                underlyingStopBreached(underlyingNow, underlyingStopTrigger, spread.soldLeg.contract.type)
         val slBreached = valueStopBreached || underlyingStopBreached
         if ((currentSpreadValue != null || underlyingNow != null) && !slBreached) {
             // Breaches must be CONSECUTIVE across VALUED observations — a real quote below the
@@ -591,21 +587,10 @@ class SpreadManagementService(
         }
     }
 
-    /**
-     * Underlying price at which the underlying stop fires: the short strike, moved [bufferPct] of it
-     * to the safe side — above the strike for a short put, below it for a short call.
-     */
     private fun underlyingStopTrigger(
         spread: Spread,
         bufferPct: Double,
-    ): BigDecimal {
-        val strike = spread.soldLeg.contract.strike
-        val shift = strike.multiply(BigDecimal(bufferPct))
-        return when (spread.soldLeg.contract.type) {
-            OptionType.PUT -> strike.add(shift)
-            OptionType.CALL -> strike.subtract(shift)
-        }.setScale(2, RoundingMode.HALF_UP)
-    }
+    ): BigDecimal = underlyingStopTrigger(spread.soldLeg.contract.strike, spread.soldLeg.contract.type, bufferPct)
 
     /**
      * Quality gates a breaching stop-loss observation must pass before it may close a position:
