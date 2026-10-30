@@ -25,22 +25,22 @@ databaseChangeLog:
               - column: { name: symbol, type: TEXT, constraints: { nullable: false } }
               - column: { name: option_type, type: TEXT, constraints: { nullable: false } }
               - column: { name: expiry, type: DATE, constraints: { nullable: false } }
-              - column: { name: sold_strike, type: NUMERIC(10, 2), constraints: { nullable: false } }
-              - column: { name: bought_strike, type: NUMERIC(10, 2), constraints: { nullable: false } }
-              - column: { name: opened_at, type: TIMESTAMP WITH TIME ZONE, constraints: { nullable: false } }
+              - column: { name: sold_strike, type: "NUMERIC(10, 2)", constraints: { nullable: false } }
+              - column: { name: bought_strike, type: "NUMERIC(10, 2)", constraints: { nullable: false } }
+              - column: { name: opened_at, type: "TIMESTAMP WITH TIME ZONE", constraints: { nullable: false } }
               - column: { name: source_outcome, type: TEXT, constraints: { nullable: false } }
-              - column: { name: mid_credit, type: NUMERIC(10, 4), constraints: { nullable: false } }
-              - column: { name: floor_credit, type: NUMERIC(10, 4) }
-              - column: { name: natural_credit, type: NUMERIC(10, 4) }
-              - column: { name: underlying_at_entry, type: NUMERIC(10, 2) }
-              - column: { name: iv_rank_at_entry, type: NUMERIC(5, 2) }
+              - column: { name: mid_credit, type: "NUMERIC(10, 4)", constraints: { nullable: false } }
+              - column: { name: floor_credit, type: "NUMERIC(10, 4)" }
+              - column: { name: natural_credit, type: "NUMERIC(10, 4)" }
+              - column: { name: underlying_at_entry, type: "NUMERIC(10, 2)" }
+              - column: { name: iv_rank_at_entry, type: "NUMERIC(5, 2)" }
               - column: { name: status, type: TEXT, constraints: { nullable: false } }
               - column: { name: close_reason, type: TEXT }
-              - column: { name: closed_at, type: TIMESTAMP WITH TIME ZONE }
-              - column: { name: exit_value, type: NUMERIC(10, 4) }
-              - column: { name: last_value, type: NUMERIC(10, 4) }
-              - column: { name: last_underlying, type: NUMERIC(10, 2) }
-              - column: { name: last_valued_at, type: TIMESTAMP WITH TIME ZONE }
+              - column: { name: closed_at, type: "TIMESTAMP WITH TIME ZONE" }
+              - column: { name: exit_value, type: "NUMERIC(10, 4)" }
+              - column: { name: last_value, type: "NUMERIC(10, 4)" }
+              - column: { name: last_underlying, type: "NUMERIC(10, 2)" }
+              - column: { name: last_valued_at, type: "TIMESTAMP WITH TIME ZONE" }
               - column: { name: backfilled, type: BOOLEAN, defaultValueBoolean: false, constraints: { nullable: false } }
         - createIndex:
             tableName: shadow_spreads

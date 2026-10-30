@@ -23,8 +23,11 @@ strategy make money if the fills happen?
   check.
 - **Overview › Would-be Trades** page: win rate, average win and loss, total P&L at mid and at 95%
   of mid (how much the fill assumption matters), open positions marked to their last value, and
-  every row with its reason. Per 1 contract, before commissions. Back-filled history, once added,
-  is shown separately as approximate.
+  every row with its reason. Per 1 contract, before commissions.
+- **Back-filled history** (`scripts/backfill_shadow_spreads.py`, idempotent): the 44 unfilled
+  spreads since 2026-08-01, rebuilt from daily closes with one volatility per spread fitted to its
+  entry credit. Shown separately and marked approximate. Spreads it leaves open are picked up by
+  the daily job and revalued from real quotes from then on.
 
 ## 2026-10-29 — Engine watchdog stops making outages worse
 
