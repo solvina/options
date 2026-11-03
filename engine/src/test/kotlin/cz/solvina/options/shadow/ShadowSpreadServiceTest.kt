@@ -19,6 +19,7 @@ import cz.solvina.options.domain.models.Symbol
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import java.math.BigDecimal
@@ -143,6 +144,39 @@ class ShadowSpreadServiceTest {
                 ShadowStatus.CLOSED_TIME,
                 port.rows.values
                     .single()
+                    .status,
+            )
+        }
+
+    @Test
+    fun `a price request that never answers times out without blocking the next position`() =
+        runTest {
+            // 2026-11-02: one ORCL request never answered and held the whole pass for 15 minutes.
+            val orcl = Symbol("ORCL")
+            service(LocalDate.of(2026, 10, 30)).record(
+                request.copy(
+                    underlyingSymbol = orcl,
+                    soldContract = sold.copy(symbol = orcl),
+                    boughtContract = bought.copy(symbol = orcl),
+                ),
+                ExecutionOutcome.FLOOR_REACHED,
+            )
+            service(LocalDate.of(2026, 10, 30)).record(request, ExecutionOutcome.FLOOR_REACHED)
+            coEvery { market.getUnderlyingPrice(orcl) } coAnswers { awaitCancellation() }
+            quotes(spot = "285", soldMid = "1.40", boughtMid = "0.50")
+
+            service(LocalDate.of(2026, 11, 10)).revalueOpenMarkets()
+
+            assertEquals(
+                ShadowStatus.CLOSED_PROFIT,
+                port.rows.values
+                    .single { it.symbol == nue }
+                    .status,
+            )
+            assertEquals(
+                ShadowStatus.OPEN,
+                port.rows.values
+                    .single { it.symbol == orcl }
                     .status,
             )
         }

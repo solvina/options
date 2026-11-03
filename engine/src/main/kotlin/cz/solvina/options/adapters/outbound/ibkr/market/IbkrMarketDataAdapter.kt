@@ -14,12 +14,16 @@ import cz.solvina.options.domain.models.OptionContract
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.flow.lastOrNull
+import kotlinx.coroutines.withTimeout
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.time.Duration.Companion.seconds
+
+private val HISTORICAL_FALLBACK_TIMEOUT = 20.seconds
 
 private val logger = KotlinLogging.logger {}
 
@@ -63,7 +67,11 @@ class IbkrMarketDataAdapter(
 
         // No live/delayed snapshot — fall back to last historical close (e.g. EU symbols on paper)
         logger.debug { "[$symbol] Live price unavailable, falling back to last historical close" }
-        val lastBar = runCatching { historicalDataAdapter.fetchDailyPriceBars(symbol, 5).lastOrNull() }.getOrNull()
+        // Bounded: on 2026-11-02 this request never answered and its caller hung for 15 minutes.
+        val lastBar =
+            runCatching {
+                withTimeout(HISTORICAL_FALLBACK_TIMEOUT) { historicalDataAdapter.fetchDailyPriceBars(symbol, 5).lastOrNull() }
+            }.getOrNull()
         val histClose = lastBar?.close ?: error("No price data available for $symbol")
         logger.info { "[$symbol] Using historical close price: $histClose" }
         return Money(histClose.setScale(2, RoundingMode.HALF_UP))

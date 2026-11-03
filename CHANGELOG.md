@@ -3,6 +3,18 @@
 Notable strategy, engine and operations changes. Newest first. Rendered in the frontend under
 **Maintenance › Changelog**.
 
+## 2026-11-03 — Would-be trades: one stuck price no longer blocks the daily check
+
+On 2026-11-02 neither daily revaluation saved anything. The first position's stock-price request
+got no live quote, fell back to historical data, and that historical request never answered — it
+had no time limit. It held the whole pass until its 15-minute ceiling cancelled it, so none of the
+9 open would-be positions was revalued that day.
+
+- Each would-be position now gets its own 60-second budget; a stuck one is retried at the next
+  pass and the rest are revalued normally.
+- The historical-close fallback behind every underlying-price request (also used by the scanner
+  and exit checks) is now bounded at 20 seconds and reports "no price data" instead of hanging.
+
 ## 2026-10-30 — Would-be trades: what paper can't fill, followed as if it had
 
 No spread order has filled on paper since August. Paper's simulator fills a limit order only

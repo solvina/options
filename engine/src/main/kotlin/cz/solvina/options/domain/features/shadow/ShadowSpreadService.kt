@@ -10,6 +10,7 @@ import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.models.OptionContract
 import cz.solvina.options.domain.models.OptionType
 import io.github.oshai.kotlinlogging.KotlinLogging
+import kotlinx.coroutines.withTimeoutOrNull
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.math.RoundingMode
@@ -17,6 +18,7 @@ import java.time.Clock
 import java.time.Instant
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
+import kotlin.time.Duration.Companion.seconds
 
 private val logger = KotlinLogging.logger {}
 private val tradeLogger = KotlinLogging.logger("TRADES")
@@ -38,6 +40,8 @@ class ShadowSpreadService(
 ) {
     companion object {
         /** Outcomes where the engine wanted the trade and only the fill (or the screen width) stopped it. */
+        val PER_SHADOW_TIMEOUT = 60.seconds
+
         val RECORDED_OUTCOMES =
             setOf(ExecutionOutcome.FLOOR_REACHED, ExecutionOutcome.TIMED_OUT, ExecutionOutcome.LIQUIDITY_REJECTED)
     }
@@ -83,9 +87,14 @@ class ShadowSpreadService(
     /** Revalues every open shadow whose market is open now. Returns how many were checked. */
     suspend fun revalueOpenMarkets(): Int {
         val due = port.findOpen().filter { runCatching { universePort.isMarketOpen(it.symbol) }.getOrDefault(false) }
+        // Each position gets its own time budget: on 2026-11-02 one ORCL price request never answered,
+        // held the whole pass for its 15-minute ceiling, and no position was revalued that day.
         due.forEach { shadow ->
-            runCatching { revalue(shadow) }
-                .onFailure { e -> logger.warn { "[${shadow.symbol}] shadow revaluation failed: ${e.message}" } }
+            val done = withTimeoutOrNull(PER_SHADOW_TIMEOUT) { runCatching { revalue(shadow) } }
+            when {
+                done == null -> logger.warn { "[${shadow.symbol}] shadow revaluation timed out after $PER_SHADOW_TIMEOUT — next pass" }
+                done.isFailure -> logger.warn { "[${shadow.symbol}] shadow revaluation failed: ${done.exceptionOrNull()?.message}" }
+            }
         }
         return due.size
     }
