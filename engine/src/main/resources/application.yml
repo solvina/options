@@ -114,6 +114,15 @@ scanner:
   iv-cache-ttl-minutes: 60
   option-params-cache-ttl-hours: 1
   # ---- Bull put strategy params (scanner.bull-put.*) ----
+  # 2026-11-05: scans collect candidates; orders go out at the decision times (13:00 and 15:00 New York),
+  # best first, instead of to whichever title qualified first. portfolio-* are the limits of the
+  # simulated small-account portfolio on the Would-be Trades page, not what paper actually trades.
+  pool:
+    enabled: true
+    max-entries-per-decision: 5
+    portfolio-max-open: 3
+    portfolio-max-new-per-day: 1
+    portfolio-max-loss-usd: 500
   bull-put:
     iv-rank-threshold: 45
     min-dte: 30

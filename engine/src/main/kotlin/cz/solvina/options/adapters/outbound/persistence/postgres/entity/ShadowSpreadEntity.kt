@@ -59,4 +59,11 @@ class ShadowSpreadEntity(
     var backfilled: Boolean = false,
     @Column(nullable = false)
     var counted: Boolean = true,
+    var score: BigDecimal? = null,
+    @Column(name = "decision_rank")
+    var decisionRank: Int? = null,
+    @Column(name = "first_seen_at")
+    var firstSeenAt: Instant? = null,
+    @Column(nullable = false)
+    var selected: Boolean = false,
 )

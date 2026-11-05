@@ -187,7 +187,9 @@ class SmtpOpportunityNotifier(
                     "Time-exit ${o.timeProfitDte} DTE · Drift protection ${pct(o.driftProtectionPct * 100)}",
             )
             appendLine()
-            appendLine("This is the selection moment; the engine now submits the combo order — fill is not guaranteed.")
+            appendLine(
+                "This candidate qualified now. The engine ranks the day's candidates at the decision times, so an order is not guaranteed.",
+            )
             appendLine("Values are the live streaming quotes/greeks used in the decision.")
         }
     }
@@ -266,7 +268,7 @@ class SmtpOpportunityNotifier(
               <h3 style="margin:16px 0 6px">Planned management (from config)</h3>
               <p style="margin:0">$management</p>
               <p style="color:#888;font-size:12px;margin-top:20px">
-                This is the selection moment; the engine now submits the combo order — fill is not guaranteed.
+                This candidate qualified now. The engine ranks the day's candidates at the decision times, so an order is not guaranteed.
                 Values are the live streaming quotes/greeks used in the decision.
               </p>
             </div>

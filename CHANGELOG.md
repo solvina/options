@@ -3,6 +3,26 @@
 Notable strategy, engine and operations changes. Newest first. Rendered in the frontend under
 **Maintenance › Changelog**.
 
+## 2026-11-05 — Daily pool: collect the day's titles, then choose the best
+
+Scans used to send an order the moment a title qualified, so limited slots went to whichever came
+first, and the best titles often came late (2026-11-03: GILD 18:52, AMT 19:21; US open 15:30).
+
+- **Scans only collect.** A title that qualifies joins the day's pool (`POOLED` in the scanner table)
+  and isn't evaluated again until the decision. You still get its email when it first qualifies.
+- **Decisions at 13:00 and 15:00 New York** (19:00 and 21:00 in Prague most of the year). Every pooled
+  title is re-priced with fresh quotes through the full filters, and one that stopped qualifying
+  drops out. The rest are ranked, and the best enter, up to `max-entries-per-decision` (5 on paper).
+  Titles left over are considered again at the top-up.
+- **Ranking score (0–1):** the mean of credit as a share of width (30% or more scores full) and how
+  much of the mid the market actually pays. The weights are a judgement call, not proven. The score
+  is stored on each would-be position so it can be checked against results.
+- **Two views on Would-be Trades.** *All titles* asks whether the signal makes money. *Selected
+  portfolio* is what the ranking would really have taken under small-account limits (3 open, 1 new
+  a day, max loss $500). These limits apply only to the simulation; paper's own caps are unchanged.
+- Not included yet: the trend filter, the IV-rank warning, a minimum score, and a penalty for repeating
+  a sector or direction. The pool is in memory; a restart only resets first-seen times.
+
 ## 2026-11-05 — Would-be trades count each title once
 
 Would-be positions were deduplicated per exact spread, so a title whose strikes moved was counted

@@ -8,6 +8,8 @@ import kotlin.math.abs
 
 /** Selection rules shared by the bull put and bear call selectors. */
 object SpreadSelectionRules {
+    private const val FULL_SCORE_CREDIT_PCT = 0.30
+
     sealed interface ExpiryPick {
         data class Picked(
             val expiry: LocalDate,
@@ -50,6 +52,17 @@ object SpreadSelectionRules {
         targetWidth: BigDecimal,
         maxWidthMultiple: Double,
     ): Boolean = actualWidth > targetWidth.multiply(BigDecimal(maxWidthMultiple))
+
+    /**
+     * Ranking score 0–1, the mean of two things that make a spread a better bet at the same risk:
+     * credit as a share of width (30%+ scores full) and how much of the mid the market actually pays.
+     * The weights are a judgement call; each would-be position stores its score so they can be
+     * checked against results.
+     */
+    fun qualityScore(
+        creditPctOfWidth: Double,
+        bidPctOfMid: Double,
+    ): Double = ((creditPctOfWidth / FULL_SCORE_CREDIT_PCT).coerceIn(0.0, 1.0) + bidPctOfMid.coerceIn(0.0, 1.0)) / 2.0
 
     /** Fraction of the mid credit the market will actually pay; null when mid is not positive. */
     fun comboBidPctOfMid(

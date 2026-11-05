@@ -140,6 +140,16 @@ export type ShadowSpreadDto = {
      */
     pnlAt95PctMid?: number | null;
     backfilled: boolean;
+    /**
+     * Ranking score 0-1 at the pool decision
+     */
+    score?: number | null;
+    decisionRank?: number | null;
+    firstSeenAt?: string | null;
+    /**
+     * In the simulated small-account portfolio
+     */
+    selected: boolean;
 };
 
 export type SpreadRulesDto = {
@@ -215,6 +225,14 @@ export type PortfolioRulesDto = {
     entryCooldownMinutes: number;
     directionalGateEnabled: boolean;
     scanCron: string;
+    /**
+     * Scans collect candidates; orders go out at the daily decision times, best first
+     */
+    poolEnabled: boolean;
+    poolMaxEntriesPerDecision: number;
+    portfolioMaxOpen: number;
+    portfolioMaxNewPerDay: number;
+    portfolioMaxLossUsd: number;
 };
 
 export type SymbolRuleOverrideDto = {

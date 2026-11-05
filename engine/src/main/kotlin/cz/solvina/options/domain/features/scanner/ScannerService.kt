@@ -7,6 +7,8 @@ import cz.solvina.options.domain.features.market.OptionChainPort
 import cz.solvina.options.domain.features.regime.DirectionalBias
 import cz.solvina.options.domain.features.regime.TrendRegimeService
 import cz.solvina.options.domain.features.regime.alignment
+import cz.solvina.options.domain.features.shadow.ShadowCandidate
+import cz.solvina.options.domain.features.shadow.ShadowSpreadService
 import cz.solvina.options.domain.features.spread.SpreadQueryFacade
 import cz.solvina.options.domain.features.spread.model.StrategyId
 import cz.solvina.options.domain.features.universe.UniversePort
@@ -17,7 +19,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.springframework.stereotype.Service
+import java.math.BigDecimal
 import java.time.Clock
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
@@ -43,12 +48,23 @@ class ScannerService(
     // Observe-only: logs each symbol's trend regime alongside scan decisions; does NOT gate trading.
     private val regimeService: TrendRegimeService,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+    // Collect-then-choose (see ScannerPoolConfig). Null or disabled = enter as soon as qualified.
+    private val poolConfig: ScannerPoolConfig = ScannerPoolConfig(),
+    private val pool: DailyCandidatePool? = null,
+    private val shadowSpreads: ShadowSpreadService? = null,
 ) : ScannerPort {
     private val ivRanksSnapshot = ConcurrentHashMap<String, Double>()
 
+    // A decision must not interleave with a scan: both walk symbols and may launch entries.
+    private val passMutex = Mutex()
+
+    private val poolActive: Boolean get() = poolConfig.enabled && pool != null
+
     @Volatile private var lastRunAt: Instant? = null
 
-    override suspend fun scan() {
+    override suspend fun scan() = passMutex.withLock { scanPass() }
+
+    private suspend fun scanPass() {
         lastRunAt = Instant.now(clock)
         logger.info { "Scanner run started" }
 
@@ -91,28 +107,95 @@ class ScannerService(
                 recordStatus(symbol, runId, ScanOutcome.COOLDOWN, null, null, null)
                 continue
             }
-            runCatching { scanSymbol(symbol, totalCapital, runId) }
-                .onFailure { e ->
-                    logger.error(e) { "[$symbol] Error during scan: ${e.message}" }
-                    recordStatus(
-                        symbol,
-                        runId,
-                        ScanOutcome.ERROR,
-                        null,
-                        null,
-                        null,
-                        errorMessage = "${e::class.simpleName}: ${e.message}",
-                    )
+            if (poolActive && pool?.contains(symbol) == true) {
+                // Already waiting for the decision, which re-prices it; no need to evaluate it again.
+                recordStatus(symbol, runId, ScanOutcome.POOLED, null, null, null)
+                continue
+            }
+            runCatching {
+                scanSymbol(symbol, totalCapital, runId) { selected ->
+                    if (poolActive) {
+                        pool?.offer(symbol)
+                        ivRanksSnapshot[symbol.value] = selected.request.ivRankAtEntry
+                        ScanOutcome.POOLED
+                    } else {
+                        launchEntry(symbol, selected.request)
+                        ScanOutcome.ENTERED
+                    }
                 }
+            }.onFailure { e ->
+                logger.error(e) { "[$symbol] Error during scan: ${e.message}" }
+                recordStatus(
+                    symbol,
+                    runId,
+                    ScanOutcome.ERROR,
+                    null,
+                    null,
+                    null,
+                    errorMessage = "${e::class.simpleName}: ${e.message}",
+                )
+            }
         }
 
         logger.info { "Scanner run complete" }
+    }
+
+    /**
+     * Re-prices every pooled title with fresh quotes (the selectors run again, so one that stopped
+     * qualifying drops out), ranks them, records each as a would-be position with its rank and score,
+     * and enters the best up to [ScannerPoolConfig.maxEntriesPerDecision].
+     */
+    suspend fun decidePool(finalOfDay: Boolean) =
+        passMutex.withLock {
+            val candidatePool = pool?.takeIf { poolConfig.enabled } ?: return@withLock
+            val totalCapital =
+                effectiveAccount.detail()?.totalCapital ?: run {
+                    logger.warn { "Pool decision skipped: account size not available" }
+                    return@withLock
+                }
+            val active = spreadQuery.symbolsWithActiveSpread()
+            val runId = scanStatusRegistry.beginRun()
+            val ranked = mutableListOf<ShadowCandidate>()
+            for (symbol in candidatePool.symbols()) {
+                if (active.contains(symbol) || executionPort.isInFlight(symbol) || executionPort.isCoolingDown(symbol)) continue
+                runCatching {
+                    scanSymbol(symbol, totalCapital, runId) { selected ->
+                        ranked += selected.toCandidate(symbol, candidatePool.firstSeenAt(symbol))
+                        ScanOutcome.POOLED
+                    }
+                }.onFailure { e -> logger.warn { "[$symbol] pool decision evaluation failed: ${e.message}" } }
+            }
+            ranked.sortByDescending { it.score }
+            tradeLogger.info {
+                "POOL   decision of ${candidatePool.symbols().size} title(s), ${ranked.size} still qualify: " +
+                    ranked.joinToString { "${it.request.underlyingSymbol} ${"%.3f".format(it.score)}" }
+            }
+            runCatching { shadowSpreads?.recordDecision(ranked) }
+                .onFailure { e -> logger.warn { "Pool decision not recorded as would-be trades: ${e.message}" } }
+            ranked.take(poolConfig.maxEntriesPerDecision).forEach {
+                launchEntry(it.request.underlyingSymbol, it.request)
+                candidatePool.remove(it.request.underlyingSymbol)
+            }
+            if (finalOfDay) candidatePool.clear()
+        }
+
+    private fun CandidateResult.Selected.toCandidate(
+        symbol: Symbol,
+        firstSeenAt: Instant?,
+    ): ShadowCandidate {
+        val bidPct = SpreadSelectionRules.comboBidPctOfMid(detail.bidCredit ?: BigDecimal.ZERO, request.targetCredit) ?: 0.0
+        return ShadowCandidate(
+            request = request,
+            score = SpreadSelectionRules.qualityScore(detail.creditPctOfWidth ?: 0.0, bidPct),
+            firstSeenAt = firstSeenAt ?: Instant.now(clock),
+        ).also { logger.debug { "[$symbol] pool score ${it.score}" } }
     }
 
     private suspend fun scanSymbol(
         symbol: Symbol,
         totalCapital: Money,
         runId: Long,
+        onSelected: (CandidateResult.Selected) -> ScanOutcome,
     ) {
         // Directional gate: when regime gating is on, the symbol's trend+RSI bias decides which
         // strategy is eligible, so bull put and bear call each fire on their own signal instead of
@@ -135,8 +218,7 @@ class ScannerService(
             lastStrategy = StrategyId.BULL_PUT
             if (result is CandidateResult.Selected) {
                 logRegimeAtDecision(symbol, "BULL_PUT", DirectionalBias.BULLISH)
-                launchEntry(symbol, result.request)
-                recordStatus(symbol, runId, ScanOutcome.ENTERED, StrategyId.BULL_PUT, null, result.detail, bias)
+                recordStatus(symbol, runId, onSelected(result), StrategyId.BULL_PUT, null, result.detail, bias)
                 return
             }
         } else {
@@ -148,8 +230,7 @@ class ScannerService(
             lastStrategy = StrategyId.BEAR_CALL
             if (result is CandidateResult.Selected) {
                 logRegimeAtDecision(symbol, "BEAR_CALL", DirectionalBias.BEARISH)
-                launchEntry(symbol, result.request)
-                recordStatus(symbol, runId, ScanOutcome.ENTERED, StrategyId.BEAR_CALL, null, result.detail, bias)
+                recordStatus(symbol, runId, onSelected(result), StrategyId.BEAR_CALL, null, result.detail, bias)
                 return
             }
         } else if (!bearAllowed && bearCallConfig.enabled) {

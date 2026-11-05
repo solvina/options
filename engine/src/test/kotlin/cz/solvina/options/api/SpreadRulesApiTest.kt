@@ -5,6 +5,7 @@ import cz.solvina.options.domain.features.regime.RegimeConfig
 import cz.solvina.options.domain.features.scanner.BearCallScannerConfig
 import cz.solvina.options.domain.features.scanner.BullPutScannerConfig
 import cz.solvina.options.domain.features.scanner.ScannerConfig
+import cz.solvina.options.domain.features.scanner.ScannerPoolConfig
 import cz.solvina.options.domain.features.scanner.StrategyParamsRegistry
 import cz.solvina.options.domain.features.universe.InstrumentConfig
 import cz.solvina.options.domain.features.universe.UniversePort
@@ -33,6 +34,7 @@ class SpreadRulesApiTest {
             bearCallConfig = bearCall,
             regimeConfig = RegimeConfig(gatingEnabled = true),
             universePort = universe,
+            poolConfig = ScannerPoolConfig(),
         )
 
     @Test

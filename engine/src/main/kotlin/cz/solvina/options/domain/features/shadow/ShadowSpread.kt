@@ -1,5 +1,6 @@
 package cz.solvina.options.domain.features.shadow
 
+import cz.solvina.options.domain.features.execution.model.TradeExecutionRequest
 import cz.solvina.options.domain.features.spread.model.StrategyId
 import cz.solvina.options.domain.models.OptionType
 import cz.solvina.options.domain.models.Symbol
@@ -41,9 +42,22 @@ data class ShadowSpread(
     val lastUnderlying: BigDecimal? = null,
     val lastValuedAt: Instant? = null,
     val backfilled: Boolean = false,
+    /** Ranking at the pool decision; null on rows from before the pool. */
+    val score: Double? = null,
+    val decisionRank: Int? = null,
+    val firstSeenAt: Instant? = null,
+    /** In the simulated small-account portfolio: the ranking chose it within the live limits. */
+    val selected: Boolean = false,
 ) {
     val width: BigDecimal get() = soldStrike.subtract(boughtStrike).abs()
 }
+
+/** A title that still qualified at a pool decision, with its ranking score. */
+data class ShadowCandidate(
+    val request: TradeExecutionRequest,
+    val score: Double,
+    val firstSeenAt: Instant,
+)
 
 /** Reads return only counted positions: one per title at a time (see v42). */
 interface ShadowSpreadPort {

@@ -79,3 +79,5 @@ databaseChangeLog:
       file: db/changelog/v41__shadow_spreads.yaml
   - include:
       file: db/changelog/v42__shadow_spreads_counted.yaml
+  - include:
+      file: db/changelog/v43__shadow_spreads_pool_decision.yaml

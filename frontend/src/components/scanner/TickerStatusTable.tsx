@@ -105,6 +105,7 @@ function filterLabel(key: string): string {
  */
 const KNOWN_FILTER_KEYS = [
   'ENTERED',
+  'POOLED',
   'ALREADY_OPEN',
   'COOLDOWN',
   'GATE_SUPPRESSED',

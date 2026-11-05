@@ -13,6 +13,9 @@ enum class ScanOutcome {
     /** Qualified and an execution was launched. */
     ENTERED,
 
+    /** Qualified and waiting in the daily pool for the next decision. */
+    POOLED,
+
     /** Evaluated by a selector but did not qualify — see [RejectReason]. */
     REJECTED,
 

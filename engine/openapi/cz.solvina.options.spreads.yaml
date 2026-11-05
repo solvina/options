@@ -488,7 +488,7 @@ components:
 
     ShadowSpreadDto:
       type: object
-      required: [id, strategyId, symbol, optionType, expiry, soldStrike, boughtStrike, width, openedAt, sourceOutcome, midCredit, status, backfilled]
+      required: [id, strategyId, symbol, optionType, expiry, soldStrike, boughtStrike, width, openedAt, sourceOutcome, midCredit, status, backfilled, selected]
       properties:
         id: { type: string, format: uuid }
         strategyId: { type: string }
@@ -521,6 +521,10 @@ components:
           nullable: true
           description: Same, if filled at 95% of mid
         backfilled: { type: boolean }
+        score: { type: number, nullable: true, description: Ranking score 0-1 at the pool decision }
+        decisionRank: { type: integer, nullable: true }
+        firstSeenAt: { type: string, format: date-time, nullable: true }
+        selected: { type: boolean, description: In the simulated small-account portfolio }
 
     SpreadRulesDto:
       type: object
@@ -633,6 +637,11 @@ components:
         - entryCooldownMinutes
         - directionalGateEnabled
         - scanCron
+        - poolEnabled
+        - poolMaxEntriesPerDecision
+        - portfolioMaxOpen
+        - portfolioMaxNewPerDay
+        - portfolioMaxLossUsd
       properties:
         tradingEnabled:
           type: boolean
@@ -662,6 +671,17 @@ components:
           type: boolean
         scanCron:
           type: string
+        poolEnabled:
+          type: boolean
+          description: Scans collect candidates; orders go out at the daily decision times, best first
+        poolMaxEntriesPerDecision:
+          type: integer
+        portfolioMaxOpen:
+          type: integer
+        portfolioMaxNewPerDay:
+          type: integer
+        portfolioMaxLossUsd:
+          type: number
 
     SymbolRuleOverrideDto:
       type: object

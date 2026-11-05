@@ -11,9 +11,11 @@ import cz.solvina.options.domain.features.scanner.BearCallCandidateSelector
 import cz.solvina.options.domain.features.scanner.BearCallScannerConfig
 import cz.solvina.options.domain.features.scanner.BullPutCandidateSelector
 import cz.solvina.options.domain.features.scanner.CandidateResult
+import cz.solvina.options.domain.features.scanner.DailyCandidatePool
 import cz.solvina.options.domain.features.scanner.RejectReason
 import cz.solvina.options.domain.features.scanner.ScanDetail
 import cz.solvina.options.domain.features.scanner.ScannerConfig
+import cz.solvina.options.domain.features.scanner.ScannerPoolConfig
 import cz.solvina.options.domain.features.scanner.ScannerService
 import cz.solvina.options.domain.features.spread.BullPutSpreadPort
 import cz.solvina.options.domain.features.spread.SpreadPage
@@ -239,6 +241,74 @@ class ScannerServiceTest {
     // Test infrastructure
     // -------------------------------------------------------------------------
 
+    // -------------------------------------------------------------------------
+    // Daily pool: collect, then choose
+    // -------------------------------------------------------------------------
+
+    private fun selected(
+        symbol: Symbol,
+        creditPctOfWidth: Double,
+    ) = CandidateResult.Selected(
+        dummyRequest.copy(underlyingSymbol = symbol),
+        ScanDetail(strategyId = StrategyId.BULL_PUT, creditPctOfWidth = creditPctOfWidth, bidCredit = BigDecimal("0.60")),
+    )
+
+    @Test
+    fun `with the pool on, a scan collects without ordering and skips titles already pooled`() =
+        runTest {
+            val execution = mockk<TradeExecutionPort>(relaxed = true)
+            val scanner =
+                buildScanner(
+                    executionPort = execution,
+                    watchlist = listOf(spy),
+                    poolConfig = ScannerPoolConfig(enabled = true),
+                    pool = DailyCandidatePool(Clock.systemUTC()),
+                )
+            coEvery { selector.select(spy, any()) } returns selected(spy, 0.20)
+
+            scanner.scan()
+            scanner.scan()
+
+            coVerify(exactly = 1) { selector.select(spy, any()) }
+            coVerify(exactly = 0) { execution.execute(any()) }
+        }
+
+    @Test
+    fun `a decision re-prices the pool and enters only the best titles, best first`() =
+        runTest {
+            val iwm = Symbol("IWM")
+            val entered = mutableListOf<Symbol>()
+            val execution = mockk<TradeExecutionPort>(relaxed = true)
+            coEvery { execution.execute(any()) } answers {
+                entered += firstArg<TradeExecutionRequest>().underlyingSymbol
+                TradeExecutionResult(ExecutionOutcome.FLOOR_REACHED)
+            }
+            val pool = DailyCandidatePool(Clock.systemUTC())
+            val scanner =
+                buildScanner(
+                    executionPort = execution,
+                    watchlist = listOf(spy, qqq, iwm),
+                    scope = CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined),
+                    poolConfig = ScannerPoolConfig(enabled = true, maxEntriesPerDecision = 2),
+                    pool = pool,
+                )
+            // Credit share of width is what differs; the scan pools all three.
+            coEvery { selector.select(spy, any()) } returns selected(spy, 0.18)
+            coEvery { selector.select(qqq, any()) } returns selected(qqq, 0.28)
+            coEvery { selector.select(iwm, any()) } returns selected(iwm, 0.22)
+            scanner.scan()
+
+            // By the decision SPY no longer qualifies.
+            coEvery { selector.select(spy, any()) } returns rejectedResult
+            scanner.decidePool(finalOfDay = false)
+
+            assertEquals(listOf(qqq, iwm), entered)
+            assertEquals(setOf(spy), pool.symbols().toSet(), "SPY stays pooled for the top-up")
+
+            scanner.decidePool(finalOfDay = true)
+            assertEquals(emptyList(), pool.symbols())
+        }
+
     private fun buildScanner(
         spreadPort: BullPutSpreadPort = BullPutSpreadPortStub(),
         executionPort: TradeExecutionPort = FakeExecutionPort(),
@@ -246,6 +316,8 @@ class ScannerServiceTest {
         bearCallSelector: BearCallCandidateSelector = mockk(relaxed = true),
         bearCallConfig: BearCallScannerConfig = BearCallScannerConfig(),
         scope: CoroutineScope = CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO),
+        poolConfig: ScannerPoolConfig = ScannerPoolConfig(),
+        pool: DailyCandidatePool? = null,
     ): ScannerService {
         val universePort =
             object : UniversePort {
@@ -301,6 +373,8 @@ class ScannerServiceTest {
             optionChainPort = mockk(relaxed = true),
             regimeService = mockk(relaxed = true),
             scope = scope,
+            poolConfig = poolConfig,
+            pool = pool,
         )
     }
 

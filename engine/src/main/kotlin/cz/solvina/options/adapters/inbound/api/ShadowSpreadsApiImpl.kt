@@ -55,6 +55,10 @@ class ShadowSpreadsApiImpl(
             pnlAtMid = pnl(midCredit),
             pnlAt95PctMid = pnl(midCredit.multiply(BigDecimal("0.95"))),
             backfilled = backfilled,
+            score = score?.toBigDecimal(),
+            decisionRank = decisionRank,
+            firstSeenAt = firstSeenAt?.atOffset(ZoneOffset.UTC),
+            selected = selected,
         )
     }
 }

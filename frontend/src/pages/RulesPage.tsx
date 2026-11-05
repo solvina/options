@@ -106,6 +106,11 @@ export function RulesPage() {
             open, {p.maxOpenSpreadsPerSector} per sector, {p.maxNewEntriesPerDay} new per day.
           </li>
           <li>
+            {p.poolEnabled
+              ? `Choose, don't race: scans collect the day's titles; at 13:00 and 15:00 New York they are re-priced and ranked, and up to ${p.poolMaxEntriesPerDecision} of the best are entered.`
+              : 'Candidates are entered as soon as they qualify.'}
+          </li>
+          <li>
             Don't chase fills: never sell below {pct(p.entryMinFillPctOfMid)} of mid. No fill means retry next scan
             ({p.entryCooldownMinutes} min cooldown).
           </li>

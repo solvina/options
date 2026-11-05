@@ -1,0 +1,22 @@
+databaseChangeLog:
+  # ---------------------------------------------------------------------------
+  # Daily candidate pool (2026-11-05): what the ranking saw and chose, on each would-be position.
+  # score/decision_rank/first_seen_at are null on rows from before the pool. selected marks the small
+  # simulated portfolio that really fits the live limits, which is the number that predicts an account.
+  # ---------------------------------------------------------------------------
+  - changeSet:
+      id: v43__shadow_spreads_pool_decision
+      author: claude
+      changes:
+        - addColumn:
+            tableName: shadow_spreads
+            columns:
+              - column: { name: score, type: "NUMERIC(6, 4)" }
+              - column: { name: decision_rank, type: INTEGER }
+              - column: { name: first_seen_at, type: "TIMESTAMP WITH TIME ZONE" }
+              - column:
+                  name: selected
+                  type: BOOLEAN
+                  defaultValueBoolean: false
+                  constraints:
+                    nullable: false

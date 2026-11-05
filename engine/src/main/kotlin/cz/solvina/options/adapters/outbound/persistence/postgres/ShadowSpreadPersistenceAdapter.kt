@@ -49,6 +49,10 @@ class ShadowSpreadPersistenceAdapter(
             lastUnderlying = lastUnderlying,
             lastValuedAt = lastValuedAt,
             backfilled = backfilled,
+            score = score?.toBigDecimal(),
+            decisionRank = decisionRank,
+            firstSeenAt = firstSeenAt,
+            selected = selected,
         )
 
     private fun ShadowSpreadEntity.toDomain() =
@@ -75,5 +79,9 @@ class ShadowSpreadPersistenceAdapter(
             lastUnderlying = lastUnderlying,
             lastValuedAt = lastValuedAt,
             backfilled = backfilled,
+            score = score?.toDouble(),
+            decisionRank = decisionRank,
+            firstSeenAt = firstSeenAt,
+            selected = selected,
         )
 }

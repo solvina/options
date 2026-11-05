@@ -3,6 +3,7 @@ package cz.solvina.options.domain.features.shadow
 import cz.solvina.options.domain.features.execution.model.ExecutionOutcome
 import cz.solvina.options.domain.features.execution.model.TradeExecutionRequest
 import cz.solvina.options.domain.features.market.MarketDataPort
+import cz.solvina.options.domain.features.scanner.ScannerPoolConfig
 import cz.solvina.options.domain.features.scanner.StrategyParamsRegistry
 import cz.solvina.options.domain.features.spread.underlyingStopBreached
 import cz.solvina.options.domain.features.spread.underlyingStopTrigger
@@ -37,6 +38,7 @@ class ShadowSpreadService(
     private val universePort: UniversePort,
     private val strategyParams: StrategyParamsRegistry,
     private val clock: Clock,
+    private val poolConfig: ScannerPoolConfig = ScannerPoolConfig(),
 ) {
     companion object {
         /** Outcomes where the engine wanted the trade and only the fill (or the screen width) stopped it. */
@@ -76,6 +78,54 @@ class ShadowSpreadService(
         tradeLogger.info {
             "SHADOW ${shadow.symbol}  ${shadow.soldStrike}${shadow.optionType.ibkrCode}/${shadow.boughtStrike}" +
                 "${shadow.optionType.ibkrCode}  exp=${shadow.expiry}  mid=\$${shadow.midCredit}  source=${shadow.sourceOutcome}"
+        }
+    }
+
+    /**
+     * Records a pool decision, [ranked] best first. Every title not already held becomes a would-be
+     * position with its rank and score. The best ones that fit the limits are marked selected,
+     * forming the simulated small-account portfolio.
+     */
+    suspend fun recordDecision(ranked: List<ShadowCandidate>) {
+        val now = Instant.now(clock)
+        val startOfDay = LocalDate.now(clock).atStartOfDay(clock.zone).toInstant()
+        val open = port.findOpen()
+        val held = open.map { it.symbol }.toSet()
+        var openSelected = open.count { it.selected }
+        var newToday = port.findAll().count { it.selected && !it.openedAt.isBefore(startOfDay) }
+        ranked.forEachIndexed { index, candidate ->
+            val request = candidate.request
+            if (request.underlyingSymbol in held) return@forEachIndexed
+            val maxLoss = request.maxRiskPerShare.toDouble() * 100
+            val selected =
+                maxLoss <= poolConfig.portfolioMaxLossUsd &&
+                    openSelected < poolConfig.portfolioMaxOpen &&
+                    newToday < poolConfig.portfolioMaxNewPerDay
+            if (selected) {
+                openSelected++
+                newToday++
+            }
+            port.save(
+                ShadowSpread(
+                    strategyId = request.strategyId,
+                    symbol = request.underlyingSymbol,
+                    optionType = request.soldContract.type,
+                    expiry = request.soldContract.expiry,
+                    soldStrike = request.soldContract.strike,
+                    boughtStrike = request.boughtContract.strike,
+                    openedAt = now,
+                    sourceOutcome = "POOL_DECISION",
+                    midCredit = request.targetCredit,
+                    floorCredit = request.floorCredit,
+                    naturalCredit = request.soldBid.subtract(request.boughtAsk),
+                    underlyingAtEntry = request.underlyingPriceAtEntry,
+                    ivRankAtEntry = request.ivRankAtEntry,
+                    score = candidate.score,
+                    decisionRank = index + 1,
+                    firstSeenAt = candidate.firstSeenAt,
+                    selected = selected,
+                ),
+            )
         }
     }
 

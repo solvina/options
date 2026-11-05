@@ -55,13 +55,17 @@ export function ShadowSpreadsPage() {
           nothing here places orders. P&amp;L per 1 contract, before commissions.
         </p>
       </div>
-      <Summary title="Recorded live (since 2026-10-30)" rows={live} />
+      <Summary title="All titles, one position per title (does the signal make money?)" rows={live} />
+      <Summary
+        title="Selected portfolio (what the daily ranking would really have taken within your limits)"
+        rows={live.filter((r) => r.selected)}
+      />
       {backfilled.length > 0 && <Summary title="Back-filled history (approximate: daily closes + model prices)" rows={backfilled} />}
       <section className="rounded-lg border border-border bg-card p-4 overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="text-xs text-muted-foreground text-left">
-              {['Opened', 'Symbol', 'Spread', 'Expiry', 'Mid', 'Natural', 'Source', 'Status', 'Value', 'P&L at mid', 'Reason'].map((h) => (
+              {['Opened', 'Symbol', 'Spread', 'Expiry', 'Mid', 'Natural', 'Score', 'Rank', 'Source', 'Status', 'Value', 'P&L at mid', 'Reason'].map((h) => (
                 <th key={h} className="font-normal py-1 pr-3">
                   {h}
                 </th>
@@ -83,6 +87,11 @@ export function ShadowSpreadsPage() {
                 <td className="py-1.5 pr-3 whitespace-nowrap">{r.expiry}</td>
                 <td className="py-1.5 pr-3 tabular-nums">{usd(r.midCredit)}</td>
                 <td className="py-1.5 pr-3 tabular-nums">{usd(r.naturalCredit)}</td>
+                <td className="py-1.5 pr-3 tabular-nums">{r.score == null ? '—' : r.score.toFixed(2)}</td>
+                <td className="py-1.5 pr-3 tabular-nums">
+                  {r.decisionRank ?? '—'}
+                  {r.selected && <span className="ml-1 text-xs text-green-600 dark:text-green-400">selected</span>}
+                </td>
                 <td className="py-1.5 pr-3 text-xs">{r.sourceOutcome}</td>
                 <td className="py-1.5 pr-3 text-xs">{r.status}</td>
                 <td className="py-1.5 pr-3 tabular-nums">{usd(r.exitValue ?? r.lastValue)}</td>

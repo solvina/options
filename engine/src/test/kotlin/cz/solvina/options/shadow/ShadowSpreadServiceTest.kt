@@ -6,6 +6,7 @@ import cz.solvina.options.domain.features.market.MarketDataPort
 import cz.solvina.options.domain.features.scanner.BearCallScannerConfig
 import cz.solvina.options.domain.features.scanner.BullPutScannerConfig
 import cz.solvina.options.domain.features.scanner.StrategyParamsRegistry
+import cz.solvina.options.domain.features.shadow.ShadowCandidate
 import cz.solvina.options.domain.features.shadow.ShadowSpread
 import cz.solvina.options.domain.features.shadow.ShadowSpreadPort
 import cz.solvina.options.domain.features.shadow.ShadowSpreadService
@@ -24,6 +25,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import java.math.BigDecimal
 import java.time.Clock
+import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
 import java.util.UUID
@@ -110,6 +112,58 @@ class ShadowSpreadServiceTest {
             s.record(request.copy(strategyId = StrategyId.BEAR_CALL), ExecutionOutcome.TIMED_OUT)
 
             assertEquals(1, port.rows.size)
+        }
+
+    private fun candidate(
+        symbol: String,
+        score: Double,
+        maxRisk: String = "4.00",
+    ): ShadowCandidate {
+        val s = Symbol(symbol)
+        return ShadowCandidate(
+            request.copy(
+                underlyingSymbol = s,
+                soldContract = sold.copy(symbol = s),
+                boughtContract = bought.copy(symbol = s),
+                maxRiskPerShare = BigDecimal(maxRisk),
+            ),
+            score,
+            Instant.parse("2026-11-05T16:00:00Z"),
+        )
+    }
+
+    @Test
+    fun `a decision records every title ranked and selects only what fits the portfolio limits`() =
+        runTest {
+            service(LocalDate.of(2026, 11, 5)).recordDecision(
+                listOf(candidate("CME", 0.9, maxRisk = "7.65"), candidate("GILD", 0.8), candidate("XOM", 0.7)),
+            )
+
+            val rows = port.rows.values.associateBy { it.symbol.value }
+            assertEquals(listOf(1, 2, 3), listOf("CME", "GILD", "XOM").map { rows.getValue(it).decisionRank })
+            assertEquals(false, rows.getValue("CME").selected, "max loss $765 is over the $500 limit")
+            assertEquals(true, rows.getValue("GILD").selected, "best that fits")
+            assertEquals(false, rows.getValue("XOM").selected, "only one new position per day")
+        }
+
+    @Test
+    fun `the top-up decision respects the open portfolio limit and titles already held`() =
+        runTest {
+            val first = service(LocalDate.of(2026, 11, 5))
+            first.recordDecision(listOf(candidate("GILD", 0.8)))
+            first.recordDecision(listOf(candidate("GILD", 0.9), candidate("XOM", 0.7)))
+            assertEquals(2, port.rows.size, "GILD is not recorded twice")
+            assertEquals(
+                false,
+                port.rows.values
+                    .single { it.symbol.value == "XOM" }
+                    .selected,
+                "today's slot is taken",
+            )
+
+            val nextDays = listOf(6, 9, 10).map { LocalDate.of(2026, 11, it) }
+            nextDays.forEachIndexed { i, d -> service(d).recordDecision(listOf(candidate("T$i", 0.8))) }
+            assertEquals(3, port.rows.values.count { it.selected }, "three open is the limit")
         }
 
     @Test

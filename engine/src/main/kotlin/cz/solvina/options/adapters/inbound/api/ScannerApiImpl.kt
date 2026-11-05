@@ -3,6 +3,7 @@ package cz.solvina.options.adapters.inbound.api
 import cz.solvina.options.domain.features.regime.RegimeConfig
 import cz.solvina.options.domain.features.scanner.BearCallScannerConfig
 import cz.solvina.options.domain.features.scanner.ScannerConfig
+import cz.solvina.options.domain.features.scanner.ScannerPoolConfig
 import cz.solvina.options.domain.features.scanner.ScannerPort
 import cz.solvina.options.domain.features.scanner.ScannerService
 import cz.solvina.options.domain.features.scanner.StrategyParams
@@ -46,6 +47,7 @@ class ScannerApiImpl(
     private val bearCallConfig: BearCallScannerConfig,
     private val regimeConfig: RegimeConfig,
     private val universePort: UniversePort,
+    private val poolConfig: ScannerPoolConfig,
 ) : ScannerApi,
     MonitorApi {
     private val backgroundScope = CoroutineScope(Dispatchers.Default)
@@ -97,6 +99,11 @@ class ScannerApiImpl(
                 entryCooldownMinutes = scannerConfig.entryCooldownMinutes,
                 directionalGateEnabled = regimeConfig.gatingEnabled,
                 scanCron = scannerConfig.cron,
+                poolEnabled = poolConfig.enabled,
+                poolMaxEntriesPerDecision = poolConfig.maxEntriesPerDecision,
+                portfolioMaxOpen = poolConfig.portfolioMaxOpen,
+                portfolioMaxNewPerDay = poolConfig.portfolioMaxNewPerDay,
+                portfolioMaxLossUsd = poolConfig.portfolioMaxLossUsd.toBigDecimal(),
             )
         val overrides =
             universePort
