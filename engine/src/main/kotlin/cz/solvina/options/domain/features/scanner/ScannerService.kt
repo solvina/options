@@ -153,6 +153,10 @@ class ScannerService(
                     logger.warn { "Pool decision skipped: account size not available" }
                     return@withLock
                 }
+            if (candidatePool.symbols().isEmpty()) {
+                tradeLogger.info { "POOL   decision: no titles waiting" }
+                return@withLock
+            }
             val active = spreadQuery.symbolsWithActiveSpread()
             val runId = scanStatusRegistry.beginRun()
             val ranked = mutableListOf<ShadowCandidate>()

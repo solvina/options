@@ -33,9 +33,12 @@ import java.util.TreeSet
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Duration as KotlinDuration
 
 private val logger = KotlinLogging.logger {}
+
+private val VERIFIED_STRIKES_WAIT = 35.seconds
 
 @Component
 class IbkrContractCache(
@@ -338,7 +341,10 @@ class IbkrContractCache(
         }
 
         val resultDeferred = CompletableDeferred<Set<BigDecimal>?>()
-        inFlightVerifiedStrikes.putIfAbsent(vkey, resultDeferred)?.let { return it.await() }
+        // Bounded, so a lookup that somehow never finishes can only cost one symbol this wait.
+        inFlightVerifiedStrikes.putIfAbsent(vkey, resultDeferred)?.let { inFlight ->
+            return withTimeoutOrNull(VERIFIED_STRIKES_WAIT) { inFlight.await() }
+        }
         currentCoroutineContext().job.invokeOnCompletion { cause ->
             if (cause != null) {
                 inFlightVerifiedStrikes.remove(vkey, resultDeferred)
@@ -348,6 +354,32 @@ class IbkrContractCache(
             }
         }
 
+        // A broker error (e.g. 200 "no security definition" for an expiry that isn't listed for this
+        // right) used to escape with the in-flight entry still registered. The owning scan went on, so
+        // nothing removed it, and the next scan on that key waited on it for the full 10-minute scan
+        // timeout, losing every symbol after it (2026-10-29 onward: BMY, FCX, AMD, NKE, MO, EA).
+        return try {
+            fetchVerifiedStrikes(vkey, resultDeferred, symbol, expiry, optionType)
+        } catch (e: CancellationException) {
+            inFlightVerifiedStrikes.remove(vkey, resultDeferred)
+            resultDeferred.complete(null)
+            throw e
+        } catch (e: RuntimeException) {
+            verifiedStrikesCooldown[vkey] = Instant.now()
+            logger.warn { "[$symbol $expiry $optionType] verified-strikes lookup failed: ${e.message}; cooldown active" }
+            inFlightVerifiedStrikes.remove(vkey, resultDeferred)
+            resultDeferred.complete(null)
+            null
+        }
+    }
+
+    private suspend fun fetchVerifiedStrikes(
+        vkey: VerifiedKey,
+        resultDeferred: CompletableDeferred<Set<BigDecimal>?>,
+        symbol: Symbol,
+        expiry: LocalDate,
+        optionType: OptionType,
+    ): Set<BigDecimal>? {
         verifiedStrikesReqIds[vkey]?.let { reqId ->
             awaitContractDetailsOrTimeout(reqId, 30000L.milliseconds) {
                 verifiedStrikesReqIds.remove(vkey, reqId)

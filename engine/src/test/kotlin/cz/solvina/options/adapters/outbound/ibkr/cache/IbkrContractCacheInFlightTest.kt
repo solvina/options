@@ -60,6 +60,22 @@ class IbkrContractCacheInFlightTest {
     private val key = OptionContractKey(symbol, expiry, BigDecimal("1360.0"), OptionType.PUT)
 
     @Test
+    fun `a broker error on a strike lookup returns null and does not block the next lookup`() =
+        runTest {
+            every { client.reqContractDetails(any(), any()) } answers {
+                contractDetailsRegistry.onError(firstArg(), 200, "No security definition has been found for the request")
+            }
+
+            val first = cache.getOrFetchVerifiedStrikes(symbol, expiry, OptionType.CALL)
+            // Before the fix this second call waited forever on the first call's in-flight entry.
+            val second = withTimeout(5_000) { cache.getOrFetchVerifiedStrikes(symbol, expiry, OptionType.CALL) }
+
+            assertEquals(null, first)
+            assertEquals(null, second)
+            verify(exactly = 1) { client.reqContractDetails(any(), any()) }
+        }
+
+    @Test
     fun `concurrent fetch same key - only one reqContractDetails issued`() =
         runTest {
             var reqIdCounter = 10

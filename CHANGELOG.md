@@ -3,6 +3,21 @@
 Notable strategy, engine and operations changes. Newest first. Rendered in the frontend under
 **Maintenance › Changelog**.
 
+## 2026-11-05 — Scans no longer hang on an expiry IBKR doesn't list
+
+From 2026-10-29 many scans were cut off at their 10-minute limit, up to about 20 in one US session.
+None were recorded from Oct 6 to 27. The symbols after the stuck one were not scanned in that pass,
+so some titles were found late or not at all.
+
+- **The bug.** When IBKR answered a strike lookup with error 200 ("no security definition"), the
+  lookup stayed registered as in progress. The next scan on the same symbol, expiry and right waited
+  on it with no time limit. The bug is old. The 2026-10-28 earnings-aware expiry change exposed it,
+  because the engine now also looks up earlier expiries, some not listed for that symbol and right.
+- **The fix.** A failed lookup now clears itself, goes on cooldown and skips that symbol cleanly.
+  Anything waiting on another lookup gives up after 35 seconds.
+- **Consequence for the daily pool.** The first-seen times used to pick the 19:00 decision came from
+  these damaged scans, so that timing needs re-checking on clean data.
+
 ## 2026-11-05 — Daily pool: collect the day's titles, then choose the best
 
 Scans used to send an order the moment a title qualified, so limited slots went to whichever came
