@@ -3,6 +3,20 @@
 Notable strategy, engine and operations changes. Newest first. Rendered in the frontend under
 **Maintenance › Changelog**.
 
+## 2026-11-05 — Would-be trades count each title once
+
+Would-be positions were deduplicated per exact spread, so a title whose strikes moved was counted
+again: MU 7 times, VLO 4 times. An account can hold one spread per symbol, and those copies were
+one bet, so the results were inflated.
+
+- **One open position per title,** whatever its strikes or direction. Repeats are no longer
+  recorded, and no would-be position opens while the title has a real spread open.
+- **Existing records rebuilt** by `scripts/rebuild_shadow_counted.py`. Nothing is deleted: repeats
+  are flagged `counted = false` and leave the results and the daily check.
+- **The picture is much thinner.** History since August: +$3,342 as recorded (43 closed, 38 won)
+  becomes +$1,133 (16 closed, 14 won). Trades since 2026-11-03: +$462 (8 closed) becomes −$133
+  (3 closed, 2 won), with most still open.
+
 ## 2026-11-03 — Would-be trades: one stuck price no longer blocks the daily check
 
 On 2026-11-02 neither daily revaluation saved anything. The first position's stock-price request

@@ -17,9 +17,10 @@ class ShadowSpreadPersistenceAdapter(
     private val repository: ShadowSpreadRepository,
 ) : ShadowSpreadPort {
     override suspend fun findOpen(): List<ShadowSpread> =
-        withContext(Dispatchers.IO) { repository.findByStatus(ShadowStatus.OPEN.name).map { it.toDomain() } }
+        withContext(Dispatchers.IO) { repository.findByStatusAndCountedTrue(ShadowStatus.OPEN.name).map { it.toDomain() } }
 
-    override suspend fun findAll(): List<ShadowSpread> = withContext(Dispatchers.IO) { repository.findAll().map { it.toDomain() } }
+    override suspend fun findAll(): List<ShadowSpread> =
+        withContext(Dispatchers.IO) { repository.findByCountedTrue().map { it.toDomain() } }
 
     override suspend fun save(shadow: ShadowSpread): ShadowSpread =
         withContext(Dispatchers.IO) { repository.save(shadow.toEntity()).toDomain() }

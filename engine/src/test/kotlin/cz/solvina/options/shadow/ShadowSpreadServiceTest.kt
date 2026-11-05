@@ -96,6 +96,23 @@ class ShadowSpreadServiceTest {
         }
 
     @Test
+    fun `a title is counted once while open, whatever its strikes or direction`() =
+        runTest {
+            val s = service(LocalDate.of(2026, 10, 30))
+            s.record(request, ExecutionOutcome.FLOOR_REACHED)
+            s.record(
+                request.copy(
+                    soldContract = sold.copy(strike = BigDecimal("245")),
+                    boughtContract = bought.copy(strike = BigDecimal("235")),
+                ),
+                ExecutionOutcome.FLOOR_REACHED,
+            )
+            s.record(request.copy(strategyId = StrategyId.BEAR_CALL), ExecutionOutcome.TIMED_OUT)
+
+            assertEquals(1, port.rows.size)
+        }
+
+    @Test
     fun `take-profit closes at half the mid credit`() =
         runTest {
             service(LocalDate.of(2026, 10, 30)).record(request, ExecutionOutcome.TIMED_OUT)

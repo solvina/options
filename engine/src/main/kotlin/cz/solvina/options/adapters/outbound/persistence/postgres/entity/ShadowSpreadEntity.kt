@@ -57,4 +57,6 @@ class ShadowSpreadEntity(
     var lastValuedAt: Instant? = null,
     @Column(nullable = false)
     var backfilled: Boolean = false,
+    @Column(nullable = false)
+    var counted: Boolean = true,
 )

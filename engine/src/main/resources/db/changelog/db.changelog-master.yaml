@@ -77,3 +77,5 @@ databaseChangeLog:
       file: db/changelog/v40__backtest_run_leverage.yaml
   - include:
       file: db/changelog/v41__shadow_spreads.yaml
+  - include:
+      file: db/changelog/v42__shadow_spreads_counted.yaml

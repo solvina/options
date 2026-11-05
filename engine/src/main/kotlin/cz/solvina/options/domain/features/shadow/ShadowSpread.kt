@@ -45,6 +45,7 @@ data class ShadowSpread(
     val width: BigDecimal get() = soldStrike.subtract(boughtStrike).abs()
 }
 
+/** Reads return only counted positions: one per title at a time (see v42). */
 interface ShadowSpreadPort {
     suspend fun findOpen(): List<ShadowSpread>
 

@@ -5,5 +5,7 @@ import org.springframework.data.jpa.repository.JpaRepository
 import java.util.UUID
 
 interface ShadowSpreadRepository : JpaRepository<ShadowSpreadEntity, UUID> {
-    fun findByStatus(status: String): List<ShadowSpreadEntity>
+    fun findByStatusAndCountedTrue(status: String): List<ShadowSpreadEntity>
+
+    fun findByCountedTrue(): List<ShadowSpreadEntity>
 }

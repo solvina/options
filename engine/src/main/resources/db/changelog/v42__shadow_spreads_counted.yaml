@@ -1,0 +1,24 @@
+databaseChangeLog:
+  # ---------------------------------------------------------------------------
+  # One would-be position per title (2026-11-05).
+  #
+  # v41 deduplicated on (strategy, symbol, strikes, expiry), so a title whose strikes moved between
+  # attempts was counted again and again: MU 7 times, VLO 4 times. One real account cannot hold those
+  # at once, and the copies are one bet, so the totals were inflated (history +$3,342 as recorded,
+  # +$1,133 with one position per title). Repeats are kept for reference but marked counted = false,
+  # which takes them out of the results and the daily revaluation.
+  # scripts/rebuild_shadow_counted.py sets the flag on rows recorded before this rule.
+  # ---------------------------------------------------------------------------
+  - changeSet:
+      id: v42__shadow_spreads_counted
+      author: claude
+      changes:
+        - addColumn:
+            tableName: shadow_spreads
+            columns:
+              - column:
+                  name: counted
+                  type: BOOLEAN
+                  defaultValueBoolean: true
+                  constraints:
+                    nullable: false

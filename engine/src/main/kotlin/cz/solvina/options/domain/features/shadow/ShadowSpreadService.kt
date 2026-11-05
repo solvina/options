@@ -51,14 +51,9 @@ class ShadowSpreadService(
         outcome: ExecutionOutcome,
     ) {
         if (outcome !in RECORDED_OUTCOMES) return
-        val duplicate =
-            port.findOpen().any {
-                it.strategyId == request.strategyId &&
-                    it.symbol == request.underlyingSymbol &&
-                    it.expiry == request.soldContract.expiry &&
-                    it.soldStrike.compareTo(request.soldContract.strike) == 0 &&
-                    it.boughtStrike.compareTo(request.boughtContract.strike) == 0
-            }
+        // One position per title, whatever its strikes or direction: an account can hold only one
+        // spread per symbol, and copies of one title are one bet (MU was counted 7 times).
+        val duplicate = port.findOpen().any { it.symbol == request.underlyingSymbol }
         if (duplicate) return
         val shadow =
             port.save(
