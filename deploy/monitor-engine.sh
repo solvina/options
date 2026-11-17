@@ -8,8 +8,9 @@
 #
 # Now:
 #   1. engine started < BOOT_GRACE_S ago      → skip (still booting)
-#   2. /actuator/health answers               → healthy, done (liveness only — IBKR state is the
-#                                               engine's own job and has its own alerts)
+#   2. /actuator/health answers               → healthy; then, if /health/ibkr has said
+#                                               "not connected" for 15+ min, alert (no kill),
+#                                               naming the Gateway if it doesn't answer either
 #   3. engine unresponsive, Gateway does NOT answer the API handshake
 #                                             → Telegram alert, do NOT kill (a restart can't fix it;
 #                                               recovering Gateway is a human decision)
@@ -23,6 +24,9 @@ ENGINE_URL="${ENGINE_URL:-http://127.0.0.1:8081/options/actuator/health}"
 GATEWAY_HOST="${GATEWAY_HOST:-127.0.0.1}"
 GATEWAY_PORT="${GATEWAY_PORT:-7497}"
 BOOT_GRACE_S="${BOOT_GRACE_S:-300}"
+IBKR_URL="${IBKR_URL:-http://127.0.0.1:8081/options/health/ibkr}"
+IBKR_DOWN_GRACE_S="${IBKR_DOWN_GRACE_S:-900}"
+IBKR_ALERT_REPEAT_S="${IBKR_ALERT_REPEAT_S:-21600}"
 ALERT_REPEAT_S="${ALERT_REPEAT_S:-3600}"
 DRY_RUN="${DRY_RUN:-0}"
 LOG_FILE="${LOG_FILE:-/home/solvina/options/engine-monitor.log}"
@@ -71,6 +75,33 @@ except Exception:
 PY
 }
 
+# Alerts after IBKR_DOWN_GRACE_S of continuous disconnection (Gateway's daily restart takes a few
+# minutes; this is for the hours-long kind). Repeats at most every IBKR_ALERT_REPEAT_S.
+check_ibkr_connection() {
+    local since_file="$STATE_DIR/ibkr-down-since" now since
+    now=$(date +%s)
+    if curl -sf --max-time 10 "$IBKR_URL" 2>/dev/null | grep -q '"connected":true'; then
+        if [ -f "$since_file" ]; then
+            log "IBKR connection back after $(( now - $(cat "$since_file") ))s"
+            rm -f "$since_file"
+            clear_alerts
+        fi
+        return
+    fi
+    [ -f "$since_file" ] || echo "$now" > "$since_file"
+    since=$(cat "$since_file")
+    local down=$(( now - since ))
+    log "engine up but NOT connected to IBKR for ${down}s"
+    [ "$down" -lt "$IBKR_DOWN_GRACE_S" ] && return
+    if gateway_answers; then
+        ALERT_REPEAT_S=$IBKR_ALERT_REPEAT_S alert ibkr-down "⚠️ Engine has been disconnected from IBKR for $(( down / 60 )) min, although IB Gateway answers. No scans, no stop checks."
+    else
+        local oom=""
+        docker logs --since 6h options-ib-gateway-1 2>&1 | grep -q OutOfMemoryError && oom=" Gateway log shows OutOfMemoryError."
+        ALERT_REPEAT_S=$IBKR_ALERT_REPEAT_S alert ibkr-down "⚠️ IB Gateway is not answering and the engine has been without IBKR for $(( down / 60 )) min — no scans, no stop checks.$oom Fix: docker restart options-ib-gateway-1"
+    fi
+}
+
 # 1. Not running at all → systemd's Restart=on-failure owns that; a stopped unit is deliberate.
 if ! systemctl is-active --quiet options-engine.service; then
     log "engine unit not active ($(systemctl is-active options-engine.service)) — leaving it to systemd"
@@ -86,11 +117,12 @@ if [ "$up_s" -lt "$BOOT_GRACE_S" ]; then
     exit 0
 fi
 
-# 3. Liveness.
+# 3. Liveness. A responding engine can still be cut off from IBKR: on 2026-11-14 Gateway's own
+# nightly restart hung at "Connecting to server", and the engine sat healthy but disconnected for
+# three days, with no scans, no stop checks and no alert. So a live engine also gets an IBKR check.
 for attempt in 1 2 3; do
     if curl -sf --max-time 10 "$ENGINE_URL" > /dev/null 2>&1; then
-        [ -n "$(ls "$STATE_DIR"/alert-* 2>/dev/null)" ] && log "engine healthy again — clearing alert state"
-        clear_alerts
+        check_ibkr_connection
         log "✓ engine responding (up ${up_s}s)"
         exit 0
     fi

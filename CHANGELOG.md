@@ -3,6 +3,19 @@
 Notable strategy, engine and operations changes. Newest first. Rendered in the frontend under
 **Maintenance › Changelog**.
 
+## 2026-11-17 — Watchdog alerts when the engine loses IBKR, not only when it hangs
+
+From 2026-11-14 03:00 until 2026-11-17 13:26 the paper engine was cut off from IBKR. Gateway's own
+nightly restart on Saturday hung at "Connecting to server" and never logged in, so the engine ran no
+scans and no stop checks for three days. No alert went out: the watchdog only examined Gateway when
+the engine itself stopped responding, and here the engine was healthy, just disconnected.
+
+The watchdog now also reads `/health/ibkr` whenever the engine responds. After 15 minutes of
+continuous disconnection it sends a Telegram alert naming the likely cause: Gateway not answering
+(with the restart command), or Gateway fine but the engine not connected. The alert repeats at most
+every 6 hours and clears on reconnect. It never kills anything; Gateway's own daily restart stays
+under the 15-minute grace.
+
 ## 2026-11-05 — Scans no longer hang on an expiry IBKR doesn't list
 
 From 2026-10-29 many scans were cut off at their 10-minute limit, up to about 20 in one US session.
