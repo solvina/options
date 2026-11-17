@@ -24,6 +24,8 @@ data class SpreadOpportunity(
     val detectedAt: Instant,
     // ---- Entry filters that qualified the candidate ----
     val ivRank: Double,
+    /** Reasons not to trade this automatically (falling / rising / IV rank extreme); empty = none. */
+    val warnings: List<String> = emptyList(),
     val ivRankThreshold: Double,
     val expiry: LocalDate,
     val dte: Int,

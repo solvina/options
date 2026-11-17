@@ -120,9 +120,16 @@ scanner:
   pool:
     enabled: true
     max-entries-per-decision: 5
-    portfolio-max-open: 3
+    # 2026-11-17: the simulated portfolio mirrors the planned first live account (~$5-6k): max loss
+    # $400 per spread (≈7%), 2 open, 1 new a day, one per sector. Flagged titles (falling/rising trend,
+    # IV rank ≥ 90) are recorded but never entered or selected.
+    portfolio-max-open: 2
     portfolio-max-new-per-day: 1
-    portfolio-max-loss-usd: 500
+    portfolio-max-loss-usd: 400
+    portfolio-one-per-sector: true
+    trend-filter-enabled: true
+    trend-max-move-pct: 10
+    iv-rank-review-above: 90
   bull-put:
     iv-rank-threshold: 45
     min-dte: 30

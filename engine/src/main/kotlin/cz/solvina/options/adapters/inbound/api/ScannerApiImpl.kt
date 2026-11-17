@@ -104,6 +104,10 @@ class ScannerApiImpl(
                 portfolioMaxOpen = poolConfig.portfolioMaxOpen,
                 portfolioMaxNewPerDay = poolConfig.portfolioMaxNewPerDay,
                 portfolioMaxLossUsd = poolConfig.portfolioMaxLossUsd.toBigDecimal(),
+                portfolioOnePerSector = poolConfig.portfolioOnePerSector,
+                trendFilterEnabled = poolConfig.trendFilterEnabled,
+                trendMaxMovePct = poolConfig.trendMaxMovePct.toBigDecimal(),
+                ivRankReviewAbove = poolConfig.ivRankReviewAbove.toBigDecimal(),
             )
         val overrides =
             universePort

@@ -5,6 +5,7 @@ import cz.solvina.options.domain.features.market.MarketDataPort
 import cz.solvina.options.domain.features.market.OptionChainPort
 import cz.solvina.options.domain.features.notification.OpportunityNotificationPort
 import cz.solvina.options.domain.features.notification.SpreadOpportunity
+import cz.solvina.options.domain.features.regime.TrendRegimeService
 import cz.solvina.options.domain.features.spread.model.StrategyId
 import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.features.volatility.VolatilityPort
@@ -34,6 +35,9 @@ class BullPutCandidateSelector(
     private val clock: Clock,
     // Notification-only: emails the qualified candidate; NoOp default so unit tests need not supply it.
     private val opportunityNotifier: OpportunityNotificationPort = OpportunityNotificationPort.NoOp,
+    // Email warnings only (the pool decision applies the same flags): trend and IV-rank checks.
+    private val regimeService: TrendRegimeService? = null,
+    private val poolConfig: ScannerPoolConfig = ScannerPoolConfig(),
 ) {
     suspend fun select(
         symbol: Symbol,
@@ -283,6 +287,11 @@ class BullPutCandidateSelector(
                 session = runCatching { universePort.getMarketSchedule(symbol).session }.getOrDefault("US"),
                 detectedAt = Instant.now(clock),
                 ivRank = ivRank.rank,
+                warnings =
+                    regimeService
+                        ?.let { CandidateFlags.of(StrategyId.BULL_PUT, ivRank.rank, it.regimeFor(symbol), poolConfig) }
+                        ?.map { it.label }
+                        .orEmpty(),
                 ivRankThreshold = ivRankThreshold,
                 expiry = expiry,
                 dte = dte,

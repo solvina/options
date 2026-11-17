@@ -57,6 +57,10 @@ export function ShadowSpreadsPage() {
       </div>
       <Summary title="All titles, one position per title (does the signal make money?)" rows={live} />
       <Summary
+        title="Passed the filters (no falling/rising trend, IV rank below the review level)"
+        rows={live.filter((r) => r.score != null && r.flags.length === 0)}
+      />
+      <Summary
         title="Selected portfolio (what the daily ranking would really have taken within your limits)"
         rows={live.filter((r) => r.selected)}
       />
@@ -65,7 +69,7 @@ export function ShadowSpreadsPage() {
         <table className="w-full text-sm">
           <thead>
             <tr className="text-xs text-muted-foreground text-left">
-              {['Opened', 'Symbol', 'Spread', 'Expiry', 'Mid', 'Natural', 'Score', 'Rank', 'Source', 'Status', 'Value', 'P&L at mid', 'Reason'].map((h) => (
+              {['Opened', 'Symbol', 'Spread', 'Expiry', 'Mid', 'Natural', 'Score', 'Rank', 'Warnings', 'Source', 'Status', 'Value', 'P&L at mid', 'Reason'].map((h) => (
                 <th key={h} className="font-normal py-1 pr-3">
                   {h}
                 </th>
@@ -91,6 +95,9 @@ export function ShadowSpreadsPage() {
                 <td className="py-1.5 pr-3 tabular-nums">
                   {r.decisionRank ?? '—'}
                   {r.selected && <span className="ml-1 text-xs text-green-600 dark:text-green-400">selected</span>}
+                </td>
+                <td className="py-1.5 pr-3 text-xs text-amber-600 dark:text-amber-400">
+                  {r.flags.map((f) => f.toLowerCase().replace('_', ' ')).join(', ')}
                 </td>
                 <td className="py-1.5 pr-3 text-xs">{r.sourceOutcome}</td>
                 <td className="py-1.5 pr-3 text-xs">{r.status}</td>

@@ -73,7 +73,11 @@ internal fun classifyRegime(
         }
     val rsi = computeRsi(closes, rsiPeriod)
     val bias = directionalBias(regime, rsi, rsiOverbought, rsiOversold)
-    return RegimeSignal(regime, last, smaFast, smaSlow, rsi, bias)
+    val change10d =
+        closes.getOrNull(closes.size - 11)?.takeIf { it.signum() > 0 }?.let {
+            (last.toDouble() / it.toDouble() - 1.0) * 100.0
+        }
+    return RegimeSignal(regime, last, smaFast, smaSlow, rsi, bias, change10d)
 }
 
 /**

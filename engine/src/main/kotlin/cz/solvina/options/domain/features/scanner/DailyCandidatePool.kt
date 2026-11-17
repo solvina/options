@@ -1,5 +1,7 @@
 package cz.solvina.options.domain.features.scanner
 
+import cz.solvina.options.domain.features.regime.RegimeSignal
+import cz.solvina.options.domain.features.spread.model.StrategyId
 import cz.solvina.options.domain.models.Symbol
 import org.springframework.boot.context.properties.ConfigurationProperties
 import org.springframework.stereotype.Component
@@ -20,10 +22,58 @@ data class ScannerPoolConfig(
     val maxEntriesPerDecision: Int = 5,
     // Limits of the simulated "selected" portfolio on the Would-be Trades page. Separate from what
     // paper actually trades, so the page can show what a small live account would have held.
-    val portfolioMaxOpen: Int = 3,
+    val portfolioMaxOpen: Int = 2,
     val portfolioMaxNewPerDay: Int = 1,
-    val portfolioMaxLossUsd: Double = 500.0,
+    val portfolioMaxLossUsd: Double = 400.0,
+    // At most one selected position per GICS sector: correlated names are one bet.
+    val portfolioOnePerSector: Boolean = true,
+    // Selection warnings (CandidateFlags). A flagged title is never entered or selected, only recorded.
+    val trendFilterEnabled: Boolean = true,
+    val trendMaxMovePct: Double = 10.0,
+    val ivRankReviewAbove: Double = 90.0,
 )
+
+/** Why a qualified title should not be traded automatically. */
+enum class CandidateFlag(
+    val label: String,
+) {
+    /** Bull put on a stock down more than the limit in 10 sessions, or below its 50-day average. */
+    FALLING("falling"),
+
+    /** Bear call on a stock up more than the limit in 10 sessions, or above its 50-day average. */
+    RISING("rising"),
+
+    /** IV rank above the review level: usually a reason for the fear, not a cheap opportunity (VLO 99.5%). */
+    IV_EXTREME("IV rank extreme"),
+}
+
+object CandidateFlags {
+    fun of(
+        strategyId: StrategyId,
+        ivRank: Double,
+        signal: RegimeSignal,
+        config: ScannerPoolConfig,
+    ): Set<CandidateFlag> {
+        val flags = mutableSetOf<CandidateFlag>()
+        if (config.trendFilterEnabled) {
+            val move = signal.change10dPct
+            val close = signal.lastClose
+            val sma = signal.smaFast
+            when (strategyId) {
+                StrategyId.BULL_PUT ->
+                    if ((move != null && move <= -config.trendMaxMovePct) || (close != null && sma != null && close < sma)) {
+                        flags += CandidateFlag.FALLING
+                    }
+                StrategyId.BEAR_CALL ->
+                    if ((move != null && move >= config.trendMaxMovePct) || (close != null && sma != null && close > sma)) {
+                        flags += CandidateFlag.RISING
+                    }
+            }
+        }
+        if (ivRank >= config.ivRankReviewAbove) flags += CandidateFlag.IV_EXTREME
+        return flags
+    }
+}
 
 /**
  * Titles that qualified today and wait for the next decision. In memory: a restart loses only the

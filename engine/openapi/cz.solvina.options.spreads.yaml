@@ -488,7 +488,7 @@ components:
 
     ShadowSpreadDto:
       type: object
-      required: [id, strategyId, symbol, optionType, expiry, soldStrike, boughtStrike, width, openedAt, sourceOutcome, midCredit, status, backfilled, selected]
+      required: [id, strategyId, symbol, optionType, expiry, soldStrike, boughtStrike, width, openedAt, sourceOutcome, midCredit, status, backfilled, selected, flags]
       properties:
         id: { type: string, format: uuid }
         strategyId: { type: string }
@@ -525,6 +525,10 @@ components:
         decisionRank: { type: integer, nullable: true }
         firstSeenAt: { type: string, format: date-time, nullable: true }
         selected: { type: boolean, description: In the simulated small-account portfolio }
+        flags:
+          type: array
+          description: Selection warnings at the decision (FALLING, RISING, IV_EXTREME); empty = passed the filters
+          items: { type: string }
 
     SpreadRulesDto:
       type: object
@@ -642,6 +646,10 @@ components:
         - portfolioMaxOpen
         - portfolioMaxNewPerDay
         - portfolioMaxLossUsd
+        - portfolioOnePerSector
+        - trendFilterEnabled
+        - trendMaxMovePct
+        - ivRankReviewAbove
       properties:
         tradingEnabled:
           type: boolean
@@ -682,6 +690,17 @@ components:
           type: integer
         portfolioMaxLossUsd:
           type: number
+        portfolioOnePerSector:
+          type: boolean
+        trendFilterEnabled:
+          type: boolean
+          description: Skip a bull put on a falling stock (or a bear call on a rising one)
+        trendMaxMovePct:
+          type: number
+          description: 10-session move that counts as falling/rising, in percent
+        ivRankReviewAbove:
+          type: number
+          description: IV rank at or above this is sent for manual review instead of traded
 
     SymbolRuleOverrideDto:
       type: object

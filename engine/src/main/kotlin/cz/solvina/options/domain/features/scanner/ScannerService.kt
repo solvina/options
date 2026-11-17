@@ -172,11 +172,14 @@ class ScannerService(
             ranked.sortByDescending { it.score }
             tradeLogger.info {
                 "POOL   decision of ${candidatePool.symbols().size} title(s), ${ranked.size} still qualify: " +
-                    ranked.joinToString { "${it.request.underlyingSymbol} ${"%.3f".format(it.score)}" }
+                    ranked.joinToString {
+                        "${it.request.underlyingSymbol} ${"%.3f".format(it.score)}" +
+                            if (it.flags.isEmpty()) "" else " [${it.flags.joinToString("/") { f -> f.label }}]"
+                    }
             }
             runCatching { shadowSpreads?.recordDecision(ranked) }
                 .onFailure { e -> logger.warn { "Pool decision not recorded as would-be trades: ${e.message}" } }
-            ranked.take(poolConfig.maxEntriesPerDecision).forEach {
+            ranked.filter { it.flags.isEmpty() }.take(poolConfig.maxEntriesPerDecision).forEach {
                 launchEntry(it.request.underlyingSymbol, it.request)
                 candidatePool.remove(it.request.underlyingSymbol)
             }
@@ -192,6 +195,7 @@ class ScannerService(
             request = request,
             score = SpreadSelectionRules.qualityScore(detail.creditPctOfWidth ?: 0.0, bidPct),
             firstSeenAt = firstSeenAt ?: Instant.now(clock),
+            flags = CandidateFlags.of(request.strategyId, request.ivRankAtEntry, regimeService.regimeFor(symbol), poolConfig),
         ).also { logger.debug { "[$symbol] pool score ${it.score}" } }
     }
 

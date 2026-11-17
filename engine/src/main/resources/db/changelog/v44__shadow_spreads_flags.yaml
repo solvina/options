@@ -1,0 +1,15 @@
+databaseChangeLog:
+  # ---------------------------------------------------------------------------
+  # Selection warnings on would-be positions (2026-11-17): FALLING / RISING (trend against the
+  # spread), IV_EXTREME (IV rank above the review level). A flagged title is never entered or
+  # selected, but it is still recorded, so the page can compare "all titles" against "passed
+  # filters" and show whether the filters earn their keep. Comma-separated; null = no warnings.
+  # ---------------------------------------------------------------------------
+  - changeSet:
+      id: v44__shadow_spreads_flags
+      author: claude
+      changes:
+        - addColumn:
+            tableName: shadow_spreads
+            columns:
+              - column: { name: flags, type: TEXT }

@@ -1,6 +1,7 @@
 package cz.solvina.options.domain.features.shadow
 
 import cz.solvina.options.domain.features.execution.model.TradeExecutionRequest
+import cz.solvina.options.domain.features.scanner.CandidateFlag
 import cz.solvina.options.domain.features.spread.model.StrategyId
 import cz.solvina.options.domain.models.OptionType
 import cz.solvina.options.domain.models.Symbol
@@ -48,6 +49,8 @@ data class ShadowSpread(
     val firstSeenAt: Instant? = null,
     /** In the simulated small-account portfolio: the ranking chose it within the live limits. */
     val selected: Boolean = false,
+    /** Selection warnings at the decision (CandidateFlag names); empty = passed the filters. */
+    val flags: Set<String> = emptySet(),
 ) {
     val width: BigDecimal get() = soldStrike.subtract(boughtStrike).abs()
 }
@@ -57,6 +60,7 @@ data class ShadowCandidate(
     val request: TradeExecutionRequest,
     val score: Double,
     val firstSeenAt: Instant,
+    val flags: Set<CandidateFlag> = emptySet(),
 )
 
 /** Reads return only counted positions: one per title at a time (see v42). */

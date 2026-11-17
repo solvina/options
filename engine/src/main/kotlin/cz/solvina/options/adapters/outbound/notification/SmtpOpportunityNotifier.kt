@@ -134,7 +134,8 @@ class SmtpOpportunityNotifier(
 
     private fun subjectFor(o: SpreadOpportunity): String {
         val right = if (o.shortLeg.contract.type == OptionType.PUT) "P" else "C"
-        return "🎯 ${o.strategyLabel} candidate — ${o.symbol.value}  " +
+        val prefix = if (o.warnings.isEmpty()) "🎯" else "⚠️ REVIEW (${o.warnings.joinToString()}) —"
+        return "$prefix ${o.strategyLabel} candidate — ${o.symbol.value}  " +
             "${strike(o.shortLeg.contract.strike)}/${strike(o.longLeg.contract.strike)}$right  " +
             "${o.dte} DTE  credit \$${money(o.midCredit)}  (IV rank ${pct(o.ivRank)})"
     }
@@ -147,6 +148,10 @@ class SmtpOpportunityNotifier(
             appendLine("${o.strategyLabel} spread — opportunity found")
             appendLine("${o.symbol.value} (${o.session} session) · ${tsFormat.format(o.detectedAt)} · scan-triggered candidate")
             appendLine()
+            if (o.warnings.isNotEmpty()) {
+                appendLine("WARNINGS: ${o.warnings.joinToString()} — the engine will not trade this automatically.")
+                appendLine()
+            }
             appendLine("WHY IT QUALIFIED")
             appendLine("  IV Rank:          ${pct(o.ivRank)}  (threshold ≥ ${pct(o.ivRankThreshold)})")
             appendLine("  Expiry / DTE:     ${o.expiry} · ${o.dte} DTE  (band ${o.minDte}–${o.maxDte}, prefer ${o.preferredDte})")
@@ -259,6 +264,7 @@ class SmtpOpportunityNotifier(
               <div style="color:#666;margin-bottom:16px">
                 <b>${o.symbol.value}</b> (${o.session} session) &middot; ${tsFormat.format(o.detectedAt)} &middot; scan-triggered candidate
               </div>
+              ${if (o.warnings.isEmpty()) "" else "<p style=\"color:#b45309;font-weight:600\">Warnings: ${o.warnings.joinToString()} — the engine will not trade this automatically.</p>"}
               <h3 style="margin:16px 0 6px">Why it qualified</h3>
               $whyTable
               <h3 style="margin:16px 0 6px">The spread</h3>

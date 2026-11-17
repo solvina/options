@@ -59,6 +59,7 @@ class ShadowSpreadsApiImpl(
             decisionRank = decisionRank,
             firstSeenAt = firstSeenAt?.atOffset(ZoneOffset.UTC),
             selected = selected,
+            flags = flags.sorted(),
         )
     }
 }

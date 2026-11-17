@@ -53,6 +53,7 @@ class ShadowSpreadPersistenceAdapter(
             decisionRank = decisionRank,
             firstSeenAt = firstSeenAt,
             selected = selected,
+            flags = flags.takeIf { it.isNotEmpty() }?.sorted()?.joinToString(","),
         )
 
     private fun ShadowSpreadEntity.toDomain() =
@@ -83,5 +84,6 @@ class ShadowSpreadPersistenceAdapter(
             decisionRank = decisionRank,
             firstSeenAt = firstSeenAt,
             selected = selected,
+            flags = flags?.split(",")?.filter { it.isNotBlank() }?.toSet() ?: emptySet(),
         )
 }

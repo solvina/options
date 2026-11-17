@@ -3,6 +3,23 @@
 Notable strategy, engine and operations changes. Newest first. Rendered in the frontend under
 **Maintenance › Changelog**.
 
+## 2026-11-17 — Selection filters and a simulation sized for the first live account
+
+The first live account will start with about $5–6k, so the simulated "selected" portfolio now
+mirrors it: max loss $400 per spread (about 7% of the account), 2 open, 1 new a day, and one
+position per sector. On the would-be data, spreads within $400 max loss went 6 for 6 (+$428) in the
+back-filled history and 3 of 4 (+$146) since Nov 3, about 1–2 opportunities a week.
+
+- **Trend filter.** No bull put on a stock down 10%+ in 10 sessions or below its 50-day average, and
+  the mirror for bear calls. VLO on Nov 4 (−10.6% in 10 days, below its average) is the example.
+- **IV rank ≥ 90 → manual review.** Such a high IV rank usually reflects a real scare, not a cheap
+  opportunity. Its email subject now starts "⚠️ REVIEW" and names the warnings.
+- **A flagged title is never entered or selected, but it is still recorded,** so the would-be page
+  can compare *all titles*, *passed the filters* and *selected*. That comparison shows whether the
+  filters actually help.
+- Paper's own real-order caps are unchanged; the small-account limits apply to the simulation and
+  will go into the live configuration.
+
 ## 2026-11-17 — Watchdog alerts when the engine loses IBKR, not only when it hangs
 
 From 2026-11-14 03:00 until 2026-11-17 13:26 the paper engine was cut off from IBKR. Gateway's own

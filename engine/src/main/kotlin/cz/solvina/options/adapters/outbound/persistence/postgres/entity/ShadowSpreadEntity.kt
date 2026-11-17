@@ -66,4 +66,6 @@ class ShadowSpreadEntity(
     var firstSeenAt: Instant? = null,
     @Column(nullable = false)
     var selected: Boolean = false,
+    @Column(columnDefinition = "TEXT")
+    var flags: String? = null,
 )

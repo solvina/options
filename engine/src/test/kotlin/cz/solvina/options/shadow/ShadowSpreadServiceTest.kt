@@ -5,6 +5,7 @@ import cz.solvina.options.domain.features.execution.model.TradeExecutionRequest
 import cz.solvina.options.domain.features.market.MarketDataPort
 import cz.solvina.options.domain.features.scanner.BearCallScannerConfig
 import cz.solvina.options.domain.features.scanner.BullPutScannerConfig
+import cz.solvina.options.domain.features.scanner.CandidateFlag
 import cz.solvina.options.domain.features.scanner.StrategyParamsRegistry
 import cz.solvina.options.domain.features.shadow.ShadowCandidate
 import cz.solvina.options.domain.features.shadow.ShadowSpread
@@ -50,7 +51,12 @@ class ShadowSpreadServiceTest {
 
     private val port = InMemoryPort()
     private val market = mockk<MarketDataPort>()
-    private val universe = mockk<UniversePort>().also { every { it.isMarketOpen(any()) } returns true }
+    private val sectors = mutableMapOf<String, String>()
+    private val universe =
+        mockk<UniversePort>().also {
+            every { it.isMarketOpen(any()) } returns true
+            every { it.sectorOf(any()) } answers { firstArg<Any>().let { a -> sectors[(a as? Symbol)?.value ?: a.toString()] } }
+        }
     private val params = StrategyParamsRegistry(listOf(BullPutScannerConfig(timeProfitDte = 21), BearCallScannerConfig()))
 
     private fun service(today: LocalDate) =
@@ -118,6 +124,7 @@ class ShadowSpreadServiceTest {
         symbol: String,
         score: Double,
         maxRisk: String = "4.00",
+        flags: Set<CandidateFlag> = emptySet(),
     ): ShadowCandidate {
         val s = Symbol(symbol)
         return ShadowCandidate(
@@ -129,6 +136,7 @@ class ShadowSpreadServiceTest {
             ),
             score,
             Instant.parse("2026-11-05T16:00:00Z"),
+            flags,
         )
     }
 
@@ -141,9 +149,38 @@ class ShadowSpreadServiceTest {
 
             val rows = port.rows.values.associateBy { it.symbol.value }
             assertEquals(listOf(1, 2, 3), listOf("CME", "GILD", "XOM").map { rows.getValue(it).decisionRank })
-            assertEquals(false, rows.getValue("CME").selected, "max loss $765 is over the $500 limit")
+            assertEquals(false, rows.getValue("CME").selected, "max loss $765 is over the $400 limit")
             assertEquals(true, rows.getValue("GILD").selected, "best that fits")
             assertEquals(false, rows.getValue("XOM").selected, "only one new position per day")
+        }
+
+    @Test
+    fun `a flagged title is recorded with its warnings but never selected`() =
+        runTest {
+            service(LocalDate.of(2026, 11, 5)).recordDecision(
+                listOf(candidate("VLO", 0.95, flags = setOf(CandidateFlag.FALLING, CandidateFlag.IV_EXTREME)), candidate("GILD", 0.8)),
+            )
+
+            val rows = port.rows.values.associateBy { it.symbol.value }
+            assertEquals(false, rows.getValue("VLO").selected)
+            assertEquals(setOf("FALLING", "IV_EXTREME"), rows.getValue("VLO").flags)
+            assertEquals(true, rows.getValue("GILD").selected)
+        }
+
+    @Test
+    fun `only one selected position per sector`() =
+        runTest {
+            sectors["XOM"] = "Energy"
+            sectors["CVX"] = "Energy"
+            service(LocalDate.of(2026, 11, 5)).recordDecision(listOf(candidate("XOM", 0.8)))
+            service(LocalDate.of(2026, 11, 6)).recordDecision(listOf(candidate("CVX", 0.9)))
+
+            assertEquals(
+                false,
+                port.rows.values
+                    .single { it.symbol.value == "CVX" }
+                    .selected,
+            )
         }
 
     @Test
@@ -161,9 +198,9 @@ class ShadowSpreadServiceTest {
                 "today's slot is taken",
             )
 
-            val nextDays = listOf(6, 9, 10).map { LocalDate.of(2026, 11, it) }
+            val nextDays = listOf(6, 9).map { LocalDate.of(2026, 11, it) }
             nextDays.forEachIndexed { i, d -> service(d).recordDecision(listOf(candidate("T$i", 0.8))) }
-            assertEquals(3, port.rows.values.count { it.selected }, "three open is the limit")
+            assertEquals(2, port.rows.values.count { it.selected }, "two open is the limit")
         }
 
     @Test

@@ -111,6 +111,16 @@ export function RulesPage() {
               : 'Candidates are entered as soon as they qualify.'}
           </li>
           <li>
+            {p.trendFilterEnabled
+              ? `Don't fight the trend: no bull put on a stock down ${p.trendMaxMovePct}%+ in 10 days or below its 50-day average (mirror for bear calls).`
+              : 'Trend filter is off.'}{' '}
+            IV rank of {p.ivRankReviewAbove} or more goes to manual review instead of a trade.
+          </li>
+          <li>
+            Small-account simulation: max loss ${p.portfolioMaxLossUsd} per spread, {p.portfolioMaxOpen} open,{' '}
+            {p.portfolioMaxNewPerDay} new a day{p.portfolioOnePerSector ? ', one per sector' : ''}.
+          </li>
+          <li>
             Don't chase fills: never sell below {pct(p.entryMinFillPctOfMid)} of mid. No fill means retry next scan
             ({p.entryCooldownMinutes} min cooldown).
           </li>

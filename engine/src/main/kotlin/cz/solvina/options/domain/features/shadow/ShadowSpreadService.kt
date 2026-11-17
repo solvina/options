@@ -93,17 +93,22 @@ class ShadowSpreadService(
         val held = open.map { it.symbol }.toSet()
         var openSelected = open.count { it.selected }
         var newToday = port.findAll().count { it.selected && !it.openedAt.isBefore(startOfDay) }
+        val sectorsTaken = open.filter { it.selected }.mapNotNull { universePort.sectorOf(it.symbol) }.toMutableSet()
         ranked.forEachIndexed { index, candidate ->
             val request = candidate.request
             if (request.underlyingSymbol in held) return@forEachIndexed
             val maxLoss = request.maxRiskPerShare.toDouble() * 100
+            val sector = universePort.sectorOf(request.underlyingSymbol)
             val selected =
-                maxLoss <= poolConfig.portfolioMaxLossUsd &&
+                candidate.flags.isEmpty() &&
+                    maxLoss <= poolConfig.portfolioMaxLossUsd &&
                     openSelected < poolConfig.portfolioMaxOpen &&
-                    newToday < poolConfig.portfolioMaxNewPerDay
+                    newToday < poolConfig.portfolioMaxNewPerDay &&
+                    !(poolConfig.portfolioOnePerSector && sector != null && sector in sectorsTaken)
             if (selected) {
                 openSelected++
                 newToday++
+                sector?.let { sectorsTaken += it }
             }
             port.save(
                 ShadowSpread(
@@ -124,6 +129,7 @@ class ShadowSpreadService(
                     decisionRank = index + 1,
                     firstSeenAt = candidate.firstSeenAt,
                     selected = selected,
+                    flags = candidate.flags.map { it.name }.toSet(),
                 ),
             )
         }

@@ -30,6 +30,8 @@ data class RegimeSignal(
     val rsi: BigDecimal? = null,
     /** Which strategy the combined signal favours (bull put = BULLISH, bear call = BEARISH). */
     val bias: DirectionalBias = DirectionalBias.NEUTRAL,
+    /** Close-to-close change over the last 10 sessions, in percent; null with too little history. */
+    val change10dPct: Double? = null,
 )
 
 /**

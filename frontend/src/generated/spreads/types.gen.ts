@@ -150,6 +150,10 @@ export type ShadowSpreadDto = {
      * In the simulated small-account portfolio
      */
     selected: boolean;
+    /**
+     * Selection warnings at the decision (FALLING, RISING, IV_EXTREME); empty = passed the filters
+     */
+    flags: Array<string>;
 };
 
 export type SpreadRulesDto = {
@@ -233,6 +237,19 @@ export type PortfolioRulesDto = {
     portfolioMaxOpen: number;
     portfolioMaxNewPerDay: number;
     portfolioMaxLossUsd: number;
+    portfolioOnePerSector: boolean;
+    /**
+     * Skip a bull put on a falling stock (or a bear call on a rising one)
+     */
+    trendFilterEnabled: boolean;
+    /**
+     * 10-session move that counts as falling/rising, in percent
+     */
+    trendMaxMovePct: number;
+    /**
+     * IV rank at or above this is sent for manual review instead of traded
+     */
+    ivRankReviewAbove: number;
 };
 
 export type SymbolRuleOverrideDto = {
