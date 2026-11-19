@@ -35,6 +35,8 @@ import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrDividendTickRegist
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrHistoricalDataRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketRuleRegistry
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrNewsRegistry
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrNewsRow
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOptionParamsRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderIdCounter
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrRealTimeBarsRegistry
@@ -113,6 +115,7 @@ class IbkrEWrapper(
     private val accountRegistry: IbkrAccountRegistry,
     private val positionsRegistry: IbkrPositionsRegistry,
     private val dividendTickRegistry: IbkrDividendTickRegistry,
+    private val newsRegistry: IbkrNewsRegistry,
     private val marketDataHealthTracker: MarketDataHealthTracker,
     private val marketDataTypeTracker: MarketDataTypeTracker,
     private val alertService: AlertService,
@@ -691,6 +694,7 @@ class IbkrEWrapper(
                 realTimeBarsRegistry.onError(id, errorCode, errorMsg)
                 orderRegistry.onError(id, errorCode, errorMsg)
                 dividendTickRegistry.onError(id, errorCode, errorMsg)
+                newsRegistry.onError(id, errorCode, errorMsg)
             }
         }
     }
@@ -702,6 +706,7 @@ class IbkrEWrapper(
         contractDetailsRegistry.cancelAllPending(cause)
         optionParamsRegistry.cancelAllPending(cause)
         marketRuleRegistry.cancelAllPending(cause)
+        newsRegistry.cancelAllPending(cause)
         marketDataRegistry.cancelAllPending(cause)
         accountRegistry.onDisconnect()
         positionsRegistry.onDisconnect()
@@ -833,6 +838,7 @@ class IbkrEWrapper(
 
     override fun newsProviders(newsProviders: Array<out NewsProvider>) {
         logger.debug { "newsProviders: ${newsProviders.size} providers" }
+        newsRegistry.onProviders(newsProviders.toList())
     }
 
     override fun newsArticle(
@@ -840,7 +846,8 @@ class IbkrEWrapper(
         articleType: Int,
         articleText: String,
     ) {
-        logger.debug { "newsArticle: requestId=$requestId" }
+        logger.debug { "newsArticle: requestId=$requestId type=$articleType" }
+        newsRegistry.onArticle(requestId, articleType, articleText)
     }
 
     override fun historicalNews(
@@ -851,13 +858,15 @@ class IbkrEWrapper(
         headline: String,
     ) {
         logger.debug { "historicalNews: requestId=$requestId" }
+        newsRegistry.onHeadline(requestId, IbkrNewsRow(time, providerCode, articleId, headline))
     }
 
     override fun historicalNewsEnd(
         requestId: Int,
         hasMore: Boolean,
     ) {
-        logger.debug { "historicalNewsEnd: requestId=$requestId" }
+        logger.debug { "historicalNewsEnd: requestId=$requestId hasMore=$hasMore" }
+        newsRegistry.onHeadlinesEnd(requestId)
     }
 
     override fun headTimestamp(

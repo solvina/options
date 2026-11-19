@@ -367,3 +367,12 @@ ai-review:
   email-wait-minutes: 15        # candidate email waits this long for the verdict (never past the decision)
   # "AI reviews" forum topic in the alerts chat (same bot); blank = no Telegram verdicts.
   telegram-message-thread-id: ${AI_REVIEW_TELEGRAM_TOPIC_ID:}
+
+# IBKR news for the AI review snapshot (D2b). Free providers only; empty providers = every
+# provider reqNewsProviders reports for the account (logged once at INFO).
+news:
+  enabled: ${NEWS_ENABLED:true}
+  providers: ${NEWS_PROVIDERS:}
+  lookback-days: 7
+  max-headlines: 25
+  max-articles: 3

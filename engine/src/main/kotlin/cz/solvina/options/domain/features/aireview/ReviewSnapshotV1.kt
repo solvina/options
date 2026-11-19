@@ -35,11 +35,29 @@ data class ReviewSnapshotV1(
     val trackRecord: TrackRecordSection?,
     /** Hash of the spread-rule configuration in force (see ai_review_rules). */
     val rulesVersion: String?,
+    /** Broker news feeds (free providers), newest first; null when unavailable. */
+    val news: NewsSection? = null,
 ) {
     companion object {
         const val VERSION = 1
     }
 }
+
+data class NewsSection(
+    /** Provider codes asked. */
+    val providers: List<String>,
+    val since: Instant,
+    val headlines: List<NewsItem>,
+    val note: String,
+)
+
+data class NewsItem(
+    val time: Instant,
+    val provider: String,
+    val headline: String,
+    /** Plain-text body (shortened) for the newest few; null for the rest. */
+    val body: String? = null,
+)
 
 data class CandidateSection(
     val expiry: LocalDate,

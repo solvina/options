@@ -1,6 +1,8 @@
 package cz.solvina.options.domain.features.aireview
 
 import cz.solvina.options.domain.features.market.model.OptionQuote
+import cz.solvina.options.domain.features.news.NewsConfig
+import cz.solvina.options.domain.features.news.NewsPort
 import cz.solvina.options.domain.features.notification.SpreadOpportunity
 import cz.solvina.options.domain.features.regime.TrendRegimeService
 import cz.solvina.options.domain.features.scanner.BearCallScannerConfig
@@ -14,9 +16,12 @@ import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.features.volatility.IvRankStorePort
 import cz.solvina.options.domain.features.volatility.VolatilityPort
 import io.github.oshai.kotlinlogging.KotlinLogging
+import kotlinx.coroutines.withTimeout
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
 import java.math.RoundingMode
+import java.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 private val logger = KotlinLogging.logger {}
 
@@ -38,6 +43,8 @@ class ReviewSnapshotBuilder(
     private val bullPutConfig: BullPutScannerConfig,
     private val bearCallConfig: BearCallScannerConfig,
     private val poolConfig: ScannerPoolConfig,
+    private val newsConfig: NewsConfig = NewsConfig(enabled = false),
+    private val newsPort: NewsPort? = null,
 ) {
     suspend fun build(o: SpreadOpportunity): ReviewSnapshotV1 {
         val instrument = section("instrument", o) { universePort.get(o.symbol) }
@@ -54,7 +61,36 @@ class ReviewSnapshotBuilder(
             portfolio = section("portfolio", o) { portfolio(o) },
             trackRecord = section("trackRecord", o) { trackRecord(o) },
             rulesVersion = section("rules", o) { store.registerRules(rules(instrument), o.detectedAt) },
+            news = section("news", o) { news(o) },
         )
+    }
+
+    private suspend fun news(o: SpreadOpportunity): NewsSection? {
+        val port = newsPort?.takeIf { newsConfig.enabled } ?: return null
+        val since = o.detectedAt.minus(Duration.ofDays(newsConfig.lookbackDays))
+        return withTimeout(newsConfig.timeoutSeconds.seconds) {
+            val found = port.headlines(o.symbol, since, newsConfig.maxHeadlines)
+            val items =
+                found.mapIndexed { i, h ->
+                    val body =
+                        if (i < newsConfig.maxArticles) {
+                            runCatching { port.article(h.provider, h.articleId) }
+                                .getOrNull()
+                                ?.let { if (it.length > newsConfig.maxArticleChars) it.take(newsConfig.maxArticleChars) + "…" else it }
+                        } else {
+                            null
+                        }
+                    NewsItem(h.time, h.provider, h.headline, body)
+                }
+            NewsSection(
+                providers = found.map { it.provider }.distinct().sorted(),
+                since = since,
+                headlines = items,
+                note =
+                    "Headlines from the broker's free feeds since ${since.atZone(NEW_YORK).toLocalDate()}, newest first; " +
+                        "bodies for the newest ${newsConfig.maxArticles}. Empty means no headline, not no news: search the web for context.",
+            )
+        }
     }
 
     private suspend fun <T> section(

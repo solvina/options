@@ -5,6 +5,9 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import cz.solvina.options.domain.features.aireview.ReviewSnapshotBuilder
 import cz.solvina.options.domain.features.market.model.OptionQuote
+import cz.solvina.options.domain.features.news.NewsConfig
+import cz.solvina.options.domain.features.news.NewsHeadline
+import cz.solvina.options.domain.features.news.NewsPort
 import cz.solvina.options.domain.features.notification.SpreadOpportunity
 import cz.solvina.options.domain.features.regime.DirectionalBias
 import cz.solvina.options.domain.features.regime.RegimeSignal
@@ -106,7 +109,7 @@ class ReviewSnapshotBuilderTest {
     private val spreadQuery = mockk<SpreadQueryFacade>()
     private val shadows = mockk<ShadowSpreadPort>()
 
-    private fun builder() =
+    private fun builder(news: NewsPort? = null) =
         ReviewSnapshotBuilder(
             regime,
             volatility,
@@ -119,6 +122,8 @@ class ReviewSnapshotBuilderTest {
             BullPutScannerConfig(),
             BearCallScannerConfig(),
             ScannerPoolConfig(),
+            NewsConfig(maxArticles = 1, maxArticleChars = 10),
+            news,
         )
 
     private fun wireHappyPath() {
@@ -194,5 +199,28 @@ class ReviewSnapshotBuilderTest {
             assertNotNull(snapshot.trend)
             assertNotNull(snapshot.calendar)
             assertEquals(BigDecimal("240"), snapshot.candidate.shortLeg.strike)
+        }
+
+    @Test
+    fun `news carries headlines newest first with a body for the newest only, and a failing feed leaves it empty`() =
+        runTest {
+            wireHappyPath()
+            coEvery { volatility.getIvRank(nue) } returns IvRank(62.0, 0.34, Instant.EPOCH)
+            val news = mockk<NewsPort>()
+            coEvery { news.headlines(nue, any(), 25) } returns
+                listOf(
+                    NewsHeadline(Instant.parse("2026-11-19T13:00:00Z"), "BRFUPDN", "a1", "NUE downgraded at XYZ"),
+                    NewsHeadline(Instant.parse("2026-11-18T13:00:00Z"), "BRFG", "a2", "Steel stocks slide"),
+                )
+            coEvery { news.article("BRFUPDN", "a1") } returns "XYZ cut its target to 150 on weaker pricing."
+
+            val section = assertNotNull(builder(news).build(opportunity).news)
+            assertEquals(listOf("NUE downgraded at XYZ", "Steel stocks slide"), section.headlines.map { it.headline })
+            assertEquals("XYZ cut it…", section.headlines[0].body)
+            assertNull(section.headlines[1].body)
+            assertEquals(listOf("BRFG", "BRFUPDN"), section.providers)
+
+            coEvery { news.headlines(nue, any(), 25) } throws IllegalStateException("no conId")
+            assertNull(builder(news).build(opportunity).news)
         }
 }

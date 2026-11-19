@@ -8,6 +8,7 @@ import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrDividendTickRegist
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrHistoricalDataRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketDataRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrMarketRuleRegistry
+import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrNewsRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOptionParamsRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderIdCounter
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrRealTimeBarsRegistry
@@ -43,6 +44,7 @@ class IbkrEWrapperErrorRoutingTest {
             accountRegistry = mockk<IbkrAccountRegistry>(relaxed = true),
             positionsRegistry = mockk<IbkrPositionsRegistry>(relaxed = true),
             dividendTickRegistry = mockk<IbkrDividendTickRegistry>(relaxed = true),
+            newsRegistry = IbkrNewsRegistry(),
             marketDataHealthTracker = mockk<MarketDataHealthTracker>(relaxed = true),
             marketDataTypeTracker = mockk<MarketDataTypeTracker>(relaxed = true),
             alertService = mockk<AlertService>(relaxed = true),
