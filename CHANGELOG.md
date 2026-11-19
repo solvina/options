@@ -3,6 +3,32 @@
 Notable strategy, engine and operations changes. Newest first. Rendered in the frontend under
 **Maintenance › Changelog**.
 
+## 2026-11-19 — AI verdicts in emails, Telegram and the would-be trades (still advisory)
+
+The reviewer's verdict now reaches you and is scored against what would have happened. **No
+trade is blocked.** Gating (D7) waits for the evidence.
+
+- **Candidate emails carry the verdict** (⛔ AI VETO / ✅ AI OK / ❔ in the subject, reason,
+  risks and sources in the body). Each email waits up to 15 min for the verdict, never past the
+  task's decision. Without a verdict it goes out marked "AI review unavailable", and a verdict
+  that arrives later follows up in the same thread. The selectors no longer email on their own.
+- **Telegram:** one message per verdict in the "AI reviews" topic, a Friday 16:30 NY weekly
+  summary, alerts when the reviewer goes silent, logs out or keeps failing, and `/reviews [days]`
+  in the bot. The bot no longer writes its token into the journal.
+- **The AI layer on the would-be trades:** every pool decision also builds a second simulated
+  portfolio. It uses the same limits but skips titles the reviewer vetoed before the decision,
+  so the next-ranked title takes the freed slot. No verdict counts as approve. The Would-be
+  Trades page shows both portfolios, the verdict on each trade (reason on hover), results by
+  verdict, what the AI removed and let in instead, its net effect, an interval over trading
+  days, calibration, and a rules-version filter (`GET /api/ai-review/report`).
+- Each review records what the decision did with its title (recorded, already held, dropped,
+  switched strategy) and whether gating would have blocked it. Every would-be trade keeps a
+  daily mark (`shadow_spread_mark`). Migrations v47 and v48.
+- **More context for the reviewer:** a 1-year IV range, percentile and the last 30 days; daily
+  bars for the watchlist; headlines and a few article bodies from IBKR's free news feeds.
+- The reviewer checks its login every weekday at 09:00 NY, so a logged-out reviewer is noticed
+  before the first candidate.
+
 ## 2026-11-19 — Claude reviews pool candidates on paper (observation only)
 
 The paper engine now asks Claude Opus about each title on the day it first joins the pool. The
