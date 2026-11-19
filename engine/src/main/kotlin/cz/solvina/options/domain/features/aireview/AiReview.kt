@@ -53,6 +53,12 @@ data class AiReviewTask(
     val skipReason: String? = null,
     val snapshotVersion: Int = ReviewSnapshotV1.VERSION,
     val rulesVersion: String? = null,
+    /** Surfacing (D5): when the candidate email went out, with or without a verdict. */
+    val emailedAt: Instant? = null,
+    /** False when the email went out "AI review unavailable"; a later verdict is a follow-up. */
+    val emailHadVerdict: Boolean? = null,
+    val followUpSentAt: Instant? = null,
+    val telegramSentAt: Instant? = null,
 )
 
 /**

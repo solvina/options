@@ -44,4 +44,12 @@ class AiReviewTaskEntity(
     var snapshot: String = "{}",
     @Column(name = "rules_version", columnDefinition = "TEXT")
     var rulesVersion: String? = null,
+    @Column(name = "emailed_at")
+    var emailedAt: Instant? = null,
+    @Column(name = "email_had_verdict")
+    var emailHadVerdict: Boolean? = null,
+    @Column(name = "followup_sent_at")
+    var followUpSentAt: Instant? = null,
+    @Column(name = "telegram_sent_at")
+    var telegramSentAt: Instant? = null,
 )

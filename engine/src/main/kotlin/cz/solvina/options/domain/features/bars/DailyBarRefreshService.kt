@@ -1,6 +1,7 @@
 package cz.solvina.options.domain.features.bars
 
 import cz.solvina.options.domain.features.strategy.assignment.StrategyAssignmentPort
+import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.delay
@@ -53,6 +54,11 @@ class DailyBarRefreshService(
      * 113-symbol pass inside 20 minutes and well under the limit.
      */
     @param:Value("\${stock-strategies.bar-refresh.pacing-ms:10000}") private val pacingMs: Long = 10_000,
+    /**
+     * Spread watchlist, refreshed at 1d next to the assignments: the spread trend filter and the
+     * AI review snapshot read these bars, and they must not depend on a stock strategy being armed.
+     */
+    private val universe: UniversePort? = null,
 ) {
     data class Result(
         val symbols: Int,
@@ -66,11 +72,17 @@ class DailyBarRefreshService(
      * Sequential and paced by construction. A failure on one symbol is logged and the pass
      * continues: a delisted or mistyped symbol must not cost every symbol behind it its refresh.
      */
+    private fun spreadWatchlist(): List<Symbol> =
+        runCatching { universe?.getWatchlist().orEmpty() }
+            .onFailure { logger.warn { "Daily bar refresh: spread watchlist unavailable: ${it.message}" } }
+            .getOrDefault(emptyList())
+
     suspend fun refreshOnce(): Result {
         val targets =
             assignments
                 .findEnabled()
                 .map { it.symbol to it.timeframe }
+                .plus(spreadWatchlist().map { it to Timeframe.DAILY })
                 .distinct()
         if (targets.isEmpty()) {
             logger.debug { "Daily bar refresh: no enabled assignments — nothing to refresh" }

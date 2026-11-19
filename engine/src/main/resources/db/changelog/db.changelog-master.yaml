@@ -84,4 +84,8 @@ databaseChangeLog:
   - include:
       file: db/changelog/v44__shadow_spreads_flags.yaml
   - include:
+      file: db/changelog/v45__iv_rank_summary.yaml
+  - include:
       file: db/changelog/v46__ai_review.yaml
+  - include:
+      file: db/changelog/v47__ai_review_surfacing.yaml

@@ -11,6 +11,7 @@ import cz.solvina.options.domain.features.shadow.ShadowSpreadPort
 import cz.solvina.options.domain.features.spread.SpreadQueryFacade
 import cz.solvina.options.domain.features.universe.InstrumentConfig
 import cz.solvina.options.domain.features.universe.UniversePort
+import cz.solvina.options.domain.features.volatility.IvRankStorePort
 import cz.solvina.options.domain.features.volatility.VolatilityPort
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.stereotype.Component
@@ -28,6 +29,7 @@ private val logger = KotlinLogging.logger {}
 class ReviewSnapshotBuilder(
     private val regimeService: TrendRegimeService,
     private val volatilityPort: VolatilityPort,
+    private val ivStore: IvRankStorePort,
     private val universePort: UniversePort,
     private val spreadQuery: SpreadQueryFacade,
     private val shadowSpreads: ShadowSpreadPort,
@@ -85,6 +87,8 @@ class ReviewSnapshotBuilder(
             maxProfitPerContract = o.maxProfitPerContract,
             maxLossPerContract = o.maxLossPerContract,
             quantity = o.quantity,
+            ivRank = o.ivRank.finiteOrNull(),
+            totalCapital = o.totalCapital,
             warnings = o.warnings,
             filters =
                 FilterSection(
@@ -140,7 +144,17 @@ class ReviewSnapshotBuilder(
     // A cache read in practice: the selector computed this IV rank moments ago.
     private suspend fun iv(o: SpreadOpportunity): IvSection {
         val r = volatilityPort.getIvRank(o.symbol)
-        return IvSection(rank = r.rank.finiteOrNull(), currentIvIndex = r.currentIv.finiteOrNull(), calculatedAt = r.calculatedAt)
+        val summary = runCatching { ivStore.find(o.symbol)?.summary }.getOrNull()
+        return IvSection(
+            rank = r.rank.finiteOrNull(),
+            currentIvIndex = r.currentIv.finiteOrNull(),
+            calculatedAt = r.calculatedAt,
+            historyMin = summary?.min?.finiteOrNull(),
+            historyMax = summary?.max?.finiteOrNull(),
+            percentile = summary?.percentile?.finiteOrNull(),
+            historyDays = summary?.sampleDays,
+            recent30 = summary?.recent?.mapNotNull { it.finiteOrNull() },
+        )
     }
 
     private fun calendar(

@@ -6,7 +6,9 @@ import cz.solvina.options.domain.features.bars.EquityHistoricalBarsPort
 import cz.solvina.options.domain.features.bars.Timeframe
 import cz.solvina.options.domain.features.strategy.assignment.StrategyAssignment
 import cz.solvina.options.domain.features.strategy.assignment.StrategyAssignmentPort
+import cz.solvina.options.domain.features.universe.InstrumentRouting
 import cz.solvina.options.domain.models.Symbol
+import cz.solvina.options.testutil.FakeUniversePort
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import java.time.Clock
@@ -73,15 +75,35 @@ class DailyBarRefreshServiceTest {
             assertEquals(0, fetcher.calls.size)
         }
 
+    @Test
+    fun `the spread watchlist is refreshed at 1d too, once per symbol even when also assigned`() =
+        runTest {
+            val fetcher = RecordingFetcher()
+
+            service(
+                fetcher,
+                assignments = listOf("AAPL" to Timeframe.DAILY, "AAPL" to Timeframe.FIVE_MIN),
+                watchlist = listOf("AAPL", "NUE"),
+            ).refreshOnce()
+
+            assertEquals(
+                setOf(Symbol("AAPL") to Timeframe.DAILY, Symbol("AAPL") to Timeframe.FIVE_MIN, Symbol("NUE") to Timeframe.DAILY),
+                fetcher.calls.map { it.symbol to it.timeframe }.toSet(),
+            )
+            assertEquals(3, fetcher.calls.size)
+        }
+
     private fun service(
         fetcher: RecordingFetcher,
         assignments: List<Pair<String, Timeframe>>,
+        watchlist: List<String> = emptyList(),
     ) = DailyBarRefreshService(
         assignments = FakeAssignments(assignments),
         equityHistoricalBars = fetcher,
         clock = clock,
         lookbackDays = 45,
         pacingMs = 10_000, // virtual time under runTest — pacing costs the test nothing
+        universe = FakeUniversePort(*watchlist.map { it to InstrumentRouting() }.toTypedArray()),
     )
 
     private data class Fetch(

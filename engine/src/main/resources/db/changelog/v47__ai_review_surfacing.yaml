@@ -1,0 +1,14 @@
+databaseChangeLog:
+  # ---------------------------------------------------------------------------
+  # AI review D5 (2026-11-19): whether the candidate email carried a verdict, and when a late
+  # verdict's follow-up went out. emailed_at / telegram_sent_at already exist (v46).
+  # ---------------------------------------------------------------------------
+  - changeSet:
+      id: v47__ai_review_surfacing
+      author: claude
+      changes:
+        - addColumn:
+            tableName: ai_review_task
+            columns:
+              - column: { name: email_had_verdict, type: BOOLEAN }
+              - column: { name: followup_sent_at, type: "TIMESTAMP WITH TIME ZONE" }

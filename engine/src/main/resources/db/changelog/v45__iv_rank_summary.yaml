@@ -1,0 +1,19 @@
+databaseChangeLog:
+  # ---------------------------------------------------------------------------
+  # IV summary kept next to the rank (AI review D1, 2026-11-19). IvRankService already downloads
+  # ~365 daily IVs per symbol; keep min, max, percentile and the last 30 values instead of
+  # discarding them, so the AI review snapshot can show where today's IV sits. Null until the
+  # symbol's next rank refresh.
+  # ---------------------------------------------------------------------------
+  - changeSet:
+      id: v45__iv_rank_summary
+      author: claude
+      changes:
+        - addColumn:
+            tableName: iv_rank_cache
+            columns:
+              - column: { name: iv_min, type: DOUBLE PRECISION }
+              - column: { name: iv_max, type: DOUBLE PRECISION }
+              - column: { name: iv_percentile, type: DOUBLE PRECISION }
+              - column: { name: sample_days, type: INT }
+              - column: { name: recent_ivs, type: TEXT }

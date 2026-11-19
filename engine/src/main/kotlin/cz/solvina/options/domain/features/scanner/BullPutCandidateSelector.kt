@@ -3,7 +3,6 @@ package cz.solvina.options.domain.features.scanner
 import cz.solvina.options.domain.features.execution.model.TradeExecutionRequest
 import cz.solvina.options.domain.features.market.MarketDataPort
 import cz.solvina.options.domain.features.market.OptionChainPort
-import cz.solvina.options.domain.features.notification.OpportunityNotificationPort
 import cz.solvina.options.domain.features.notification.SpreadOpportunity
 import cz.solvina.options.domain.features.regime.TrendRegimeService
 import cz.solvina.options.domain.features.spread.model.StrategyId
@@ -33,9 +32,7 @@ class BullPutCandidateSelector(
     private val universePort: UniversePort,
     private val config: BullPutScannerConfig,
     private val clock: Clock,
-    // Notification-only: emails the qualified candidate; NoOp default so unit tests need not supply it.
-    private val opportunityNotifier: OpportunityNotificationPort = OpportunityNotificationPort.NoOp,
-    // Email warnings only (the pool decision applies the same flags): trend and IV-rank checks.
+    // Selection warnings (trend, IV rank): shown in the email and applied by the pool decision.
     private val regimeService: TrendRegimeService? = null,
     private val poolConfig: ScannerPoolConfig = ScannerPoolConfig(),
 ) {
@@ -278,8 +275,8 @@ class BullPutCandidateSelector(
                 )}%  underlying=${underlyingPrice.amount}  mid=\$$midCredit  max_risk=\$$maxRiskPerShare"
         }
 
-        // Notification-only: emails the full candidate while the per-leg quotes/greeks are still in
-        // scope. Best-effort — the notifier swallows failures; the session lookup is guarded too.
+        // The full candidate (per-leg quotes/greeks), for the email and the AI review; built here
+        // while the quotes are in scope. ScannerService decides whether and when it is emailed.
         val opportunity =
             SpreadOpportunity(
                 strategyId = StrategyId.BULL_PUT,
@@ -320,7 +317,6 @@ class BullPutCandidateSelector(
                 timeProfitDte = config.timeProfitDte,
                 driftProtectionPct = config.driftProtectionPct,
             )
-        opportunityNotifier.notify(opportunity)
 
         val request =
             TradeExecutionRequest(

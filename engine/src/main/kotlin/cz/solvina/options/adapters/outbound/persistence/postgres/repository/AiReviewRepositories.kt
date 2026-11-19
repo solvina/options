@@ -23,6 +23,19 @@ interface AiReviewTaskRepository : JpaRepository<AiReviewTaskEntity, UUID> {
 
     fun countByTradingDate(tradingDate: LocalDate): Long
 
+    @Query(
+        """
+        SELECT t FROM AiReviewTaskEntity t
+        WHERE t.status = 'OPEN' AND t.createdAt >= :since
+          AND (t.emailedAt IS NULL OR t.telegramSentAt IS NULL
+               OR (t.emailHadVerdict = false AND t.followUpSentAt IS NULL))
+        ORDER BY t.createdAt
+        """,
+    )
+    fun findToSurface(
+        @Param("since") since: Instant,
+    ): List<AiReviewTaskEntity>
+
     // Separate derived queries instead of one "(:p IS NULL OR …)" JPQL: Postgres can't type a bare
     // null parameter, so the optional-filter form fails at runtime.
     fun findAllByOrderByCreatedAtDesc(pageable: Pageable): List<AiReviewTaskEntity>

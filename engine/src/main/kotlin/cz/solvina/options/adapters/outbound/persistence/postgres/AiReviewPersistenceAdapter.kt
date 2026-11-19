@@ -29,6 +29,7 @@ import cz.solvina.options.domain.features.aireview.ReviewSnapshotV1
 import cz.solvina.options.domain.features.aireview.ReviewWithResults
 import cz.solvina.options.domain.features.spread.model.StrategyId
 import cz.solvina.options.domain.models.Symbol
+import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.springframework.dao.DataIntegrityViolationException
@@ -41,6 +42,8 @@ import java.security.MessageDigest
 import java.time.Instant
 import java.time.LocalDate
 import java.util.UUID
+
+private val logger = KotlinLogging.logger {}
 
 @Component
 class AiReviewPersistenceAdapter(
@@ -103,6 +106,32 @@ class AiReviewPersistenceAdapter(
         taskId: UUID,
         reviewerId: String,
     ): AiReviewResult? = io { results.findByTaskIdAndReviewerId(taskId, reviewerId)?.toDomain() }
+
+    override suspend fun findResults(taskId: UUID): List<AiReviewResult> =
+        io { results.findByTaskIdIn(listOf(taskId)).map { it.toDomain() }.sortedBy { it.reviewerId } }
+
+    override suspend fun findSnapshot(taskId: UUID): ReviewSnapshotV1? =
+        io {
+            tasks.findById(taskId).orElse(null)?.let { t ->
+                runCatching { objectMapper.readValue(t.snapshot, ReviewSnapshotV1::class.java) }
+                    .onFailure { logger.warn { "AI review task $taskId: snapshot unreadable: ${it.message}" } }
+                    .getOrNull()
+            }
+        }
+
+    override suspend fun findTasksToSurface(since: Instant): List<AiReviewTask> = io { tasks.findToSurface(since).map { it.toDomain() } }
+
+    override suspend fun saveSurfacing(task: AiReviewTask) {
+        io {
+            tasks.findById(task.id).ifPresent { e ->
+                e.emailedAt = task.emailedAt
+                e.emailHadVerdict = task.emailHadVerdict
+                e.followUpSentAt = task.followUpSentAt
+                e.telegramSentAt = task.telegramSentAt
+                tasks.save(e)
+            }
+        }
+    }
 
     override suspend fun saveResult(result: AiReviewResult): AiReviewResult = io { results.save(result.toEntity()).toDomain() }
 
@@ -225,6 +254,10 @@ class AiReviewPersistenceAdapter(
             snapshotVersion = snapshotVersion,
             snapshot = snapshotJson,
             rulesVersion = rulesVersion,
+            emailedAt = emailedAt,
+            emailHadVerdict = emailHadVerdict,
+            followUpSentAt = followUpSentAt,
+            telegramSentAt = telegramSentAt,
         )
 
     private fun AiReviewTaskEntity.toDomain() =
@@ -242,6 +275,10 @@ class AiReviewPersistenceAdapter(
             skipReason = skipReason,
             snapshotVersion = snapshotVersion,
             rulesVersion = rulesVersion,
+            emailedAt = emailedAt,
+            emailHadVerdict = emailHadVerdict,
+            followUpSentAt = followUpSentAt,
+            telegramSentAt = telegramSentAt,
         )
 
     private fun AiReviewResult.toEntity() =

@@ -79,6 +79,28 @@ class InMemoryAiReviewStore : AiReviewStorePort {
         reviewerId: String,
     ): AiReviewResult? = results[taskId to reviewerId]
 
+    override suspend fun findResults(taskId: UUID): List<AiReviewResult> =
+        results.values.filter { it.taskId == taskId }.sortedBy { it.reviewerId }
+
+    override suspend fun findSnapshot(taskId: UUID): ReviewSnapshotV1? = snapshots[taskId]
+
+    override suspend fun findTasksToSurface(since: Instant): List<AiReviewTask> =
+        tasks.values.filter {
+            it.status == AiTaskStatus.OPEN &&
+                !it.createdAt.isBefore(since) &&
+                (it.emailedAt == null || it.telegramSentAt == null || (it.emailHadVerdict == false && it.followUpSentAt == null))
+        }
+
+    override suspend fun saveSurfacing(task: AiReviewTask) {
+        tasks[task.id] =
+            tasks.getValue(task.id).copy(
+                emailedAt = task.emailedAt,
+                emailHadVerdict = task.emailHadVerdict,
+                followUpSentAt = task.followUpSentAt,
+                telegramSentAt = task.telegramSentAt,
+            )
+    }
+
     override suspend fun saveResult(result: AiReviewResult): AiReviewResult {
         results[result.taskId to result.reviewerId] = result
         return result

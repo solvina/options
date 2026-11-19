@@ -42,6 +42,21 @@ interface AiReviewStorePort {
         reviewerId: String,
     ): AiReviewResult?
 
+    /** Every reviewer's row for [taskId]. */
+    suspend fun findResults(taskId: UUID): List<AiReviewResult>
+
+    /** The frozen snapshot of [taskId], or null (missing task, or unreadable JSON). */
+    suspend fun findSnapshot(taskId: UUID): ReviewSnapshotV1?
+
+    /**
+     * OPEN tasks created since [since] with surfacing still to do: no email yet, no Telegram
+     * message yet, or a verdict follow-up still possible.
+     */
+    suspend fun findTasksToSurface(since: Instant): List<AiReviewTask>
+
+    /** Saves the task's surfacing fields (emailedAt, emailHadVerdict, followUpSentAt, telegramSentAt). */
+    suspend fun saveSurfacing(task: AiReviewTask)
+
     suspend fun saveResult(result: AiReviewResult): AiReviewResult
 
     suspend fun logAttempt(attempt: AiReviewAttempt)

@@ -59,6 +59,10 @@ data class CandidateSection(
     val maxProfitPerContract: BigDecimal,
     val maxLossPerContract: BigDecimal,
     val quantity: Int,
+    /** IV rank the candidate qualified with (also in [IvSection.rank], which is best-effort). */
+    val ivRank: Double? = null,
+    /** Account capital the sizing used. */
+    val totalCapital: BigDecimal? = null,
     /** Selection warnings (falling / rising / IV rank extreme); a flagged title is never entered. */
     val warnings: List<String>,
     val filters: FilterSection,
@@ -116,11 +120,23 @@ data class TrendSection(
     val change10dPct: Double?,
 )
 
+/**
+ * The underlying's implied-volatility context. All values here are IBKR's 30-day IV *index*
+ * (OPTION_IMPLIED_VOLATILITY), not the IV of the candidate's expiry; each leg's own IV is in
+ * [LegSection.iv].
+ */
 data class IvSection(
     val rank: Double?,
-    /** IBKR's 30-day option-implied volatility index for the underlying. */
     val currentIvIndex: Double?,
     val calculatedAt: Instant?,
+    val historyMin: Double? = null,
+    val historyMax: Double? = null,
+    /** Share (0–100) of history days with an IV index below today's. */
+    val percentile: Double? = null,
+    val historyDays: Int? = null,
+    /** Last 30 daily IV index values, oldest first. */
+    val recent30: List<Double>? = null,
+    val note: String = "IV index = IBKR 30-day implied volatility of the underlying, not this expiry; legs carry their own IV",
 )
 
 data class CalendarSection(

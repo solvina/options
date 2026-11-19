@@ -5,6 +5,7 @@ import cz.solvina.options.domain.features.aireview.CandidateReviewPort
 import cz.solvina.options.domain.features.execution.TradeExecutionPort
 import cz.solvina.options.domain.features.execution.model.TradeExecutionRequest
 import cz.solvina.options.domain.features.market.OptionChainPort
+import cz.solvina.options.domain.features.notification.OpportunityNotificationPort
 import cz.solvina.options.domain.features.regime.DirectionalBias
 import cz.solvina.options.domain.features.regime.TrendRegimeService
 import cz.solvina.options.domain.features.regime.alignment
@@ -55,6 +56,8 @@ class ScannerService(
     private val shadowSpreads: ShadowSpreadService? = null,
     // AI review of each title the first time it qualifies in a day (fire-and-forget, advisory).
     private val candidateReview: CandidateReviewPort = CandidateReviewPort.NoOp,
+    /** Candidate email when the title is entered directly (no pool); pooled titles go through [candidateReview]. */
+    private val opportunityNotifier: OpportunityNotificationPort = OpportunityNotificationPort.NoOp,
 ) : ScannerPort {
     private val ivRanksSnapshot = ConcurrentHashMap<String, Double>()
 
@@ -119,12 +122,15 @@ class ScannerService(
                 scanSymbol(symbol, totalCapital, runId) { selected ->
                     if (poolActive) {
                         pool?.offer(symbol)
-                        // First qualification today (pooled titles are skipped above): ask for a review.
-                        // Re-offers after a restart or an unfilled entry are absorbed by the task's unique key.
+                        // First qualification today (pooled titles are skipped above): ask for a review,
+                        // which also owns the candidate email (sent with the verdict, or straight away
+                        // when no review is possible). Re-offers after a restart or an unfilled entry
+                        // are absorbed by the task's unique key. The decision re-prices but never emails.
                         selected.opportunity?.let { candidateReview.requestReview(it) }
                         ivRanksSnapshot[symbol.value] = selected.request.ivRankAtEntry
                         ScanOutcome.POOLED
                     } else {
+                        selected.opportunity?.let { o -> scope.launch { opportunityNotifier.notify(o) } }
                         launchEntry(symbol, selected.request)
                         ScanOutcome.ENTERED
                     }

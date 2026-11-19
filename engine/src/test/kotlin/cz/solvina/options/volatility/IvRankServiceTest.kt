@@ -99,6 +99,11 @@ class IvRankServiceTest {
             assertEquals(50.0, result.rank, 1e-6)
             assertEquals(1, fetchCount.get())
             assertEquals(50.0, store.saved[symbol]!!.rank, 1e-6, "computed rank must be persisted")
+            val summary = store.saved[symbol]!!.summary!!
+            assertEquals(0.1, summary.min, 1e-9)
+            assertEquals(0.5, summary.max, 1e-9)
+            assertEquals(50.0, summary.percentile, 1e-9, "2 of 4 days below today's 0.3")
+            assertEquals(listOf(0.2, 0.1, 0.5, 0.3), summary.recent)
         }
 
     @Test

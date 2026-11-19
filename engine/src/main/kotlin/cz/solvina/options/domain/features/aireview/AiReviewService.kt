@@ -67,6 +67,14 @@ class AiReviewService(
         return task
     }
 
+    /** Records that [task]'s candidate email went out. */
+    suspend fun markEmailed(
+        task: AiReviewTask,
+        withVerdict: Boolean,
+    ) {
+        store.saveSurfacing(task.copy(emailedAt = Instant.now(clock), emailHadVerdict = withVerdict))
+    }
+
     /** The first pool decision after [at] on the same NY trading day, or null after the last one. */
     fun nextDecision(at: Instant): Instant? {
         val ny = at.atZone(NEW_YORK)

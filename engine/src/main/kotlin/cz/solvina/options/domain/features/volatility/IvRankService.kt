@@ -100,7 +100,16 @@ class IvRankService(
         val now = Instant.now(clock)
         val ivRank = IvRank(rank = rank, currentIv = currentIv, calculatedAt = now)
         cache[symbol] = CachedIvRank(ivRank, now)
-        runCatching { store.save(symbol, StoredIvRank(rank = rank, currentIv = currentIv, calculatedAt = now)) }
+        val ivs = ivBars.map { it.iv!! }
+        val summary =
+            IvSummary(
+                min = ivMin,
+                max = ivMax,
+                percentile = ivs.count { it < currentIv } * 100.0 / ivs.size,
+                sampleDays = ivs.size,
+                recent = ivs.takeLast(RECENT_IV_DAYS),
+            )
+        runCatching { store.save(symbol, StoredIvRank(rank = rank, currentIv = currentIv, calculatedAt = now, summary = summary)) }
             .onFailure { logger.warn { "[$symbol] Failed to persist IV rank: ${it.message}" } }
         logger.info {
             "[$symbol] IV Rank: ${"%.1f".format(
@@ -108,5 +117,9 @@ class IvRankService(
             )}% (iv=${"%.4f".format(currentIv)}, min=${"%.4f".format(ivMin)}, max=${"%.4f".format(ivMax)})"
         }
         return ivRank
+    }
+
+    private companion object {
+        const val RECENT_IV_DAYS = 30
     }
 }

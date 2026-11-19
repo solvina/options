@@ -364,3 +364,6 @@ ai-review:
   max-attempts: 3
   daily-task-cap: 40            # runaway guard, not a budget
   decision-times-ny: ["13:00", "15:00"]   # must match PoolDecisionScheduler
+  email-wait-minutes: 15        # candidate email waits this long for the verdict (never past the decision)
+  # "AI reviews" forum topic in the alerts chat (same bot); blank = no Telegram verdicts.
+  telegram-message-thread-id: ${AI_REVIEW_TELEGRAM_TOPIC_ID:}

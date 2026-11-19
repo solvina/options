@@ -30,7 +30,16 @@ data class AiReviewConfig(
     val decisionTimesNy: List<LocalTime> = listOf(LocalTime.of(13, 0), LocalTime.of(15, 0)),
     /** A reviewer with no heartbeat for this long is reported SILENT. */
     val silentAfterSeconds: Long = 180,
+    /**
+     * How long the candidate email waits for the primary verdict before going out "AI review
+     * unavailable" (never past the task's decision). A verdict arriving later is a follow-up.
+     */
+    val emailWaitMinutes: Long = 15,
+    /** Forum-topic thread for verdict messages (same bot and chat as engine alerts). Blank = none. */
+    val telegramMessageThreadId: String = "",
 ) {
+    val primaryReviewer: ReviewerConfig? get() = enabledReviewers.firstOrNull { it.primary }
+
     fun reviewer(id: String): ReviewerConfig? = reviewers.firstOrNull { it.id == id && it.enabled }
 
     val enabledReviewers: List<ReviewerConfig> get() = reviewers.filter { it.enabled }

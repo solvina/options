@@ -19,6 +19,9 @@ import cz.solvina.options.domain.features.spread.SpreadQueryFacade
 import cz.solvina.options.domain.features.spread.model.StrategyId
 import cz.solvina.options.domain.features.universe.InstrumentConfig
 import cz.solvina.options.domain.features.universe.UniversePort
+import cz.solvina.options.domain.features.volatility.IvRankStorePort
+import cz.solvina.options.domain.features.volatility.IvSummary
+import cz.solvina.options.domain.features.volatility.StoredIvRank
 import cz.solvina.options.domain.features.volatility.VolatilityPort
 import cz.solvina.options.domain.models.IvRank
 import cz.solvina.options.domain.models.Money
@@ -98,6 +101,7 @@ class ReviewSnapshotBuilderTest {
 
     private val regime = mockk<TrendRegimeService>()
     private val volatility = mockk<VolatilityPort>()
+    private val ivStore = mockk<IvRankStorePort>()
     private val universe = mockk<UniversePort>()
     private val spreadQuery = mockk<SpreadQueryFacade>()
     private val shadows = mockk<ShadowSpreadPort>()
@@ -106,6 +110,7 @@ class ReviewSnapshotBuilderTest {
         ReviewSnapshotBuilder(
             regime,
             volatility,
+            ivStore,
             universe,
             spreadQuery,
             shadows,
@@ -132,6 +137,8 @@ class ReviewSnapshotBuilderTest {
         coEvery { spreadQuery.symbolsWithActiveSpread() } returns setOf(Symbol("MPC"))
         coEvery { spreadQuery.activeSpreadCount() } returns 1
         coEvery { shadows.findAll() } returns emptyList()
+        every { ivStore.find(nue) } returns
+            StoredIvRank(62.0, 0.34, Instant.EPOCH, IvSummary(0.22, 0.41, 71.0, 250, listOf(0.30, Double.NaN, 0.34)))
     }
 
     @Test
@@ -142,6 +149,9 @@ class ReviewSnapshotBuilderTest {
 
             val snapshot = builder().build(opportunity)
 
+            assertEquals(0.22, snapshot.iv?.historyMin)
+            assertEquals(71.0, snapshot.iv?.percentile)
+            assertEquals(listOf(0.30, 0.34), snapshot.iv?.recent30)
             assertNull(snapshot.candidate.longLeg.delta)
             assertTrue(snapshot.candidate.longLeg.greeksEstimated)
             assertEquals(-0.24, snapshot.candidate.shortLeg.delta)

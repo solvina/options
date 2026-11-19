@@ -2,6 +2,7 @@ package cz.solvina.options.adapters.outbound.notification
 
 import cz.solvina.options.domain.features.market.model.OptionQuote
 import cz.solvina.options.domain.features.notification.OpportunityNotificationPort
+import cz.solvina.options.domain.features.notification.ReviewNote
 import cz.solvina.options.domain.features.notification.SpreadOpportunity
 import cz.solvina.options.domain.models.OptionType
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -48,7 +49,7 @@ class SmtpOpportunityNotifier(
     private val lastSentAt = ConcurrentHashMap<String, Instant>()
 
     override suspend fun notify(opportunity: SpreadOpportunity) {
-        if (!config.enabled || config.username.isBlank() || config.password.isBlank() || config.to.isBlank()) {
+        if (!configured()) {
             logger.debug { "Opportunity email suppressed (disabled/unconfigured): ${opportunity.symbol.value}" }
             return
         }
@@ -58,21 +59,72 @@ class SmtpOpportunityNotifier(
             return
         }
 
-        val subject = subjectFor(opportunity)
+        send(subjectFor(opportunity), plainBody(opportunity), htmlBody(opportunity))
+    }
+
+    override suspend fun notifyReviewed(
+        opportunity: SpreadOpportunity,
+        review: ReviewNote,
+        threadKey: String,
+    ) {
+        if (!configured()) return
+        lastSentAt[dedupeKey(opportunity)] = Instant.now(clock) // a later plain email of the same spread is a duplicate
+        send(
+            subject = reviewedSubject(opportunity, review),
+            plain = plainReview(review) + "\n" + plainBody(opportunity),
+            html = htmlBody(opportunity, htmlReview(review)),
+            messageId = messageId(threadKey),
+        )
+    }
+
+    override suspend fun notifyReviewFollowUp(
+        opportunity: SpreadOpportunity,
+        review: ReviewNote,
+        threadKey: String,
+    ) {
+        if (!configured()) return
+        val original = reviewedSubject(opportunity, review.copy(verdict = null))
+        val o = opportunity
+        val intro = "AI verdict for ${o.symbol.value} ${o.strategyLabel}, which arrived after the candidate email:"
+        send(
+            subject = "Re: $original",
+            plain = intro + "\n\n" + plainReview(review),
+            html = "<div style=\"font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;max-width:720px\"><p>${esc(
+                intro,
+            )}</p>${htmlReview(review)}</div>",
+            inReplyTo = messageId(threadKey),
+        )
+    }
+
+    private fun configured(): Boolean =
+        config.enabled && config.username.isNotBlank() && config.password.isNotBlank() && config.to.isNotBlank()
+
+    private fun messageId(threadKey: String) = "<$threadKey@options-engine>"
+
+    private suspend fun send(
+        subject: String,
+        plain: String,
+        html: String,
+        messageId: String? = null,
+        inReplyTo: String? = null,
+    ) {
         try {
             withContext(Dispatchers.IO) {
-                val session = buildSession()
                 val message =
-                    MimeMessage(session).apply {
+                    ThreadedMessage(buildSession(), messageId).apply {
                         setFrom(InternetAddress(config.from.ifBlank { config.username }))
                         setRecipients(Message.RecipientType.TO, InternetAddress.parse(config.to))
-                        setSubject(subject)
-                        val text = MimeBodyPart().apply { setText(plainBody(opportunity), "utf-8") }
-                        val html = MimeBodyPart().apply { setContent(htmlBody(opportunity), "text/html; charset=utf-8") }
+                        setSubject(subject, "utf-8")
+                        if (inReplyTo != null) {
+                            setHeader("In-Reply-To", inReplyTo)
+                            setHeader("References", inReplyTo)
+                        }
+                        val text = MimeBodyPart().apply { setText(plain, "utf-8") }
+                        val htmlPart = MimeBodyPart().apply { setContent(html, "text/html; charset=utf-8") }
                         setContent(
                             MimeMultipart().apply {
                                 addBodyPart(text)
-                                addBodyPart(html)
+                                addBodyPart(htmlPart)
                             },
                         )
                     }
@@ -83,6 +135,105 @@ class SmtpOpportunityNotifier(
             logger.warn { "Opportunity email '$subject' to ${config.to} failed: ${e.message}" }
         }
     }
+
+    /** Fixed Message-ID so a follow-up can reply into the candidate's thread. */
+    private class ThreadedMessage(
+        session: Session,
+        private val fixedId: String?,
+    ) : MimeMessage(session) {
+        override fun updateMessageID() {
+            if (fixedId != null) setHeader("Message-ID", fixedId) else super.updateMessageID()
+        }
+    }
+
+    private fun reviewedSubject(
+        o: SpreadOpportunity,
+        review: ReviewNote,
+    ): String {
+        val tag =
+            when (review.verdict) {
+                "VETO" -> "⛔ AI VETO"
+                "APPROVE" -> "✅ AI OK"
+                "ABSTAIN" -> "❔ AI no view"
+                else -> "❔ AI unavailable"
+            }
+        return "$tag · " + subjectFor(o)
+    }
+
+    private fun verdictLine(r: ReviewNote): String =
+        if (r.verdict == null) {
+            "AI review unavailable: ${r.unavailableReason ?: "no verdict"}"
+        } else {
+            "AI verdict: ${r.verdict} (confidence ${"%.2f".format(r.confidence ?: 0.0)})" +
+                (if (r.late) " — LATE, after the decision" else "") +
+                " · ${r.reviewerId}${r.model?.let { " / $it" } ?: ""}"
+        }
+
+    private fun plainReview(r: ReviewNote): String =
+        buildString {
+            appendLine("AI REVIEW (advisory only: it does not block or place trades)")
+            appendLine("  ${verdictLine(r)}")
+            r.reason?.let { appendLine("  $it") }
+            if (r.risks.isNotEmpty()) {
+                appendLine("  Risks:")
+                r.risks.forEach { appendLine("   - [${it.severity}] ${it.category}: ${it.description}") }
+            }
+            r.newsSummary?.let { appendLine("  News: $it") }
+            if (r.sources.isNotEmpty()) {
+                appendLine("  Sources:")
+                r.sources.take(MAX_SOURCES).forEach {
+                    appendLine(
+                        "   - ${it.title}${it.publishedAt?.let { d ->
+                            " ($d)"
+                        } ?: ""}${it.url?.let { u -> " $u" } ?: ""}",
+                    )
+                }
+            }
+            r.otherReviewers.forEach { appendLine("  Also: $it") }
+        }
+
+    private fun htmlReview(r: ReviewNote): String {
+        val color =
+            when (r.verdict) {
+                "VETO" -> "#b91c1c"
+                "APPROVE" -> "#15803d"
+                else -> "#6b7280"
+            }
+        val risks =
+            if (r.risks.isEmpty()) {
+                ""
+            } else {
+                "<ul style=\"margin:6px 0\">" +
+                    r.risks.joinToString("") { "<li><b>${esc(it.severity)}</b> ${esc(it.category)}: ${esc(it.description)}</li>" } + "</ul>"
+            }
+        val sources =
+            if (r.sources.isEmpty()) {
+                ""
+            } else {
+                "<div style=\"font-size:12px;color:#555\">Sources: " +
+                    r.sources.take(MAX_SOURCES).joinToString(" &middot; ") { s ->
+                        val label = esc(s.title) + (s.publishedAt?.let { " (${esc(it.take(10))})" } ?: "")
+                        s.url?.takeIf { it.startsWith("http") }?.let { "<a href=\"${esc(it)}\">$label</a>" } ?: label
+                    } + "</div>"
+            }
+        val news = r.newsSummary?.let { "<p style=\"margin:6px 0;color:#333\"><b>News:</b> ${esc(it)}</p>" }.orEmpty()
+        val others = r.otherReviewers.joinToString("") { "<div style=\"font-size:12px\">Also: ${esc(it)}</div>" }
+        return """
+            <div style="border-left:4px solid $color;padding:8px 12px;margin:0 0 16px;background:#fafafa">
+              <div style="font-weight:600;color:$color">${esc(verdictLine(r))}</div>
+              ${r.reason?.let { "<p style=\"margin:6px 0\">${esc(it)}</p>" }.orEmpty()}
+              $risks$news$sources$others
+              <div style="font-size:11px;color:#888;margin-top:6px">Advisory only: the AI review does not block or place trades.</div>
+            </div>
+            """.trimIndent()
+    }
+
+    private fun esc(s: String): String =
+        s
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace("\"", "&quot;")
 
     /** Stable identity of an opportunity — the same spread re-found on a later scan shares this key. */
     private fun dedupeKey(o: SpreadOpportunity): String =
@@ -199,7 +350,10 @@ class SmtpOpportunityNotifier(
         }
     }
 
-    private fun htmlBody(o: SpreadOpportunity): String {
+    private fun htmlBody(
+        o: SpreadOpportunity,
+        reviewHtml: String = "",
+    ): String {
         val right = if (o.shortLeg.contract.type == OptionType.PUT) "P" else "C"
         val s = o.shortLeg
         val l = o.longLeg
@@ -264,6 +418,7 @@ class SmtpOpportunityNotifier(
               <div style="color:#666;margin-bottom:16px">
                 <b>${o.symbol.value}</b> (${o.session} session) &middot; ${tsFormat.format(o.detectedAt)} &middot; scan-triggered candidate
               </div>
+              $reviewHtml
               ${if (o.warnings.isEmpty()) "" else "<p style=\"color:#b45309;font-weight:600\">Warnings: ${o.warnings.joinToString()} — the engine will not trade this automatically.</p>"}
               <h3 style="margin:16px 0 6px">Why it qualified</h3>
               $whyTable
@@ -341,4 +496,8 @@ class SmtpOpportunityNotifier(
     private fun limitText(o: SpreadOpportunity): String =
         "\$${money(o.suggestedLimit)} credit" +
             (o.fairCredit?.let { " (fair value \$${money(it)}, mid \$${money(o.midCredit)})" } ?: " (mid; no model value)")
+
+    private companion object {
+        const val MAX_SOURCES = 8
+    }
 }

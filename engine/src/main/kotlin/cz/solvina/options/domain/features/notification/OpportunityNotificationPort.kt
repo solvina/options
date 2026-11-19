@@ -9,9 +9,27 @@ package cz.solvina.options.domain.features.notification
  * or delay the scan loop.
  */
 interface OpportunityNotificationPort {
+    /** Plain candidate email (AI review off, or no review possible), deduplicated per spread. */
     suspend fun notify(opportunity: SpreadOpportunity)
 
-    /** Default wired into the candidate selectors so unit tests need not supply a notifier. */
+    /**
+     * The candidate email with its AI review section, sent once per review task. [threadKey]
+     * becomes the Message-ID so a later [notifyReviewFollowUp] lands in the same thread.
+     */
+    suspend fun notifyReviewed(
+        opportunity: SpreadOpportunity,
+        review: ReviewNote,
+        threadKey: String,
+    ) = notify(opportunity)
+
+    /** Short reply in the candidate's thread: the verdict that arrived after the email went out. */
+    suspend fun notifyReviewFollowUp(
+        opportunity: SpreadOpportunity,
+        review: ReviewNote,
+        threadKey: String,
+    ) = Unit
+
+    /** Default for tests that need not supply a notifier. */
     object NoOp : OpportunityNotificationPort {
         override suspend fun notify(opportunity: SpreadOpportunity) = Unit
     }
