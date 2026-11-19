@@ -20,6 +20,8 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -28,6 +30,7 @@ import java.math.BigDecimal
 import java.time.Clock
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 
 private val logger = KotlinLogging.logger {}
 private val tradeLogger = KotlinLogging.logger("TRADES")
@@ -60,6 +63,11 @@ class ScannerService(
     private val opportunityNotifier: OpportunityNotificationPort = OpportunityNotificationPort.NoOp,
 ) : ScannerPort {
     private val ivRanksSnapshot = ConcurrentHashMap<String, Double>()
+
+    // Completion order of each symbol's last evaluation (higher = more recent). In-memory: after a
+    // restart the first run uses universe order, later runs rotate from there.
+    private val scanSequence = ConcurrentHashMap<Symbol, Long>()
+    private val scanCounter = AtomicLong()
 
     // A decision must not interleave with a scan: both walk symbols and may launch entries.
     private val passMutex = Mutex()
@@ -101,55 +109,73 @@ class ScannerService(
         // Fresh run: the status table only ever shows the symbols evaluated in this pass.
         val runId = scanStatusRegistry.beginRun()
 
-        val watchlist = universePort.getActiveSymbols()
+        // Least-recently-scanned first. A US-session run can hit its time limit before the end of
+        // the list; a fixed order then starves the same tail forever. Symbols a run never reached
+        // (or never scanned since startup) sort first and keep universe order among themselves.
+        val watchlist = universePort.getActiveSymbols().sortedBy { scanSequence[it] ?: -1L }
+        logger.debug { "Scan order: ${watchlist.joinToString { it.value }}" }
         for (symbol in watchlist) {
-            if (symbolsWithOpenSpread.contains(symbol) || executionPort.isInFlight(symbol)) {
-                logger.debug { "[$symbol] Already has open or in-flight spread, skipping" }
-                recordStatus(symbol, runId, ScanOutcome.ALREADY_OPEN, null, null, null)
-                continue
-            }
-            if (executionPort.isCoolingDown(symbol)) {
-                logger.debug { "[$symbol] Entry cooldown active, skipping" }
-                recordStatus(symbol, runId, ScanOutcome.COOLDOWN, null, null, null)
-                continue
-            }
-            if (poolActive && pool?.contains(symbol) == true) {
-                // Already waiting for the decision, which re-prices it; no need to evaluate it again.
-                recordStatus(symbol, runId, ScanOutcome.POOLED, null, null, null)
-                continue
-            }
-            runCatching {
-                scanSymbol(symbol, totalCapital, runId) { selected ->
-                    if (poolActive) {
-                        pool?.offer(symbol)
-                        // First qualification today (pooled titles are skipped above): ask for a review,
-                        // which also owns the candidate email (sent with the verdict, or straight away
-                        // when no review is possible). Re-offers after a restart or an unfilled entry
-                        // are absorbed by the task's unique key. The decision re-prices but never emails.
-                        selected.opportunity?.let { candidateReview.requestReview(it) }
-                        ivRanksSnapshot[symbol.value] = selected.request.ivRankAtEntry
-                        ScanOutcome.POOLED
-                    } else {
-                        selected.opportunity?.let { o -> scope.launch { opportunityNotifier.notify(o) } }
-                        launchEntry(symbol, selected.request)
-                        ScanOutcome.ENTERED
-                    }
-                }
-            }.onFailure { e ->
-                logger.error(e) { "[$symbol] Error during scan: ${e.message}" }
-                recordStatus(
-                    symbol,
-                    runId,
-                    ScanOutcome.ERROR,
-                    null,
-                    null,
-                    null,
-                    errorMessage = "${e::class.simpleName}: ${e.message}",
-                )
-            }
+            scanWatchlistSymbol(symbol, symbolsWithOpenSpread, totalCapital, runId)
+            scanSequence[symbol] = scanCounter.incrementAndGet()
         }
 
         logger.info { "Scanner run complete" }
+    }
+
+    private suspend fun scanWatchlistSymbol(
+        symbol: Symbol,
+        symbolsWithOpenSpread: Set<Symbol>,
+        totalCapital: Money,
+        runId: Long,
+    ) {
+        if (symbolsWithOpenSpread.contains(symbol) || executionPort.isInFlight(symbol)) {
+            logger.debug { "[$symbol] Already has open or in-flight spread, skipping" }
+            recordStatus(symbol, runId, ScanOutcome.ALREADY_OPEN, null, null, null)
+            return
+        }
+        if (executionPort.isCoolingDown(symbol)) {
+            logger.debug { "[$symbol] Entry cooldown active, skipping" }
+            recordStatus(symbol, runId, ScanOutcome.COOLDOWN, null, null, null)
+            return
+        }
+        if (poolActive && pool?.contains(symbol) == true) {
+            // Already waiting for the decision, which re-prices it; no need to evaluate it again.
+            recordStatus(symbol, runId, ScanOutcome.POOLED, null, null, null)
+            return
+        }
+        runCatching {
+            scanSymbol(symbol, totalCapital, runId) { selected ->
+                if (poolActive) {
+                    pool?.offer(symbol)
+                    // First qualification today (pooled titles are skipped above): ask for a review,
+                    // which also owns the candidate email (sent with the verdict, or straight away
+                    // when no review is possible). Re-offers after a restart or an unfilled entry
+                    // are absorbed by the task's unique key. The decision re-prices but never emails.
+                    selected.opportunity?.let { candidateReview.requestReview(it) }
+                    ivRanksSnapshot[symbol.value] = selected.request.ivRankAtEntry
+                    ScanOutcome.POOLED
+                } else {
+                    selected.opportunity?.let { o -> scope.launch { opportunityNotifier.notify(o) } }
+                    launchEntry(symbol, selected.request)
+                    ScanOutcome.ENTERED
+                }
+            }
+        }.onFailure { e ->
+            // The run's own timeout cancelled us: stop here instead of stamping every remaining
+            // symbol as an ERROR (and as scanned) — they lead the next run instead. A timeout that
+            // leaked out of a selector (our job still active) stays a per-symbol error.
+            currentCoroutineContext().ensureActive()
+            logger.error(e) { "[$symbol] Error during scan: ${e.message}" }
+            recordStatus(
+                symbol,
+                runId,
+                ScanOutcome.ERROR,
+                null,
+                null,
+                null,
+                errorMessage = "${e::class.simpleName}: ${e.message}",
+            )
+        }
     }
 
     /**

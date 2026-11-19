@@ -37,8 +37,11 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.jupiter.api.Test
 import java.math.BigDecimal
 import java.time.Clock
@@ -331,6 +334,56 @@ class ScannerServiceTest {
 
             scanner.decidePool(finalOfDay = true)
             assertEquals(emptyList(), pool.symbols())
+        }
+
+    // -------------------------------------------------------------------------
+    // Scan order rotation
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `a run cut off by its time limit leaves the unreached symbols at the front of the next run`() =
+        runTest {
+            val iwm = Symbol("IWM")
+            val scanner = buildScanner(watchlist = listOf(spy, qqq, iwm))
+            val order = mutableListOf<Symbol>()
+            var firstRun = true
+            // Stubbed per symbol: mockk's firstArg() hands back the value class's raw String.
+            for (symbol in listOf(spy, qqq, iwm)) {
+                coEvery { selector.select(symbol, any()) } coAnswers {
+                    order += symbol
+                    if (firstRun && symbol == qqq) delay(60_000)
+                    rejectedResult
+                }
+            }
+
+            withTimeoutOrNull(1_000) { scanner.scan() }
+            assertEquals(listOf(spy, qqq), order)
+
+            firstRun = false
+            order.clear()
+            scanner.scan()
+
+            // QQQ was interrupted and IWM never reached; SPY finished, so it goes last.
+            assertEquals(listOf(qqq, iwm, spy), order)
+        }
+
+    @Test
+    fun `a timeout leaking out of one symbol's evaluation does not abort the rest of the run`() =
+        runTest {
+            val iwm = Symbol("IWM")
+            val scanner = buildScanner(watchlist = listOf(spy, qqq, iwm))
+            val order = mutableListOf<Symbol>()
+            for (symbol in listOf(spy, qqq, iwm)) {
+                coEvery { selector.select(symbol, any()) } coAnswers {
+                    order += symbol
+                    if (symbol == qqq) withTimeout(1) { delay(1_000) }
+                    rejectedResult
+                }
+            }
+
+            scanner.scan()
+
+            assertEquals(listOf(spy, qqq, iwm), order)
         }
 
     private fun buildScanner(
