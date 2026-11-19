@@ -154,6 +154,24 @@ export type ShadowSpreadDto = {
      * Selection warnings at the decision (FALLING, RISING, IV_EXTREME); empty = passed the filters
      */
     flags: Array<string>;
+    /**
+     * In the simulated portfolio re-run without the primary AI reviewer's vetoes
+     */
+    aiSelected: boolean;
+    /**
+     * APPROVE / VETO / ABSTAIN as the decision saw it; null = none in time
+     */
+    aiVerdict?: string | null;
+    aiConfidence?: number | null;
+    /**
+     * The reviewer's reason (any time, also late)
+     */
+    aiReason?: string | null;
+    /**
+     * An AI review task existed for this title and day
+     */
+    aiReviewed: boolean;
+    aiRulesVersion?: string | null;
 };
 
 export type SpreadRulesDto = {
