@@ -83,3 +83,5 @@ databaseChangeLog:
       file: db/changelog/v43__shadow_spreads_pool_decision.yaml
   - include:
       file: db/changelog/v44__shadow_spreads_flags.yaml
+  - include:
+      file: db/changelog/v46__ai_review.yaml

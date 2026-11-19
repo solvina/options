@@ -3,6 +3,26 @@
 Notable strategy, engine and operations changes. Newest first. Rendered in the frontend under
 **Maintenance › Changelog**.
 
+## 2026-11-19 — AI review queue and API (off by default)
+
+First delivery of the AI candidate review (plan: `engine/docs/AI_CANDIDATE_REVIEW_PLAN.md`). The
+engine now owns a review queue and a versioned HTTP API, `/ai-review/*`, for any AI reviewer:
+Claude, OpenAI, or a script. No reviewer exists yet and nothing changes in trading.
+
+- **One task per title, strategy and New York trading day.** It's created the first time a title
+  joins the day's pool, with a frozen snapshot of what the engine knew: the spread with both
+  legs' quotes and greeks, trend, IV rank, earnings and dividend dates, open positions, and the
+  title's recent would-be trades. Its deadline is the next pool decision (13:00 or 15:00 NY).
+  Titles that first qualify after 15:00 are recorded as skipped, because no decision will use them.
+- **Reviewers only claim, read and answer.** The engine handles leases, retries, deadlines and
+  validation. A login or rate-limit failure doesn't use up one of the task's 3 attempts. Only the
+  verdict and confidence carry meaning for the engine; everything else is stored and shown.
+- **Kept forever for later evaluation:** the exact input, the rule configuration (by hash), the
+  prompt text (by hash), the model's raw answer, its sources and every attempt.
+- Reviewer calls need a bearer token, because the engine API is otherwise open on the LAN.
+- Switched on per box: `AI_REVIEW_ENABLED=true` and `AI_REVIEW_API_TOKEN=…` in `engine.env`.
+  Migration v46 adds the tables.
+
 ## 2026-11-17 — Selection filters and a simulation sized for the first live account
 
 The first live account will start with about $5–6k, so the simulated "selected" portfolio now

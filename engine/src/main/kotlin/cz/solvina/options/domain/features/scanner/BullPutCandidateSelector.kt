@@ -280,7 +280,7 @@ class BullPutCandidateSelector(
 
         // Notification-only: emails the full candidate while the per-leg quotes/greeks are still in
         // scope. Best-effort — the notifier swallows failures; the session lookup is guarded too.
-        opportunityNotifier.notify(
+        val opportunity =
             SpreadOpportunity(
                 strategyId = StrategyId.BULL_PUT,
                 symbol = symbol,
@@ -319,8 +319,8 @@ class BullPutCandidateSelector(
                 underlyingStopBufferPct = config.underlyingStopBufferPct,
                 timeProfitDte = config.timeProfitDte,
                 driftProtectionPct = config.driftProtectionPct,
-            ),
-        )
+            )
+        opportunityNotifier.notify(opportunity)
 
         val request =
             TradeExecutionRequest(
@@ -338,6 +338,6 @@ class BullPutCandidateSelector(
                 boughtMid = boughtQuote.mid.amount,
                 underlyingPriceAtEntry = underlyingPrice.amount,
             )
-        return CandidateResult.Selected(request, detail)
+        return CandidateResult.Selected(request, detail, opportunity)
     }
 }

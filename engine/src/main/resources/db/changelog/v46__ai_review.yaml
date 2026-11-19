@@ -1,0 +1,148 @@
+databaseChangeLog:
+  # ---------------------------------------------------------------------------
+  # AI review of spread candidates (2026-11-19, engine/docs/AI_CANDIDATE_REVIEW_PLAN.md D3).
+  #
+  # The engine owns the queue; AI reviewers are HTTP clients of the AI Review API. A task is one
+  # title + strategy on one New York trading day, with the frozen market snapshot the reviewer
+  # sees. Each enabled reviewer gets its own result row. Nothing here is ever deleted: these rows
+  # are the record for judging the reviewers months later (exact input, rules, prompt, raw output,
+  # every attempt).
+  #
+  # v45 is reserved for the IV-summary columns on iv_rank_cache (D1).
+  # ---------------------------------------------------------------------------
+  - changeSet:
+      id: v46__ai_review
+      author: claude
+      changes:
+        - createTable:
+            tableName: ai_review_task
+            columns:
+              - column: { name: id, type: UUID, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: created_at, type: "TIMESTAMP WITH TIME ZONE", constraints: { nullable: false } }
+              - column: { name: trading_date, type: DATE, constraints: { nullable: false } }
+              - column: { name: strategy_id, type: TEXT, constraints: { nullable: false } }
+              - column: { name: symbol, type: TEXT, constraints: { nullable: false } }
+              - column: { name: expiry, type: DATE, constraints: { nullable: false } }
+              - column: { name: short_strike, type: "NUMERIC(10, 2)", constraints: { nullable: false } }
+              - column: { name: long_strike, type: "NUMERIC(10, 2)", constraints: { nullable: false } }
+              - column: { name: deadline_at, type: "TIMESTAMP WITH TIME ZONE" }
+              - column: { name: status, type: TEXT, constraints: { nullable: false } }
+              - column: { name: skip_reason, type: TEXT }
+              - column: { name: snapshot_version, type: INT, constraints: { nullable: false } }
+              - column: { name: snapshot, type: JSONB, constraints: { nullable: false } }
+              - column: { name: rules_version, type: TEXT }
+              # Surfacing (D5) and decision/outcome links (D6) — filled later by those deliveries.
+              - column: { name: emailed_at, type: "TIMESTAMP WITH TIME ZONE" }
+              - column: { name: telegram_sent_at, type: "TIMESTAMP WITH TIME ZONE" }
+              - column: { name: spread_id, type: UUID }
+              - column: { name: shadow_spread_id, type: UUID }
+              - column: { name: decision_at, type: "TIMESTAMP WITH TIME ZONE" }
+              - column: { name: decision_action, type: TEXT }
+              - column: { name: decision_rank, type: INT }
+              - column: { name: decision_score, type: "NUMERIC(8, 4)" }
+              - column: { name: decision_expiry, type: DATE }
+              - column: { name: decision_short_strike, type: "NUMERIC(10, 2)" }
+              - column: { name: decision_long_strike, type: "NUMERIC(10, 2)" }
+              - column: { name: decision_mid_credit, type: "NUMERIC(10, 4)" }
+              - column: { name: would_gate, type: BOOLEAN }
+              - column: { name: gated, type: BOOLEAN }
+        - addUniqueConstraint:
+            tableName: ai_review_task
+            columnNames: trading_date, strategy_id, symbol
+            constraintName: uq_ai_review_task_day_strategy_symbol
+        - createIndex:
+            tableName: ai_review_task
+            indexName: idx_ai_review_task_created
+            columns:
+              - column: { name: created_at }
+
+        - createTable:
+            tableName: ai_review_result
+            columns:
+              - column: { name: id, type: UUID, constraints: { primaryKey: true, nullable: false } }
+              - column:
+                  name: task_id
+                  type: UUID
+                  constraints: { nullable: false, foreignKeyName: fk_ai_review_result_task, references: ai_review_task(id) }
+              - column: { name: reviewer_id, type: TEXT, constraints: { nullable: false } }
+              - column: { name: status, type: TEXT, constraints: { nullable: false } }
+              - column: { name: attempts, type: INT, defaultValueNumeric: 0, constraints: { nullable: false } }
+              - column: { name: lease_token, type: TEXT }
+              - column: { name: lease_expires_at, type: "TIMESTAMP WITH TIME ZONE" }
+              - column: { name: claimed_at, type: "TIMESTAMP WITH TIME ZONE" }
+              - column: { name: contract_version, type: TEXT }
+              - column: { name: verdict, type: TEXT }
+              - column: { name: confidence, type: "NUMERIC(5, 4)" }
+              - column: { name: reason, type: TEXT }
+              - column: { name: risks, type: JSONB }
+              - column: { name: news_summary, type: TEXT }
+              - column: { name: sources, type: JSONB }
+              - column: { name: provenance, type: JSONB }
+              - column: { name: extras, type: JSONB }
+              - column: { name: raw_response, type: TEXT }
+              - column: { name: prompt_hash, type: TEXT }
+              - column: { name: prompt_unregistered, type: BOOLEAN, defaultValueBoolean: false, constraints: { nullable: false } }
+              - column: { name: model, type: TEXT }
+              - column: { name: late, type: BOOLEAN, defaultValueBoolean: false, constraints: { nullable: false } }
+              - column: { name: completed_at, type: "TIMESTAMP WITH TIME ZONE" }
+              - column: { name: last_failure_kind, type: TEXT }
+              - column: { name: last_failure, type: TEXT }
+        - addUniqueConstraint:
+            tableName: ai_review_result
+            columnNames: task_id, reviewer_id
+            constraintName: uq_ai_review_result_task_reviewer
+        - createIndex:
+            tableName: ai_review_result
+            indexName: idx_ai_review_result_reviewer_status
+            columns:
+              - column: { name: reviewer_id }
+              - column: { name: status }
+
+        # Append-only: one row per claim / result / failure / lease expiry / expiry.
+        - createTable:
+            tableName: ai_review_attempt
+            columns:
+              - column: { name: id, type: BIGINT, autoIncrement: true, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: task_id, type: UUID, constraints: { nullable: false } }
+              - column: { name: reviewer_id, type: TEXT, constraints: { nullable: false } }
+              - column: { name: attempt, type: INT, constraints: { nullable: false } }
+              - column: { name: event, type: TEXT, constraints: { nullable: false } }
+              - column: { name: failure_kind, type: TEXT }
+              - column: { name: message, type: TEXT }
+              - column: { name: at, type: "TIMESTAMP WITH TIME ZONE", constraints: { nullable: false } }
+        - createIndex:
+            tableName: ai_review_attempt
+            indexName: idx_ai_review_attempt_task
+            columns:
+              - column: { name: task_id }
+
+        - createTable:
+            tableName: ai_review_prompt
+            columns:
+              - column: { name: prompt_hash, type: TEXT, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: reviewer_id, type: TEXT, constraints: { nullable: false } }
+              - column: { name: prompt_version, type: TEXT, constraints: { nullable: false } }
+              - column: { name: text, type: TEXT, constraints: { nullable: false } }
+              - column: { name: first_seen_at, type: "TIMESTAMP WITH TIME ZONE", constraints: { nullable: false } }
+
+        - createTable:
+            tableName: ai_review_rules
+            columns:
+              - column: { name: rules_version, type: TEXT, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: config, type: JSONB, constraints: { nullable: false } }
+              - column: { name: first_seen_at, type: "TIMESTAMP WITH TIME ZONE", constraints: { nullable: false } }
+
+        # Current state per reviewer, written by the engine from heartbeats and results.
+        - createTable:
+            tableName: ai_reviewer_status
+            columns:
+              - column: { name: reviewer_id, type: TEXT, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: state, type: TEXT, constraints: { nullable: false } }
+              - column: { name: message, type: TEXT }
+              - column: { name: provider, type: TEXT }
+              - column: { name: model, type: TEXT }
+              - column: { name: reviewer_version, type: TEXT }
+              - column: { name: last_heartbeat_at, type: "TIMESTAMP WITH TIME ZONE" }
+              - column: { name: last_result_at, type: "TIMESTAMP WITH TIME ZONE" }
+              - column: { name: last_failure, type: TEXT }
+              - column: { name: consecutive_failures, type: INT, defaultValueNumeric: 0, constraints: { nullable: false } }

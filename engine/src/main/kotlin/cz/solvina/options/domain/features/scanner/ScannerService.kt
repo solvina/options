@@ -1,6 +1,7 @@
 package cz.solvina.options.domain.features.scanner
 
 import cz.solvina.options.domain.features.account.EffectiveAccountService
+import cz.solvina.options.domain.features.aireview.CandidateReviewPort
 import cz.solvina.options.domain.features.execution.TradeExecutionPort
 import cz.solvina.options.domain.features.execution.model.TradeExecutionRequest
 import cz.solvina.options.domain.features.market.OptionChainPort
@@ -52,6 +53,8 @@ class ScannerService(
     private val poolConfig: ScannerPoolConfig = ScannerPoolConfig(),
     private val pool: DailyCandidatePool? = null,
     private val shadowSpreads: ShadowSpreadService? = null,
+    // AI review of each title the first time it qualifies in a day (fire-and-forget, advisory).
+    private val candidateReview: CandidateReviewPort = CandidateReviewPort.NoOp,
 ) : ScannerPort {
     private val ivRanksSnapshot = ConcurrentHashMap<String, Double>()
 
@@ -116,6 +119,9 @@ class ScannerService(
                 scanSymbol(symbol, totalCapital, runId) { selected ->
                     if (poolActive) {
                         pool?.offer(symbol)
+                        // First qualification today (pooled titles are skipped above): ask for a review.
+                        // Re-offers after a restart or an unfilled entry are absorbed by the task's unique key.
+                        selected.opportunity?.let { candidateReview.requestReview(it) }
                         ivRanksSnapshot[symbol.value] = selected.request.ivRankAtEntry
                         ScanOutcome.POOLED
                     } else {

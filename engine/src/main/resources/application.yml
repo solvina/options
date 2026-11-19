@@ -349,3 +349,18 @@ stock-strategies:
     lookback-days: 45            # one IBKR request either way at daily bars; the width heals gaps
     pacing-ms: 10000             # ~6 IBKR historical requests/min, well inside the ~60/10min limit
     timeout-minutes: 60
+
+# AI review of spread candidates (engine/docs/AI_CANDIDATE_REVIEW_PLAN.md). Off by default. The
+# engine owns the queue; reviewers are HTTP clients of /ai-review/* and need the bearer token.
+# Enable per box in engine.env: AI_REVIEW_ENABLED=true, AI_REVIEW_API_TOKEN=<random>.
+ai-review:
+  enabled: ${AI_REVIEW_ENABLED:false}
+  api-token: ${AI_REVIEW_API_TOKEN:}
+  reviewers:
+    - id: claude-opus
+      primary: true
+      include-portfolio: true
+  lease-minutes: 15
+  max-attempts: 3
+  daily-task-cap: 40            # runaway guard, not a budget
+  decision-times-ny: ["13:00", "15:00"]   # must match PoolDecisionScheduler

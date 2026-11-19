@@ -3,10 +3,12 @@ package cz.solvina.options.scanner
 import cz.solvina.options.domain.features.account.AccountDetail
 import cz.solvina.options.domain.features.account.AccountPort
 import cz.solvina.options.domain.features.account.EffectiveAccountService
+import cz.solvina.options.domain.features.aireview.CandidateReviewPort
 import cz.solvina.options.domain.features.execution.TradeExecutionPort
 import cz.solvina.options.domain.features.execution.model.ExecutionOutcome
 import cz.solvina.options.domain.features.execution.model.TradeExecutionRequest
 import cz.solvina.options.domain.features.execution.model.TradeExecutionResult
+import cz.solvina.options.domain.features.notification.SpreadOpportunity
 import cz.solvina.options.domain.features.scanner.BearCallCandidateSelector
 import cz.solvina.options.domain.features.scanner.BearCallScannerConfig
 import cz.solvina.options.domain.features.scanner.BullPutCandidateSelector
@@ -274,6 +276,28 @@ class ScannerServiceTest {
         }
 
     @Test
+    fun `a title is sent for AI review once, when it first joins the pool, never again at the decision`() =
+        runTest {
+            val requested = mutableListOf<SpreadOpportunity>()
+            val opportunity = mockk<SpreadOpportunity>()
+            val scanner =
+                buildScanner(
+                    watchlist = listOf(spy),
+                    poolConfig = ScannerPoolConfig(enabled = true),
+                    pool = DailyCandidatePool(Clock.systemUTC()),
+                    candidateReview = { requested += it },
+                    scope = CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined),
+                )
+            coEvery { selector.select(spy, any()) } returns selected(spy, 0.20).copy(opportunity = opportunity)
+
+            scanner.scan()
+            scanner.scan()
+            scanner.decidePool(finalOfDay = false)
+
+            assertEquals(listOf(opportunity), requested)
+        }
+
+    @Test
     fun `a decision re-prices the pool and enters only the best titles, best first`() =
         runTest {
             val iwm = Symbol("IWM")
@@ -318,6 +342,7 @@ class ScannerServiceTest {
         scope: CoroutineScope = CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO),
         poolConfig: ScannerPoolConfig = ScannerPoolConfig(),
         pool: DailyCandidatePool? = null,
+        candidateReview: CandidateReviewPort = CandidateReviewPort.NoOp,
     ): ScannerService {
         val universePort =
             object : UniversePort {
@@ -375,6 +400,7 @@ class ScannerServiceTest {
             scope = scope,
             poolConfig = poolConfig,
             pool = pool,
+            candidateReview = candidateReview,
         )
     }
 

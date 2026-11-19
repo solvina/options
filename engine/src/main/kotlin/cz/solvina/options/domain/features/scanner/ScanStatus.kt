@@ -1,6 +1,7 @@
 package cz.solvina.options.domain.features.scanner
 
 import cz.solvina.options.domain.features.execution.model.TradeExecutionRequest
+import cz.solvina.options.domain.features.notification.SpreadOpportunity
 import cz.solvina.options.domain.features.regime.DirectionalBias
 import cz.solvina.options.domain.features.regime.TrendRegime
 import cz.solvina.options.domain.features.spread.model.StrategyId
@@ -94,6 +95,8 @@ sealed interface CandidateResult {
     data class Selected(
         val request: TradeExecutionRequest,
         override val detail: ScanDetail,
+        // The full candidate (legs + greeks) for notification and AI review; null in tests that don't need it.
+        val opportunity: SpreadOpportunity? = null,
     ) : CandidateResult
 
     data class Rejected(
