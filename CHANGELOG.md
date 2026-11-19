@@ -3,6 +3,21 @@
 Notable strategy, engine and operations changes. Newest first. Rendered in the frontend under
 **Maintenance › Changelog**.
 
+## 2026-11-19 — Claude reviews pool candidates on paper (observation only)
+
+The paper engine now asks Claude Opus about each title on the day it first joins the pool. The
+reviewer (`ai-reviewer.service`) runs one isolated `claude -p` per candidate, with web search
+only. It checks earnings, news, events and macro risk, then posts APPROVE, VETO or ABSTAIN with
+reasons and sources. **Nothing acts on the verdict yet.** It isn't in the emails yet and doesn't
+block entries. The first real review (MPC bull put 340/330) took 54 s and about 460 MB on the Pi.
+
+- The reviewer pauses during Gradle builds, chat-bot turns and low memory, and reports its state
+  to the engine every 30 s (`GET /api/ai-review/reviewers`). Results: `GET /api/ai-review/reviews`.
+- A login failure stops claiming until a real test call succeeds. `claude auth status` can't be
+  trusted for this: it reports "logged in" even with an invalid token.
+- Fix found by the first review: an earnings date already in the past is no longer shown as
+  "earnings before expiry".
+
 ## 2026-11-19 — AI review queue and API (off by default)
 
 First delivery of the AI candidate review (plan: `engine/docs/AI_CANDIDATE_REVIEW_PLAN.md`). The
