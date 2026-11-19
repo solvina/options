@@ -124,9 +124,15 @@ data class IvSection(
 )
 
 data class CalendarSection(
+    /** Next report on or after the trading date; null when unknown. */
     val nextEarningsDate: LocalDate?,
-    /** True when the next earnings date falls on or before the candidate's expiry. */
+    /** True when [nextEarningsDate] falls on or before the candidate's expiry; null when unknown. */
     val earningsBeforeExpiry: Boolean?,
+    /**
+     * The stored date when it is already past: the universe keeps the last report until Nasdaq
+     * publishes the next one (MPC on 2026-11-18 still showed its Nov 3 report).
+     */
+    val lastEarningsDate: LocalDate? = null,
     val exDividendDate: LocalDate?,
     val nextDividendAmount: BigDecimal?,
 )

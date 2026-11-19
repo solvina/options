@@ -148,9 +148,12 @@ class ReviewSnapshotBuilder(
         instrument: InstrumentConfig?,
     ): CalendarSection? =
         instrument?.let {
+            val tradingDate = o.detectedAt.atZone(NEW_YORK).toLocalDate()
+            val next = it.nextEarningsDate?.takeUnless { e -> e.isBefore(tradingDate) }
             CalendarSection(
-                nextEarningsDate = it.nextEarningsDate,
-                earningsBeforeExpiry = it.nextEarningsDate?.let { e -> !e.isAfter(o.expiry) },
+                nextEarningsDate = next,
+                earningsBeforeExpiry = next?.let { e -> !e.isAfter(o.expiry) },
+                lastEarningsDate = it.nextEarningsDate?.takeIf { e -> e.isBefore(tradingDate) },
                 exDividendDate = it.exDividendDate,
                 nextDividendAmount = it.nextDividendAmount,
             )

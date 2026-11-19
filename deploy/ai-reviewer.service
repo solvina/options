@@ -1,0 +1,31 @@
+# AI candidate reviewer (engine/docs/AI_CANDIDATE_REVIEW_PLAN.md, D4). A client of the engine's
+# /ai-review API: heartbeats, claims one task at a time, runs one `claude -p` per review.
+#
+# /home/solvina/options/ai-reviewer.env (chmod 600, never in git):
+#   CLAUDE_CODE_OAUTH_TOKEN=...          # from `claude setup-token`; separate from the chat bot's login
+#   AI_REVIEW_ENGINES=paper=http://localhost:8081/options
+#   AI_REVIEW_API_TOKEN=...              # same value as the engine's AI_REVIEW_API_TOKEN
+#   # AI_REVIEW_API_TOKEN_LIVE=...       # per-engine override when a second engine is added
+#
+# Install: copy ai-reviewer/{ai_reviewer.py,prompt_v1.md} and
+# engine/openapi/cz.solvina.options.aireview.yaml to /home/solvina/options/ai-reviewer/.
+[Unit]
+Description=Options AI candidate reviewer
+After=network-online.target options-engine.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=solvina
+WorkingDirectory=/home/solvina/options/ai-reviewer
+EnvironmentFile=/home/solvina/options/ai-reviewer.env
+ExecStart=/usr/bin/python3 -u /home/solvina/options/ai-reviewer/ai_reviewer.py
+Restart=on-failure
+RestartSec=30
+# A review's claude process is ~460 MB; keep the daemon plus one review under a hard ceiling.
+MemoryMax=900M
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

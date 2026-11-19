@@ -157,6 +157,20 @@ class ReviewSnapshotBuilderTest {
         }
 
     @Test
+    fun `an earnings date already past is reported as the last report, not as earnings before expiry`() =
+        runTest {
+            wireHappyPath()
+            coEvery { universe.get(nue) } returns InstrumentConfig(nue, nextEarningsDate = LocalDate.of(2026, 11, 3))
+            coEvery { volatility.getIvRank(nue) } returns IvRank(62.0, 0.34, Instant.EPOCH)
+
+            val calendar = assertNotNull(builder().build(opportunity).calendar)
+
+            assertNull(calendar.nextEarningsDate)
+            assertNull(calendar.earningsBeforeExpiry)
+            assertEquals(LocalDate.of(2026, 11, 3), calendar.lastEarningsDate)
+        }
+
+    @Test
     fun `a failing source leaves only its own section empty`() =
         runTest {
             wireHappyPath()
