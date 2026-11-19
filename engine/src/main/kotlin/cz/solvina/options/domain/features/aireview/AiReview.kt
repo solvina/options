@@ -59,6 +59,61 @@ data class AiReviewTask(
     val emailHadVerdict: Boolean? = null,
     val followUpSentAt: Instant? = null,
     val telegramSentAt: Instant? = null,
+    /** D6: what the first pool decision after the review did with the title. */
+    val decision: TaskDecision? = null,
+)
+
+/**
+ * What a pool decision did with a reviewed title (AI review D6). Set once, by the first decision
+ * that saw it. [action]: RECORDED (a new would-be trade), ALREADY_HELD (the title already had an
+ * open would-be trade, so nothing new could be scored), STRATEGY_CHANGED (it re-qualified as the
+ * other strategy, so the verdict doesn't apply), DROPPED (stopped qualifying by its decision).
+ */
+data class TaskDecision(
+    val at: Instant,
+    val action: String,
+    val rank: Int? = null,
+    val score: Double? = null,
+    val expiry: LocalDate? = null,
+    val shortStrike: BigDecimal? = null,
+    val longStrike: BigDecimal? = null,
+    val midCredit: BigDecimal? = null,
+    val shadowSpreadId: UUID? = null,
+    /** The primary verdict was an on-time VETO at or above the layer's confidence: gating would have blocked it. */
+    val wouldGate: Boolean = false,
+)
+
+/** The primary reviewer's verdict on a title, as a decision at a given moment sees it. */
+data class PrimaryVerdict(
+    val taskId: UUID,
+    val strategyId: StrategyId,
+    /** Null when the review wasn't DONE before the decision (fail-open: treated as approve). */
+    val verdict: AiVerdict?,
+    val confidence: Double?,
+    /** VETO with confidence ≥ [AiReviewConfig.layerMinConfidence]. */
+    val vetoes: Boolean,
+)
+
+/** The primary verdict's reason for a task (any time, also late), with the task's rules version. */
+data class TaskNote(
+    val reason: String?,
+    val verdict: AiVerdict?,
+    val late: Boolean,
+    val rulesVersion: String?,
+)
+
+/** One ranked title at a decision, for [AiReviewService.recordDecision]. */
+data class DecisionOutcome(
+    val strategyId: StrategyId,
+    val symbol: Symbol,
+    val action: String,
+    val rank: Int,
+    val score: Double,
+    val expiry: LocalDate,
+    val shortStrike: BigDecimal,
+    val longStrike: BigDecimal,
+    val midCredit: BigDecimal,
+    val shadowSpreadId: UUID?,
 )
 
 /**

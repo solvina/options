@@ -1,0 +1,43 @@
+databaseChangeLog:
+  # ---------------------------------------------------------------------------
+  # AI review D6 (2026-11-19): the AI layer on the would-be trades, and their daily marks.
+  # - shadow_spreads.ai_*: the primary reviewer's verdict as the decision saw it (DONE before the
+  #   decision, else null = fail-open), and ai_selected = the simulated portfolio re-run with the
+  #   same limits minus that reviewer's vetoes. Own counters, so it diverges from `selected`.
+  # - shadow_spread_mark: one row per revaluation pass (value, underlying), so later questions
+  #   (max adverse move, would a tighter stop have hit) need no re-fetch. Kept forever.
+  # ---------------------------------------------------------------------------
+  - changeSet:
+      id: v48__ai_layer_and_shadow_marks
+      author: claude
+      changes:
+        - addColumn:
+            tableName: shadow_spreads
+            columns:
+              - column: { name: ai_task_id, type: UUID }
+              - column: { name: ai_verdict, type: TEXT }
+              - column: { name: ai_confidence, type: "NUMERIC(5, 4)" }
+              - column:
+                  name: ai_selected
+                  type: BOOLEAN
+                  defaultValueBoolean: false
+                  constraints: { nullable: false }
+        - createTable:
+            tableName: shadow_spread_mark
+            columns:
+              - column:
+                  name: id
+                  type: BIGINT
+                  autoIncrement: true
+                  constraints: { primaryKey: true, nullable: false }
+              - column: { name: shadow_spread_id, type: UUID, constraints: { nullable: false } }
+              - column: { name: valued_at, type: "TIMESTAMP WITH TIME ZONE", constraints: { nullable: false } }
+              - column: { name: value, type: "NUMERIC(12, 4)" }
+              - column: { name: underlying, type: "NUMERIC(12, 4)" }
+              - column: { name: status, type: TEXT, constraints: { nullable: false } }
+        - createIndex:
+            tableName: shadow_spread_mark
+            indexName: idx_shadow_spread_mark_shadow
+            columns:
+              - column: { name: shadow_spread_id }
+              - column: { name: valued_at }

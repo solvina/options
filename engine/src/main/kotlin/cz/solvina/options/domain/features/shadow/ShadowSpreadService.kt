@@ -1,5 +1,8 @@
 package cz.solvina.options.domain.features.shadow
 
+import cz.solvina.options.domain.features.aireview.AiReviewService
+import cz.solvina.options.domain.features.aireview.DecisionOutcome
+import cz.solvina.options.domain.features.aireview.NEW_YORK
 import cz.solvina.options.domain.features.execution.model.ExecutionOutcome
 import cz.solvina.options.domain.features.execution.model.TradeExecutionRequest
 import cz.solvina.options.domain.features.market.MarketDataPort
@@ -19,6 +22,7 @@ import java.time.Clock
 import java.time.Instant
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
+import java.util.UUID
 import kotlin.time.Duration.Companion.seconds
 
 private val logger = KotlinLogging.logger {}
@@ -39,6 +43,8 @@ class ShadowSpreadService(
     private val strategyParams: StrategyParamsRegistry,
     private val clock: Clock,
     private val poolConfig: ScannerPoolConfig = ScannerPoolConfig(),
+    /** AI review D6: verdicts for the AI layer (`aiSelected`) and the per-task decision record. */
+    private val aiReview: AiReviewService? = null,
 ) {
     companion object {
         /** Outcomes where the engine wanted the trade and only the fill (or the screen width) stopped it. */
@@ -85,55 +91,113 @@ class ShadowSpreadService(
      * Records a pool decision, [ranked] best first. Every title not already held becomes a would-be
      * position with its rank and score. The best ones that fit the limits are marked selected,
      * forming the simulated small-account portfolio.
+     *
+     * AI layer (D6): a second pass over the same ranking with the same limits, skipping titles the
+     * primary reviewer vetoed before this decision, marks `aiSelected`. It keeps its own counters
+     * (open, new today, sectors taken from `aiSelected` rows), so a slot freed by a veto goes to the
+     * next-ranked title and the two portfolios diverge over time. No verdict = approve (fail-open).
      */
     suspend fun recordDecision(ranked: List<ShadowCandidate>) {
         val now = Instant.now(clock)
         val startOfDay = LocalDate.now(clock).atStartOfDay(clock.zone).toInstant()
+        val tradingDate = now.atZone(NEW_YORK).toLocalDate()
         val open = port.findOpen()
-        val held = open.map { it.symbol }.toSet()
-        var openSelected = open.count { it.selected }
-        var newToday = port.findAll().count { it.selected && !it.openedAt.isBefore(startOfDay) }
-        val sectorsTaken = open.filter { it.selected }.mapNotNull { universePort.sectorOf(it.symbol) }.toMutableSet()
+        val all = port.findAll()
+        val heldBySymbol = open.associateBy { it.symbol }
+        val verdicts =
+            runCatching { aiReview?.primaryVerdicts(tradingDate, now).orEmpty() }
+                .onFailure { logger.warn { "AI verdicts unavailable for the decision: ${it.message}" } }
+                .getOrDefault(emptyMap())
+        val rules = Portfolio(open.filter { it.selected }, all.count { it.selected && !it.openedAt.isBefore(startOfDay) })
+        val ai = Portfolio(open.filter { it.aiSelected }, all.count { it.aiSelected && !it.openedAt.isBefore(startOfDay) })
+        val outcomes = mutableListOf<DecisionOutcome>()
         ranked.forEachIndexed { index, candidate ->
             val request = candidate.request
-            if (request.underlyingSymbol in held) return@forEachIndexed
+            val held = heldBySymbol[request.underlyingSymbol]
+            if (held != null) {
+                outcomes += outcome(request, index, candidate.score, "ALREADY_HELD", held.id)
+                return@forEachIndexed
+            }
             val maxLoss = request.maxRiskPerShare.toDouble() * 100
             val sector = universePort.sectorOf(request.underlyingSymbol)
-            val selected =
-                candidate.flags.isEmpty() &&
-                    maxLoss <= poolConfig.portfolioMaxLossUsd &&
-                    openSelected < poolConfig.portfolioMaxOpen &&
+            val eligible = candidate.flags.isEmpty() && maxLoss <= poolConfig.portfolioMaxLossUsd
+            val verdict = verdicts[request.underlyingSymbol]?.takeIf { it.strategyId == request.strategyId }
+            val selected = eligible && rules.take(sector)
+            val aiSelected = eligible && verdict?.vetoes != true && ai.take(sector)
+            val saved =
+                port.save(
+                    ShadowSpread(
+                        strategyId = request.strategyId,
+                        symbol = request.underlyingSymbol,
+                        optionType = request.soldContract.type,
+                        expiry = request.soldContract.expiry,
+                        soldStrike = request.soldContract.strike,
+                        boughtStrike = request.boughtContract.strike,
+                        openedAt = now,
+                        sourceOutcome = "POOL_DECISION",
+                        midCredit = request.targetCredit,
+                        floorCredit = request.floorCredit,
+                        naturalCredit = request.soldBid.subtract(request.boughtAsk),
+                        underlyingAtEntry = request.underlyingPriceAtEntry,
+                        ivRankAtEntry = request.ivRankAtEntry,
+                        score = candidate.score,
+                        decisionRank = index + 1,
+                        firstSeenAt = candidate.firstSeenAt,
+                        selected = selected,
+                        flags = candidate.flags.map { it.name }.toSet(),
+                        aiTaskId = verdict?.taskId,
+                        aiVerdict = verdict?.verdict?.name,
+                        aiConfidence = verdict?.confidence,
+                        aiSelected = aiSelected,
+                    ),
+                )
+            outcomes += outcome(request, index, candidate.score, "RECORDED", saved.id)
+        }
+        runCatching { aiReview?.recordDecision(tradingDate, now, outcomes) }
+            .onFailure { logger.warn { "AI review decision record failed: ${it.message}" } }
+    }
+
+    /** Running limits of one simulated portfolio during a decision. */
+    private inner class Portfolio(
+        openRows: List<ShadowSpread>,
+        private var newToday: Int,
+    ) {
+        private var open = openRows.size
+        private val sectors = openRows.mapNotNull { universePort.sectorOf(it.symbol) }.toMutableSet()
+
+        /** True (and counted) when a title in [sector] still fits the limits. */
+        fun take(sector: String?): Boolean {
+            val fits =
+                open < poolConfig.portfolioMaxOpen &&
                     newToday < poolConfig.portfolioMaxNewPerDay &&
-                    !(poolConfig.portfolioOnePerSector && sector != null && sector in sectorsTaken)
-            if (selected) {
-                openSelected++
+                    !(poolConfig.portfolioOnePerSector && sector != null && sector in sectors)
+            if (fits) {
+                open++
                 newToday++
-                sector?.let { sectorsTaken += it }
+                sector?.let { sectors += it }
             }
-            port.save(
-                ShadowSpread(
-                    strategyId = request.strategyId,
-                    symbol = request.underlyingSymbol,
-                    optionType = request.soldContract.type,
-                    expiry = request.soldContract.expiry,
-                    soldStrike = request.soldContract.strike,
-                    boughtStrike = request.boughtContract.strike,
-                    openedAt = now,
-                    sourceOutcome = "POOL_DECISION",
-                    midCredit = request.targetCredit,
-                    floorCredit = request.floorCredit,
-                    naturalCredit = request.soldBid.subtract(request.boughtAsk),
-                    underlyingAtEntry = request.underlyingPriceAtEntry,
-                    ivRankAtEntry = request.ivRankAtEntry,
-                    score = candidate.score,
-                    decisionRank = index + 1,
-                    firstSeenAt = candidate.firstSeenAt,
-                    selected = selected,
-                    flags = candidate.flags.map { it.name }.toSet(),
-                ),
-            )
+            return fits
         }
     }
+
+    private fun outcome(
+        request: TradeExecutionRequest,
+        index: Int,
+        score: Double,
+        action: String,
+        shadowId: UUID?,
+    ) = DecisionOutcome(
+        strategyId = request.strategyId,
+        symbol = request.underlyingSymbol,
+        action = action,
+        rank = index + 1,
+        score = score,
+        expiry = request.soldContract.expiry,
+        shortStrike = request.soldContract.strike,
+        longStrike = request.boughtContract.strike,
+        midCredit = request.targetCredit,
+        shadowSpreadId = shadowId,
+    )
 
     /** Revalues every open shadow whose market is open now. Returns how many were checked. */
     suspend fun revalueOpenMarkets(): Int {
@@ -216,7 +280,10 @@ class ShadowSpreadService(
                     lastValuedAt = now,
                 )
             }
-        return port.save(updated)
+        val saved = port.save(updated)
+        runCatching { port.saveMark(saved.id, now, value, spot, saved.status) }
+            .onFailure { logger.warn { "[${shadow.symbol}] shadow mark not saved: ${it.message}" } }
+        return saved
     }
 
     private fun intrinsicValue(

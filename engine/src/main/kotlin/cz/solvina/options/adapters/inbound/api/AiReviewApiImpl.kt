@@ -6,6 +6,10 @@ import cz.solvina.options.aireview.api.AiReviewApi
 import cz.solvina.options.aireview.dto.ClaimRequest
 import cz.solvina.options.aireview.dto.Heartbeat
 import cz.solvina.options.aireview.dto.PromptRegistration
+import cz.solvina.options.aireview.dto.ReportCalibrationBucket
+import cz.solvina.options.aireview.dto.ReportCohort
+import cz.solvina.options.aireview.dto.ReportDifference
+import cz.solvina.options.aireview.dto.ReportRulesVersion
 import cz.solvina.options.aireview.dto.ResultAck
 import cz.solvina.options.aireview.dto.ReviewFailure
 import cz.solvina.options.aireview.dto.ReviewSummary
@@ -14,9 +18,11 @@ import cz.solvina.options.aireview.dto.ReviewTask
 import cz.solvina.options.aireview.dto.Risk
 import cz.solvina.options.domain.features.aireview.AiFailureKind
 import cz.solvina.options.domain.features.aireview.AiReviewConfig
+import cz.solvina.options.domain.features.aireview.AiReviewReportService
 import cz.solvina.options.domain.features.aireview.AiReviewService
 import cz.solvina.options.domain.features.aireview.AiReviewerState
 import cz.solvina.options.domain.features.aireview.AiVerdict
+import cz.solvina.options.domain.features.aireview.Cohort
 import cz.solvina.options.domain.features.aireview.PromptOutcome
 import cz.solvina.options.domain.features.aireview.ResultSubmission
 import cz.solvina.options.domain.features.aireview.SubmitOutcome
@@ -31,6 +37,7 @@ import java.math.BigDecimal
 import java.time.LocalDate
 import java.time.ZoneOffset
 import java.util.UUID
+import cz.solvina.options.aireview.dto.AiReviewReport as AiReviewReportDto
 import cz.solvina.options.aireview.dto.ReviewResult as ReviewResultDto
 import cz.solvina.options.aireview.dto.ReviewerStatus as ReviewerStatusDto
 
@@ -45,7 +52,58 @@ class AiReviewApiImpl(
     private val service: AiReviewService,
     private val config: AiReviewConfig,
     private val objectMapper: ObjectMapper,
+    private val reports: AiReviewReportService,
 ) : AiReviewApi {
+    override suspend fun getAiReviewReport(
+        from: LocalDate?,
+        rulesVersion: String?,
+    ): ResponseEntity<AiReviewReportDto> {
+        val r = reports.report(from, rulesVersion)
+        return ResponseEntity.ok(
+            AiReviewReportDto(
+                reviewerId = r.reviewerId,
+                generatedAt = r.generatedAt.atOffset(ZoneOffset.UTC),
+                from = r.from,
+                rulesVersion = r.rulesVersion,
+                cohorts = r.cohorts.map { it.toDto() },
+                rulesOnly = r.rulesOnly.toDto(),
+                withAi = r.withAi.toDto(),
+                removedByAi = r.removedByAi.toDto(),
+                addedByAi = r.addedByAi.toDto(),
+                lossesAvoidedMinusWinsForgone = r.lossesAvoidedMinusWinsForgone.toBigDecimal(),
+                approveMinusVeto =
+                    r.approveMinusVeto?.let {
+                        ReportDifference(
+                            it.mean.toBigDecimal(),
+                            it.approveClosed,
+                            it.vetoClosed,
+                            it.low?.toBigDecimal(),
+                            it.high?.toBigDecimal(),
+                        )
+                    },
+                calibration =
+                    r.calibration.map { ReportCalibrationBucket(it.low.toBigDecimal(), it.high.toBigDecimal(), it.closed, it.right) },
+                rulesVersions = r.rulesVersions.map { ReportRulesVersion(it.version, it.firstSeenAt.atOffset(ZoneOffset.UTC), it.tasks) },
+                decisions = r.decisions,
+                wouldGate = r.wouldGate,
+            ),
+        )
+    }
+
+    private fun Cohort.toDto() =
+        ReportCohort(
+            label = label,
+            count = count,
+            closed = closed,
+            wins = wins,
+            realizedPnl = realizedPnl.toBigDecimal(),
+            open = open,
+            markedPnl = markedPnl.toBigDecimal(),
+            tradingDays = tradingDays,
+            winRate = winRate?.toBigDecimal(),
+            avgPnl = avgPnl?.toBigDecimal(),
+        )
+
     override suspend fun claimAiReviewTask(claimRequest: ClaimRequest): ResponseEntity<ReviewTask> {
         val claimed =
             service.claim(claimRequest.reviewerId, claimRequest.contractVersions, claimRequest.snapshotVersions)

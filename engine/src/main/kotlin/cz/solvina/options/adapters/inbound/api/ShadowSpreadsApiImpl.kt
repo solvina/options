@@ -1,5 +1,7 @@
 package cz.solvina.options.adapters.inbound.api
 
+import cz.solvina.options.domain.features.aireview.AiReviewService
+import cz.solvina.options.domain.features.aireview.TaskNote
 import cz.solvina.options.domain.features.shadow.ShadowSpread
 import cz.solvina.options.domain.features.shadow.ShadowSpreadPort
 import `cz.solvina.options.spreads`.api.ShadowSpreadsApi
@@ -17,15 +19,18 @@ import java.time.ZoneOffset
 @RequestMapping
 class ShadowSpreadsApiImpl(
     private val port: ShadowSpreadPort,
+    private val aiReview: AiReviewService,
 ) : ShadowSpreadsApi {
     override fun listShadowSpreads(): ResponseEntity<Flow<ShadowSpreadDto>> =
         ResponseEntity.ok(
             flow {
-                port.findAll().sortedByDescending { it.openedAt }.forEach { emit(it.toDto()) }
+                val rows = port.findAll().sortedByDescending { it.openedAt }
+                val notes = runCatching { aiReview.taskNotes(rows.mapNotNull { it.aiTaskId }.toSet()) }.getOrDefault(emptyMap())
+                rows.forEach { emit(it.toDto(it.aiTaskId?.let { id -> notes[id] })) }
             },
         )
 
-    private fun ShadowSpread.toDto(): ShadowSpreadDto {
+    private fun ShadowSpread.toDto(note: TaskNote?): ShadowSpreadDto {
         val value = exitValue ?: lastValue
 
         fun pnl(credit: BigDecimal) = value?.let { credit.subtract(it).multiply(BigDecimal(100)).setScale(2, RoundingMode.HALF_UP) }
@@ -60,6 +65,12 @@ class ShadowSpreadsApiImpl(
             firstSeenAt = firstSeenAt?.atOffset(ZoneOffset.UTC),
             selected = selected,
             flags = flags.sorted(),
+            aiSelected = aiSelected,
+            aiReviewed = aiTaskId != null,
+            aiVerdict = aiVerdict,
+            aiConfidence = aiConfidence?.toBigDecimal(),
+            aiReason = note?.reason?.let { r -> if (note.late || aiVerdict == null) "(late: ${note.verdict}) $r" else r },
+            aiRulesVersion = note?.rulesVersion,
         )
     }
 }

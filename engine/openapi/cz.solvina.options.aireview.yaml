@@ -201,6 +201,35 @@ paths:
                 items:
                   $ref: '#/components/schemas/ReviewerStatus'
 
+  /ai-review/report:
+    get:
+      tags: [AiReview]
+      summary: How the primary reviewer's verdicts relate to the would-be trades (D6 evaluation)
+      description: >
+        Read-only analysis, never used by the engine for decisions. Cohorts group the live
+        would-be trades from pool decisions by the verdict the decision saw (on time); a verdict
+        that arrived later counts as NO_VERDICT_IN_TIME. Not stable for automated consumers:
+        fields may be added as the evaluation evolves.
+      operationId: getAiReviewReport
+      parameters:
+        - name: from
+          in: query
+          required: false
+          description: Only would-be trades opened on or after this date (default = all).
+          schema: { type: string, format: date }
+        - name: rulesVersion
+          in: query
+          required: false
+          description: Only titles whose review ran under this rules version.
+          schema: { type: string }
+      responses:
+        '200':
+          description: The report
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiReviewReport'
+
 components:
   parameters:
     TaskId:
@@ -408,3 +437,79 @@ components:
         lastResultAt: { type: string, format: date-time }
         lastFailure: { type: string }
         model: { type: string }
+
+    AiReviewReport:
+      type: object
+      required: [reviewerId, generatedAt, cohorts, rulesOnly, withAi, removedByAi, addedByAi, calibration, rulesVersions, decisions]
+      properties:
+        reviewerId: { type: string, description: The primary reviewer the layer uses }
+        generatedAt: { type: string, format: date-time }
+        from: { type: string, format: date, nullable: true }
+        rulesVersion: { type: string, nullable: true }
+        cohorts:
+          type: array
+          description: Every ranked live would-be trade, by the verdict its decision saw.
+          items: { $ref: '#/components/schemas/ReportCohort' }
+        rulesOnly: { $ref: '#/components/schemas/ReportCohort' }
+        withAi: { $ref: '#/components/schemas/ReportCohort' }
+        removedByAi: { $ref: '#/components/schemas/ReportCohort' }
+        addedByAi: { $ref: '#/components/schemas/ReportCohort' }
+        lossesAvoidedMinusWinsForgone:
+          type: number
+          description: Minus the realized P&L of vetoed would-be trades (positive = the vetoes helped).
+        approveMinusVeto:
+          $ref: '#/components/schemas/ReportDifference'
+        calibration:
+          type: array
+          items: { $ref: '#/components/schemas/ReportCalibrationBucket' }
+        rulesVersions:
+          type: array
+          description: Rule configurations seen by reviews, oldest first; a new one is a marker on the timeline.
+          items: { $ref: '#/components/schemas/ReportRulesVersion' }
+        decisions:
+          type: object
+          additionalProperties: { type: integer }
+          description: Reviewed tasks by what the decision did with them (RECORDED, ALREADY_HELD, DROPPED, ...).
+        wouldGate: { type: integer, description: Reviewed titles gating would have blocked }
+
+    ReportCohort:
+      type: object
+      required: [label, count, closed, wins, realizedPnl, open, markedPnl, tradingDays]
+      properties:
+        label: { type: string }
+        count: { type: integer }
+        closed: { type: integer }
+        wins: { type: integer }
+        winRate: { type: number, nullable: true }
+        realizedPnl: { type: number, description: 'USD per contract at mid, closed trades' }
+        avgPnl: { type: number, nullable: true }
+        open: { type: integer }
+        markedPnl: { type: number, description: Open trades marked to their last value }
+        tradingDays: { type: integer, description: Distinct decision days (same-day trades move together) }
+
+    ReportDifference:
+      type: object
+      required: [mean, approveClosed, vetoClosed]
+      properties:
+        mean: { type: number, description: Average realized P&L per APPROVE trade minus per VETO trade }
+        low: { type: number, nullable: true, description: '90% interval, bootstrap over trading days' }
+        high: { type: number, nullable: true }
+        approveClosed: { type: integer }
+        vetoClosed: { type: integer }
+
+    ReportCalibrationBucket:
+      type: object
+      required: [low, high, closed, right]
+      properties:
+        low: { type: number }
+        high: { type: number }
+        closed: { type: integer }
+        right: { type: integer, description: APPROVE that won or VETO that lost }
+
+    ReportRulesVersion:
+      type: object
+      required: [version, firstSeenAt, tasks]
+      properties:
+        version: { type: string }
+        firstSeenAt: { type: string, format: date-time }
+        tasks: { type: integer }

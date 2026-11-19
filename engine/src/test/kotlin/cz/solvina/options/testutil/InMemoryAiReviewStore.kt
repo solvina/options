@@ -91,6 +91,18 @@ class InMemoryAiReviewStore : AiReviewStorePort {
                 (it.emailedAt == null || it.telegramSentAt == null || (it.emailHadVerdict == false && it.followUpSentAt == null))
         }
 
+    override suspend fun findTasksForDate(tradingDate: LocalDate) = tasks.values.filter { it.tradingDate == tradingDate }
+
+    override suspend fun saveDecision(task: AiReviewTask) {
+        tasks[task.id] = tasks.getValue(task.id).copy(decision = task.decision)
+    }
+
+    override suspend fun findReviewsSince(since: Instant) =
+        tasks.values
+            .filter { !it.createdAt.isBefore(since) }
+            .sortedBy { it.createdAt }
+            .map { t -> ReviewWithResults(t, results.filterKeys { it.first == t.id }.values.toList()) }
+
     override suspend fun saveSurfacing(task: AiReviewTask) {
         tasks[task.id] =
             tasks.getValue(task.id).copy(

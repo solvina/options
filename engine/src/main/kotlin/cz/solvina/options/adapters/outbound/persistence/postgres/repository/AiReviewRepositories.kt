@@ -23,6 +23,10 @@ interface AiReviewTaskRepository : JpaRepository<AiReviewTaskEntity, UUID> {
 
     fun countByTradingDate(tradingDate: LocalDate): Long
 
+    fun findByTradingDate(tradingDate: LocalDate): List<AiReviewTaskEntity>
+
+    fun findByCreatedAtGreaterThanEqualOrderByCreatedAt(since: Instant): List<AiReviewTaskEntity>
+
     @Query(
         """
         SELECT t FROM AiReviewTaskEntity t

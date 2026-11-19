@@ -67,6 +67,79 @@ class AiReviewService(
         return task
     }
 
+    /**
+     * The primary reviewer's verdict per symbol for [tradingDate], as a decision at [at] sees it:
+     * only results DONE by then count; anything else is "no verdict" (fail-open).
+     */
+    suspend fun primaryVerdicts(
+        tradingDate: LocalDate,
+        at: Instant,
+    ): Map<Symbol, PrimaryVerdict> {
+        if (!config.enabled) return emptyMap()
+        val primary = config.primaryReviewer?.id ?: return emptyMap()
+        return store
+            .findTasksForDate(tradingDate)
+            .filter { it.status == AiTaskStatus.OPEN }
+            .associate { task ->
+                val r =
+                    store
+                        .findResult(task.id, primary)
+                        ?.takeIf { it.status == AiResultStatus.DONE && it.completedAt?.isAfter(at) == false }
+                val vetoes = r?.verdict == AiVerdict.VETO && (r.confidence ?: 0.0) >= config.layerMinConfidence
+                task.symbol to PrimaryVerdict(task.id, task.strategyId, r?.verdict, r?.confidence, vetoes)
+            }
+    }
+
+    /**
+     * Records on each of [tradingDate]'s tasks what the decision at [at] did with its title. Only
+     * the first decision that sees a task counts; a task whose title is missing from [outcomes]
+     * once its own decision has passed is DROPPED (stopped qualifying).
+     */
+    suspend fun recordDecision(
+        tradingDate: LocalDate,
+        at: Instant,
+        outcomes: List<DecisionOutcome>,
+    ) {
+        if (!config.enabled) return
+        val verdicts = primaryVerdicts(tradingDate, at)
+        val bySymbol = outcomes.associateBy { it.symbol }
+        for (task in store.findTasksForDate(tradingDate)) {
+            if (task.status != AiTaskStatus.OPEN || task.decision != null) continue
+            val o = bySymbol[task.symbol]
+            val decision =
+                when {
+                    o == null && task.deadlineAt?.isAfter(at) == false -> TaskDecision(at, "DROPPED")
+                    o == null -> null
+                    o.strategyId != task.strategyId -> TaskDecision(at, "STRATEGY_CHANGED", o.rank, o.score)
+                    else ->
+                        TaskDecision(
+                            at = at,
+                            action = o.action,
+                            rank = o.rank,
+                            score = o.score,
+                            expiry = o.expiry,
+                            shortStrike = o.shortStrike,
+                            longStrike = o.longStrike,
+                            midCredit = o.midCredit,
+                            shadowSpreadId = o.shadowSpreadId,
+                            wouldGate = verdicts[task.symbol]?.vetoes == true,
+                        )
+                } ?: continue
+            store.saveDecision(task.copy(decision = decision))
+        }
+    }
+
+    /** Reason and rules version per task, for showing next to the would-be trades. */
+    suspend fun taskNotes(taskIds: Set<UUID>): Map<UUID, TaskNote> {
+        val primary = config.primaryReviewer?.id
+        return taskIds
+            .mapNotNull { id ->
+                val task = store.findTask(id) ?: return@mapNotNull null
+                val reason = primary?.let { store.findResult(id, it) }?.takeIf { it.status == AiResultStatus.DONE }
+                id to TaskNote(reason?.reason, reason?.verdict, reason?.late == true, task.rulesVersion)
+            }.toMap()
+    }
+
     /** Records that [task]'s candidate email went out. */
     suspend fun markEmailed(
         task: AiReviewTask,

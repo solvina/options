@@ -488,7 +488,7 @@ components:
 
     ShadowSpreadDto:
       type: object
-      required: [id, strategyId, symbol, optionType, expiry, soldStrike, boughtStrike, width, openedAt, sourceOutcome, midCredit, status, backfilled, selected, flags]
+      required: [id, strategyId, symbol, optionType, expiry, soldStrike, boughtStrike, width, openedAt, sourceOutcome, midCredit, status, backfilled, selected, flags, aiSelected, aiReviewed]
       properties:
         id: { type: string, format: uuid }
         strategyId: { type: string }
@@ -529,6 +529,12 @@ components:
           type: array
           description: Selection warnings at the decision (FALLING, RISING, IV_EXTREME); empty = passed the filters
           items: { type: string }
+        aiSelected: { type: boolean, description: In the simulated portfolio re-run without the primary AI reviewer's vetoes }
+        aiVerdict: { type: string, nullable: true, description: 'APPROVE / VETO / ABSTAIN as the decision saw it; null = none in time' }
+        aiConfidence: { type: number, nullable: true }
+        aiReason: { type: string, nullable: true, description: "The reviewer's reason (any time, also late)" }
+        aiReviewed: { type: boolean, description: An AI review task existed for this title and day }
+        aiRulesVersion: { type: string, nullable: true }
 
     SpreadRulesDto:
       type: object

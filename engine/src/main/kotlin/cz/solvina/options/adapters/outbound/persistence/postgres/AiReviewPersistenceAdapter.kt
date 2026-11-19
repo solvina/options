@@ -27,6 +27,7 @@ import cz.solvina.options.domain.features.aireview.AiVerdict
 import cz.solvina.options.domain.features.aireview.ClaimedTask
 import cz.solvina.options.domain.features.aireview.ReviewSnapshotV1
 import cz.solvina.options.domain.features.aireview.ReviewWithResults
+import cz.solvina.options.domain.features.aireview.TaskDecision
 import cz.solvina.options.domain.features.spread.model.StrategyId
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -132,6 +133,35 @@ class AiReviewPersistenceAdapter(
             }
         }
     }
+
+    override suspend fun findTasksForDate(tradingDate: LocalDate): List<AiReviewTask> =
+        io { tasks.findByTradingDate(tradingDate).map { it.toDomain() } }
+
+    override suspend fun saveDecision(task: AiReviewTask) {
+        val d = task.decision ?: return
+        io {
+            tasks.findById(task.id).ifPresent { e ->
+                e.decisionAt = d.at
+                e.decisionAction = d.action
+                e.decisionRank = d.rank
+                e.decisionScore = d.score?.let { BigDecimal(it).setScale(4, RoundingMode.HALF_UP) }
+                e.decisionExpiry = d.expiry
+                e.decisionShortStrike = d.shortStrike
+                e.decisionLongStrike = d.longStrike
+                e.decisionMidCredit = d.midCredit
+                e.shadowSpreadId = d.shadowSpreadId
+                e.wouldGate = d.wouldGate
+                tasks.save(e)
+            }
+        }
+    }
+
+    override suspend fun findReviewsSince(since: Instant): List<ReviewWithResults> =
+        io {
+            val found = tasks.findByCreatedAtGreaterThanEqualOrderByCreatedAt(since)
+            val byTask = results.findByTaskIdIn(found.map { it.id }).groupBy { it.taskId }
+            found.map { t -> ReviewWithResults(t.toDomain(), byTask[t.id].orEmpty().map { it.toDomain() }) }
+        }
 
     override suspend fun saveResult(result: AiReviewResult): AiReviewResult = io { results.save(result.toEntity()).toDomain() }
 
@@ -279,6 +309,21 @@ class AiReviewPersistenceAdapter(
             emailHadVerdict = emailHadVerdict,
             followUpSentAt = followUpSentAt,
             telegramSentAt = telegramSentAt,
+            decision =
+                decisionAt?.let {
+                    TaskDecision(
+                        at = it,
+                        action = decisionAction ?: "UNKNOWN",
+                        rank = decisionRank,
+                        score = decisionScore?.toDouble(),
+                        expiry = decisionExpiry,
+                        shortStrike = decisionShortStrike,
+                        longStrike = decisionLongStrike,
+                        midCredit = decisionMidCredit,
+                        shadowSpreadId = shadowSpreadId,
+                        wouldGate = wouldGate == true,
+                    )
+                },
         )
 
     private fun AiReviewResult.toEntity() =

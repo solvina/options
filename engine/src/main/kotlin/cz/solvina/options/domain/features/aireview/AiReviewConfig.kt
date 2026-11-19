@@ -37,6 +37,8 @@ data class AiReviewConfig(
     val emailWaitMinutes: Long = 15,
     /** Forum-topic thread for verdict messages (same bot and chat as engine alerts). Blank = none. */
     val telegramMessageThreadId: String = "",
+    /** D6 AI layer: a VETO removes a title from `ai_selected` only at or above this confidence (0 = any veto). */
+    val layerMinConfidence: Double = 0.0,
 ) {
     val primaryReviewer: ReviewerConfig? get() = enabledReviewers.firstOrNull { it.primary }
 

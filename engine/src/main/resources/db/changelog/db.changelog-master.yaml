@@ -89,3 +89,5 @@ databaseChangeLog:
       file: db/changelog/v46__ai_review.yaml
   - include:
       file: db/changelog/v47__ai_review_surfacing.yaml
+  - include:
+      file: db/changelog/v48__ai_layer_and_shadow_marks.yaml

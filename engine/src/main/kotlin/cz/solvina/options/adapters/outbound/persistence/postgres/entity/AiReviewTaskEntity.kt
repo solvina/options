@@ -52,4 +52,24 @@ class AiReviewTaskEntity(
     var followUpSentAt: Instant? = null,
     @Column(name = "telegram_sent_at")
     var telegramSentAt: Instant? = null,
+    @Column(name = "decision_at")
+    var decisionAt: Instant? = null,
+    @Column(name = "decision_action", columnDefinition = "TEXT")
+    var decisionAction: String? = null,
+    @Column(name = "decision_rank")
+    var decisionRank: Int? = null,
+    @Column(name = "decision_score")
+    var decisionScore: BigDecimal? = null,
+    @Column(name = "decision_expiry")
+    var decisionExpiry: LocalDate? = null,
+    @Column(name = "decision_short_strike")
+    var decisionShortStrike: BigDecimal? = null,
+    @Column(name = "decision_long_strike")
+    var decisionLongStrike: BigDecimal? = null,
+    @Column(name = "decision_mid_credit")
+    var decisionMidCredit: BigDecimal? = null,
+    @Column(name = "shadow_spread_id")
+    var shadowSpreadId: UUID? = null,
+    @Column(name = "would_gate")
+    var wouldGate: Boolean? = null,
 )

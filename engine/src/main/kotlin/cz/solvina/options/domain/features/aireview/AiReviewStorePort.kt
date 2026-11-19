@@ -57,6 +57,15 @@ interface AiReviewStorePort {
     /** Saves the task's surfacing fields (emailedAt, emailHadVerdict, followUpSentAt, telegramSentAt). */
     suspend fun saveSurfacing(task: AiReviewTask)
 
+    /** Every task (OPEN and SKIPPED) of [tradingDate]. */
+    suspend fun findTasksForDate(tradingDate: LocalDate): List<AiReviewTask>
+
+    /** Saves [AiReviewTask.decision]. */
+    suspend fun saveDecision(task: AiReviewTask)
+
+    /** Every task created since [since] with its results, oldest first (reports). */
+    suspend fun findReviewsSince(since: Instant): List<ReviewWithResults>
+
     suspend fun saveResult(result: AiReviewResult): AiReviewResult
 
     suspend fun logAttempt(attempt: AiReviewAttempt)

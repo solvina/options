@@ -68,4 +68,12 @@ class ShadowSpreadEntity(
     var selected: Boolean = false,
     @Column(columnDefinition = "TEXT")
     var flags: String? = null,
+    @Column(name = "ai_task_id")
+    var aiTaskId: UUID? = null,
+    @Column(name = "ai_verdict", columnDefinition = "TEXT")
+    var aiVerdict: String? = null,
+    @Column(name = "ai_confidence")
+    var aiConfidence: BigDecimal? = null,
+    @Column(name = "ai_selected", nullable = false)
+    var aiSelected: Boolean = false,
 )

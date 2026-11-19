@@ -51,6 +51,12 @@ data class ShadowSpread(
     val selected: Boolean = false,
     /** Selection warnings at the decision (CandidateFlag names); empty = passed the filters. */
     val flags: Set<String> = emptySet(),
+    /** AI review D6: the primary reviewer's task for this title and day, and its verdict as the decision saw it. */
+    val aiTaskId: UUID? = null,
+    val aiVerdict: String? = null,
+    val aiConfidence: Double? = null,
+    /** In the simulated portfolio re-run without the primary reviewer's vetoes (same limits, own counters). */
+    val aiSelected: Boolean = false,
 ) {
     val width: BigDecimal get() = soldStrike.subtract(boughtStrike).abs()
 }
@@ -70,4 +76,13 @@ interface ShadowSpreadPort {
     suspend fun findAll(): List<ShadowSpread>
 
     suspend fun save(shadow: ShadowSpread): ShadowSpread
+
+    /** Appends a daily mark for [shadowId] (AI review D6); never overwritten. */
+    suspend fun saveMark(
+        shadowId: UUID,
+        valuedAt: Instant,
+        value: BigDecimal?,
+        underlying: BigDecimal?,
+        status: ShadowStatus,
+    ) = Unit
 }
