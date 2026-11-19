@@ -36,6 +36,8 @@ BOT_SYSTEM_PROMPT = (
 
 logging.basicConfig(format="%(asctime)s [%(levelname)s] %(message)s", level=logging.INFO)
 log = logging.getLogger(__name__)
+# httpx logs every request URL at INFO, and Telegram puts the bot token in the URL: keep it out of journald.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # ── Claude session (one `claude -p` invocation per turn) ───────────────────────
 
@@ -150,6 +152,53 @@ async def handle_message(update: Update, context):
     for chunk in _split(response):
         await update.message.reply_text(chunk)
 
+# ── /reviews: today's AI candidate reviews from the engine (GET /ai-review/reviews) ─────────────
+ENGINE_URL         = os.environ.get("ENGINE_URL", "http://localhost:8081/options")
+AI_REVIEW_TOPIC_ID = int(os.environ.get("TELEGRAM_AI_REVIEW_TOPIC_ID", "0"))
+
+def _in_review_topic(update: Update) -> bool:
+    msg = update.effective_message
+    return (update.effective_chat is not None and update.effective_chat.id == ALLOWED_CHAT
+            and AI_REVIEW_TOPIC_ID and msg is not None and msg.message_thread_id == AI_REVIEW_TOPIC_ID)
+
+def _fetch_reviews(days: int) -> str:
+    import datetime, urllib.request
+    since = (datetime.date.today() - datetime.timedelta(days=days - 1)).isoformat()
+    with urllib.request.urlopen(f"{ENGINE_URL}/ai-review/reviews?from={since}&limit=50", timeout=10) as r:
+        reviews = json.loads(r.read() or b"[]")
+    if not reviews:
+        return f"No AI reviews since {since}."
+    icons = {"VETO": "⛔", "APPROVE": "✅", "ABSTAIN": "❔"}
+    lines = [f"AI reviews since {since} ({len(reviews)}):"]
+    for t in reviews:
+        right = "P" if t["strategyId"] == "BULL_PUT" else "C"
+        head = f'{t["tradingDate"]} {t["symbol"]} {t["shortStrike"]:g}/{t["longStrike"]:g}{right} exp {t["expiry"]}'
+        results = t.get("results") or []
+        if not results:
+            lines.append(f"• {head}: not reviewed")
+        for res in results:
+            if res.get("verdict"):
+                late = " LATE" if res.get("late") else ""
+                lines.append(f'• {icons.get(res["verdict"], "")} {head}: {res["verdict"]} {res.get("confidence", 0):.2f}{late} ({res["reviewerId"]})')
+                if res.get("reason"):
+                    lines.append(f'   {res["reason"][:300]}')
+            else:
+                lines.append(f'• {head}: {res["status"]} ({res["reviewerId"]})')
+    return "\n".join(lines)
+
+async def handle_reviews(update: Update, context):
+    if not (is_allowed(update) or _in_review_topic(update)):
+        return
+    days = 1
+    if context.args and context.args[0].isdigit():
+        days = max(1, min(30, int(context.args[0])))
+    try:
+        text = await asyncio.to_thread(_fetch_reviews, days)
+    except Exception as e:
+        text = f"⚠️ Could not reach the engine: {e}"
+    for chunk in _split(text):
+        await update.message.reply_text(chunk)
+
 async def handle_start(update: Update, context):
     if not is_allowed(update):
         return
@@ -159,7 +208,8 @@ async def handle_start(update: Update, context):
         "  /reset — fresh conversation\n"
         "  /haiku — fast model ⚡\n"
         "  /sonnet — smarter model 🧠\n"
-        "  /opus — most capable model 🎩\n\n"
+        "  /opus — most capable model 🎩\n"
+        "  /reviews [days] — AI candidate reviews\n\n"
         "Just type to chat!"
     )
 
@@ -211,6 +261,7 @@ def main():
     app.add_handler(CommandHandler("haiku",  handle_haiku))
     app.add_handler(CommandHandler("sonnet", handle_sonnet))
     app.add_handler(CommandHandler("opus",   handle_opus))
+    app.add_handler(CommandHandler("reviews", handle_reviews))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     log.info("Polling…")
     app.run_polling()

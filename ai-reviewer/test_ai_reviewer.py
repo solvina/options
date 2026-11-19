@@ -9,6 +9,7 @@ import stat
 import tempfile
 import threading
 import unittest
+from unittest import mock
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -102,6 +103,11 @@ GOOD = {
 
 class Base(unittest.TestCase):
     def setUp(self):
+        # The host guard must not see this machine's real processes (a Gradle build running
+        # next to the tests would pause every daemon test).
+        patcher = mock.patch.object(ar, "_process_table", return_value={})
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.tmp = Path(tempfile.mkdtemp())
         self.claude_args = self.tmp / "args.json"
 
@@ -278,6 +284,18 @@ class DaemonTest(Base):
         engine.close()
         self.assertEqual(r.state, "PAUSED")
         self.assertEqual(engine.posted("/claim"), [])
+
+
+class PremarketProbeTest(Base):
+    def test_due_only_in_the_window_and_when_nothing_proved_the_login_lately(self):
+        from datetime import datetime
+        r = ar.Reviewer(self.config())
+        thu_0910 = datetime(2026, 11, 19, 9, 10, tzinfo=ar.NEW_YORK)
+        self.assertFalse(r.premarket_probe_due(thu_0910), "just started: login proven by the startup probe")
+        r.last_ok -= 13 * 3600
+        self.assertTrue(r.premarket_probe_due(thu_0910))
+        self.assertFalse(r.premarket_probe_due(datetime(2026, 11, 19, 10, 0, tzinfo=ar.NEW_YORK)))
+        self.assertFalse(r.premarket_probe_due(datetime(2026, 11, 21, 9, 10, tzinfo=ar.NEW_YORK)), "Saturday")
 
 
 class HostGuardTest(unittest.TestCase):

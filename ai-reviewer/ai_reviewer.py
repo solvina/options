@@ -30,6 +30,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
 
 import yaml
@@ -39,6 +40,7 @@ CONTRACT_VERSION = "1"
 SNAPSHOT_VERSIONS = [1]
 PROMPT_VERSION = "v1"
 HERE = Path(__file__).resolve().parent
+NEW_YORK = ZoneInfo("America/New_York")
 
 log = logging.getLogger("ai-reviewer")
 
@@ -458,6 +460,7 @@ class Reviewer:
         self.next_probe = 0.0
         self.backoff_until = 0.0
         self.consecutive_failures = 0
+        self.last_ok = time.monotonic()  # last successful review or probe
         self.stop = threading.Event()
         self.lock = threading.Lock()
 
@@ -517,6 +520,7 @@ class Reviewer:
                 log.warning("[%s] result for %s not accepted: %s", e.name, tid, ex)  # 409 = lease lost
             return
         self.consecutive_failures = 0
+        self.last_ok = time.monotonic()
         log.info("[%s] %s %s → %s (%.2f)%s", e.name, task["symbol"], task["strategyId"], outcome.output["verdict"],
                  outcome.output["confidence"], " LATE" if (ack or {}).get("late") else "")
         self.set_state("READY")
@@ -539,13 +543,29 @@ class Reviewer:
             self.set_state("DEGRADED" if self.consecutive_failures >= 3 else "READY",
                            f"{self.consecutive_failures} failures in a row" if self.consecutive_failures >= 3 else None)
 
+    def premarket_probe_due(self, now_ny: datetime | None = None) -> bool:
+        """Weekdays 09:00–09:30 New York, when nothing has proven the login for 12 h: catch a dead
+        login before the first candidate arrives instead of on it."""
+        t = now_ny or datetime.now(NEW_YORK)
+        in_window = t.weekday() < 5 and (9, 0) <= (t.hour, t.minute) < (9, 30)
+        return in_window and time.monotonic() - self.last_ok > 12 * 3600
+
     def tick(self):
         now = time.monotonic()
+        if self.state != "AUTH_FAILED" and self.premarket_probe_due():
+            failure = probe(self.cfg)
+            if failure is None:
+                self.last_ok = now
+            else:
+                self.next_probe = now + 600
+                self.set_state("AUTH_FAILED" if failure.kind == "AUTH" else "DEGRADED", failure.message[:300])
+                return
         if self.state == "AUTH_FAILED":
             if now < self.next_probe:
                 return
             failure = probe(self.cfg)
             if failure is None:
+                self.last_ok = now
                 self.set_state("READY")
             else:
                 self.next_probe = now + 600
