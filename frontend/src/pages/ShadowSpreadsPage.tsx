@@ -114,6 +114,19 @@ function AiPanel({ report, rulesVersion, setRulesVersion }: { report: AiReviewRe
             <CohortRow c={report.withAi} label="Rules + AI" />
             <CohortRow c={report.removedByAi} label="Removed by the AI" />
             <CohortRow c={report.addedByAi} label="Let in instead" />
+            {(report.candidates ?? []).length > 0 && (
+              <tr>
+                <td colSpan={7} className="pt-3 text-xs text-muted-foreground">
+                  Every reviewed title, followed from the moment it first qualified, no veto applied (did the verdict
+                  call the trade right?)
+                  {report.candidateLossesAvoidedMinusWinsForgone != null &&
+                    ` · vetoes: losses avoided − wins forgone ${usd(report.candidateLossesAvoidedMinusWinsForgone)}`}
+                </td>
+              </tr>
+            )}
+            {(report.candidates ?? []).map((c) => (
+              <CohortRow key={`cand-${c.label}`} c={c} />
+            ))}
           </tbody>
         </table>
       </div>
@@ -176,7 +189,8 @@ export function ShadowSpreadsPage() {
   if (isLoading) return <p className="text-muted-foreground text-sm">Loading…</p>
   if (isError || !data) return <p className="text-destructive text-sm">Failed to load would-be trades.</p>
   const rows = (data as ShadowSpreadDto[]).filter((r) => !rulesVersion || r.aiRulesVersion === rulesVersion)
-  const live = rows.filter((r) => !r.backfilled)
+  // REVIEWED_CANDIDATE rows score the AI verdicts (see the AI panel); they are not decision rows.
+  const live = rows.filter((r) => !r.backfilled && r.sourceOutcome !== 'REVIEWED_CANDIDATE')
   const backfilled = rows.filter((r) => r.backfilled)
 
   return (

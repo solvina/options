@@ -52,6 +52,49 @@ class ShadowSpreadService(
 
         val RECORDED_OUTCOMES =
             setOf(ExecutionOutcome.FLOOR_REACHED, ExecutionOutcome.TIMED_OUT, ExecutionOutcome.LIQUIDITY_REJECTED)
+
+        /**
+         * A title recorded the moment it first qualified, before any AI verdict or pool decision, and
+         * followed to its exit regardless of what happens next. Scores the AI's verdicts on the trade
+         * itself: a veto is judged on how the vetoed spread would have done. Kept apart from the
+         * decision rows: never "held", never selected, never in either simulated portfolio.
+         */
+        const val REVIEWED_CANDIDATE = "REVIEWED_CANDIDATE"
+    }
+
+    /** First qualification of [request]. One open candidate row per title. */
+    suspend fun recordCandidate(
+        request: TradeExecutionRequest,
+        score: Double,
+        firstSeenAt: Instant,
+    ) {
+        val duplicate =
+            port.findOpen().any { it.symbol == request.underlyingSymbol && it.sourceOutcome == REVIEWED_CANDIDATE }
+        if (duplicate) return
+        val shadow =
+            port.save(
+                ShadowSpread(
+                    strategyId = request.strategyId,
+                    symbol = request.underlyingSymbol,
+                    optionType = request.soldContract.type,
+                    expiry = request.soldContract.expiry,
+                    soldStrike = request.soldContract.strike,
+                    boughtStrike = request.boughtContract.strike,
+                    openedAt = Instant.now(clock),
+                    sourceOutcome = REVIEWED_CANDIDATE,
+                    midCredit = request.targetCredit,
+                    floorCredit = request.floorCredit,
+                    naturalCredit = request.soldBid.subtract(request.boughtAsk),
+                    underlyingAtEntry = request.underlyingPriceAtEntry,
+                    ivRankAtEntry = request.ivRankAtEntry,
+                    score = score,
+                    firstSeenAt = firstSeenAt,
+                ),
+            )
+        tradeLogger.info {
+            "SHADOW ${shadow.symbol}  ${shadow.soldStrike}${shadow.optionType.ibkrCode}/${shadow.boughtStrike}" +
+                "${shadow.optionType.ibkrCode}  exp=${shadow.expiry}  mid=\$${shadow.midCredit}  source=${shadow.sourceOutcome}"
+        }
     }
 
     suspend fun record(
@@ -61,7 +104,8 @@ class ShadowSpreadService(
         if (outcome !in RECORDED_OUTCOMES) return
         // One position per title, whatever its strikes or direction: an account can hold only one
         // spread per symbol, and copies of one title are one bet (MU was counted 7 times).
-        val duplicate = port.findOpen().any { it.symbol == request.underlyingSymbol }
+        val duplicate =
+            port.findOpen().any { it.symbol == request.underlyingSymbol && it.sourceOutcome != REVIEWED_CANDIDATE }
         if (duplicate) return
         val shadow =
             port.save(
@@ -101,8 +145,9 @@ class ShadowSpreadService(
         val now = Instant.now(clock)
         val startOfDay = LocalDate.now(clock).atStartOfDay(clock.zone).toInstant()
         val tradingDate = now.atZone(NEW_YORK).toLocalDate()
-        val open = port.findOpen()
-        val all = port.findAll()
+        // Candidate rows track verdicts on their own; they never count as a held title here.
+        val open = port.findOpen().filter { it.sourceOutcome != REVIEWED_CANDIDATE }
+        val all = port.findAll().filter { it.sourceOutcome != REVIEWED_CANDIDATE }
         val heldBySymbol = open.associateBy { it.symbol }
         val verdicts =
             runCatching { aiReview?.primaryVerdicts(tradingDate, now).orEmpty() }

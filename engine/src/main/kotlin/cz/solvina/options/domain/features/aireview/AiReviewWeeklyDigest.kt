@@ -43,6 +43,15 @@ class AiReviewWeeklyDigest(
                     "${it.key} ${it.value}"
                 }} · gating would have blocked ${r.wouldGate}",
             )
+            if (r.candidates.isNotEmpty()) {
+                appendLine()
+                appendLine("Every reviewed title, from first qualification (no veto applied):")
+                r.candidates.forEach { appendLine(line(it)) }
+                appendLine("Vetoes on the trade itself: losses avoided − wins forgone ${usd(r.candidateLossesAvoidedMinusWinsForgone)}")
+                r.candidateApproveMinusVeto?.let { d ->
+                    appendLine("APPROVE − VETO per trade ${usd(d.mean)}, n=${d.approveClosed}/${d.vetoClosed}")
+                }
+            }
             if (r.rulesVersions.size > 1) appendLine("Rules changed ${r.rulesVersions.size - 1}× since the first review.")
             append("Advisory only; the page Would-be Trades has the detail.")
         }

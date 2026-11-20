@@ -471,6 +471,15 @@ components:
           additionalProperties: { type: integer }
           description: Reviewed tasks by what the decision did with them (RECORDED, ALREADY_HELD, DROPPED, ...).
         wouldGate: { type: integer, description: Reviewed titles gating would have blocked }
+        candidates:
+          type: array
+          description: Every reviewed title as a would-be trade from its first qualification, by the primary verdict (no veto applied).
+          items: { $ref: '#/components/schemas/ReportCohort' }
+        candidateApproveMinusVeto:
+          $ref: '#/components/schemas/ReportDifference'
+        candidateLossesAvoidedMinusWinsForgone:
+          type: number
+          description: Minus the realized P&L of vetoed candidate trades (positive = the vetoes helped).
 
     ReportCohort:
       type: object

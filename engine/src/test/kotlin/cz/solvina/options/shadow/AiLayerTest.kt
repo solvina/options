@@ -274,4 +274,53 @@ class AiLayerTest {
             assertNotNull(d.low)
             assertTrue(r.calibration.first { it.low == 0.75 }.closed == 4)
         }
+
+    // -------------------------------------------------------------------------
+    // Reviewed candidates: every title from first qualification, no veto applied
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `a candidate is recorded once and never counts as held at the decision`() =
+        runTest {
+            shadows.recordCandidate(candidate("GILD", 0.9).request, 0.9, morning)
+            shadows.recordCandidate(candidate("GILD", 0.9).request, 0.9, morning)
+            assertEquals(1, port.rows.size, "one open candidate row per title")
+
+            clock.now = decision
+            shadows.recordDecision(listOf(candidate("GILD", 0.9)))
+
+            val rows = port.rows.values.groupBy { it.sourceOutcome }
+            assertEquals(1, rows.getValue(ShadowSpreadService.REVIEWED_CANDIDATE).size)
+            val decided = rows.getValue("POOL_DECISION").single()
+            assertTrue(decided.selected, "the candidate row must not block the rules portfolio")
+            val c = rows.getValue(ShadowSpreadService.REVIEWED_CANDIDATE).single()
+            assertTrue(!c.selected && !c.aiSelected, "candidate rows stay out of both portfolios")
+        }
+
+    @Test
+    fun `the report scores every reviewed candidate by its verdict, apart from the decision rows`() =
+        runTest {
+            review("GILD", AiVerdict.VETO)
+            review("XOM", AiVerdict.APPROVE)
+            review("WELL", null) // no verdict in time
+            listOf("GILD", "XOM", "WELL", "CME").forEach { shadows.recordCandidate(candidate(it, 0.5).request, 0.5, morning) }
+            // GILD (vetoed) went on to lose 200, XOM (approved) won 50, WELL won 50, CME still open.
+            val exits = mapOf("GILD" to "3.00", "XOM" to "0.50", "WELL" to "0.50")
+            port.rows.values.toList().forEach { r ->
+                exits[r.symbol.value]?.let {
+                    port.save(r.copy(status = ShadowStatus.CLOSED_PROFIT, exitValue = BigDecimal(it), closedAt = decision))
+                }
+            }
+
+            val r = AiReviewReportService(port, store, config, clock).report()
+
+            assertTrue(r.cohorts.isEmpty(), "candidate rows are not decision rows")
+            val byLabel = r.candidates.associateBy { it.label }
+            assertEquals(setOf("APPROVE", "VETO", "NO_VERDICT_IN_TIME", "NOT_REVIEWED"), byLabel.keys)
+            assertEquals(-200.0, byLabel.getValue("VETO").realizedPnl)
+            assertEquals(50.0, byLabel.getValue("APPROVE").realizedPnl)
+            assertEquals(1, byLabel.getValue("NOT_REVIEWED").open)
+            assertEquals(200.0, r.candidateLossesAvoidedMinusWinsForgone, "the veto avoided a 200 loss")
+            assertEquals(250.0, assertNotNull(r.candidateApproveMinusVeto).mean)
+        }
 }

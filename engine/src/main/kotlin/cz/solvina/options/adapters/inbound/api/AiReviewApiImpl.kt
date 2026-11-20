@@ -23,6 +23,7 @@ import cz.solvina.options.domain.features.aireview.AiReviewService
 import cz.solvina.options.domain.features.aireview.AiReviewerState
 import cz.solvina.options.domain.features.aireview.AiVerdict
 import cz.solvina.options.domain.features.aireview.Cohort
+import cz.solvina.options.domain.features.aireview.Difference
 import cz.solvina.options.domain.features.aireview.PromptOutcome
 import cz.solvina.options.domain.features.aireview.ResultSubmission
 import cz.solvina.options.domain.features.aireview.SubmitOutcome
@@ -71,24 +72,21 @@ class AiReviewApiImpl(
                 removedByAi = r.removedByAi.toDto(),
                 addedByAi = r.addedByAi.toDto(),
                 lossesAvoidedMinusWinsForgone = r.lossesAvoidedMinusWinsForgone.toBigDecimal(),
-                approveMinusVeto =
-                    r.approveMinusVeto?.let {
-                        ReportDifference(
-                            it.mean.toBigDecimal(),
-                            it.approveClosed,
-                            it.vetoClosed,
-                            it.low?.toBigDecimal(),
-                            it.high?.toBigDecimal(),
-                        )
-                    },
+                approveMinusVeto = r.approveMinusVeto?.toDto(),
                 calibration =
                     r.calibration.map { ReportCalibrationBucket(it.low.toBigDecimal(), it.high.toBigDecimal(), it.closed, it.right) },
                 rulesVersions = r.rulesVersions.map { ReportRulesVersion(it.version, it.firstSeenAt.atOffset(ZoneOffset.UTC), it.tasks) },
                 decisions = r.decisions,
                 wouldGate = r.wouldGate,
+                candidates = r.candidates.map { it.toDto() },
+                candidateApproveMinusVeto = r.candidateApproveMinusVeto?.toDto(),
+                candidateLossesAvoidedMinusWinsForgone = r.candidateLossesAvoidedMinusWinsForgone.toBigDecimal(),
             ),
         )
     }
+
+    private fun Difference.toDto() =
+        ReportDifference(mean.toBigDecimal(), approveClosed, vetoClosed, low?.toBigDecimal(), high?.toBigDecimal())
 
     private fun Cohort.toDto() =
         ReportCohort(

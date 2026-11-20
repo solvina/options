@@ -152,6 +152,15 @@ class ScannerService(
                     // when no review is possible). Re-offers after a restart or an unfilled entry
                     // are absorbed by the task's unique key. The decision re-prices but never emails.
                     selected.opportunity?.let { candidateReview.requestReview(it) }
+                    // The same moment becomes a would-be trade of its own, followed whatever the
+                    // verdict or the decision later does: the AI is judged on the trade it vetoed.
+                    shadowSpreads?.let { shadows ->
+                        val score = selected.qualityScore()
+                        scope.launch {
+                            runCatching { shadows.recordCandidate(selected.request, score, Instant.now(clock)) }
+                                .onFailure { logger.warn { "[$symbol] candidate would-be trade not recorded: ${it.message}" } }
+                        }
+                    }
                     ivRanksSnapshot[symbol.value] = selected.request.ivRankAtEntry
                     ScanOutcome.POOLED
                 } else {
@@ -224,18 +233,21 @@ class ScannerService(
             if (finalOfDay) candidatePool.clear()
         }
 
+    private fun CandidateResult.Selected.qualityScore(): Double {
+        val bidPct = SpreadSelectionRules.comboBidPctOfMid(detail.bidCredit ?: BigDecimal.ZERO, request.targetCredit) ?: 0.0
+        return SpreadSelectionRules.qualityScore(detail.creditPctOfWidth ?: 0.0, bidPct)
+    }
+
     private fun CandidateResult.Selected.toCandidate(
         symbol: Symbol,
         firstSeenAt: Instant?,
-    ): ShadowCandidate {
-        val bidPct = SpreadSelectionRules.comboBidPctOfMid(detail.bidCredit ?: BigDecimal.ZERO, request.targetCredit) ?: 0.0
-        return ShadowCandidate(
+    ): ShadowCandidate =
+        ShadowCandidate(
             request = request,
-            score = SpreadSelectionRules.qualityScore(detail.creditPctOfWidth ?: 0.0, bidPct),
+            score = qualityScore(),
             firstSeenAt = firstSeenAt ?: Instant.now(clock),
             flags = CandidateFlags.of(request.strategyId, request.ivRankAtEntry, regimeService.regimeFor(symbol), poolConfig),
         ).also { logger.debug { "[$symbol] pool score ${it.score}" } }
-    }
 
     private suspend fun scanSymbol(
         symbol: Symbol,

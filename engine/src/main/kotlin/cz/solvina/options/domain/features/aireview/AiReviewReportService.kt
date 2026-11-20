@@ -2,6 +2,7 @@ package cz.solvina.options.domain.features.aireview
 
 import cz.solvina.options.domain.features.shadow.ShadowSpread
 import cz.solvina.options.domain.features.shadow.ShadowSpreadPort
+import cz.solvina.options.domain.features.shadow.ShadowSpreadService
 import cz.solvina.options.domain.features.shadow.ShadowStatus
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
@@ -64,6 +65,13 @@ data class AiReviewReport(
     val rulesVersions: List<RulesVersionMark>,
     val decisions: Map<String, Int>,
     val wouldGate: Int,
+    /**
+     * Every reviewed title as a would-be trade from the moment it first qualified, whatever the
+     * verdict or the decision then did: how the trades would have gone with no veto at all.
+     */
+    val candidates: List<Cohort> = emptyList(),
+    val candidateApproveMinusVeto: Difference? = null,
+    val candidateLossesAvoidedMinusWinsForgone: Double = 0.0,
 )
 
 /**
@@ -87,10 +95,10 @@ class AiReviewReportService(
         val reviews = store.findReviewsSince(Instant.EPOCH)
         val taskById = reviews.associateBy { it.task.id }
         val primaryId = config.primaryReviewer?.id ?: "-"
+        val all = shadows.findAll()
         val rows =
-            shadows
-                .findAll()
-                .filter { !it.backfilled && it.score != null }
+            all
+                .filter { !it.backfilled && it.score != null && it.sourceOutcome != ShadowSpreadService.REVIEWED_CANDIDATE }
                 .filter {
                     from == null ||
                         !it.openedAt
@@ -113,6 +121,7 @@ class AiReviewReportService(
                 .filter { it.status == AiTaskStatus.OPEN }
                 .filter { from == null || !it.tradingDate.isBefore(from) }
                 .filter { rulesVersion == null || it.rulesVersion == rulesVersion }
+        val candidates = candidateRows(all, reviews, primaryId, from, rulesVersion)
         return AiReviewReport(
             reviewerId = primaryId,
             generatedAt = Instant.now(clock),
@@ -135,7 +144,42 @@ class AiReviewReportService(
                     .sortedBy { it.firstSeenAt },
             decisions = scopedTasks.groupingBy { it.decision?.action ?: "UNDECIDED" }.eachCount(),
             wouldGate = scopedTasks.count { it.decision?.wouldGate == true },
+            candidates = byVerdict(candidates),
+            candidateApproveMinusVeto = difference(candidates),
+            candidateLossesAvoidedMinusWinsForgone =
+                -candidates.filter { it.aiVerdict == AiVerdict.VETO.name && it.isClosed() }.sumOf { it.pnl() },
         )
+    }
+
+    private fun byVerdict(rows: List<ShadowSpread>): List<Cohort> =
+        rows
+            .groupBy { it.verdictLabel() }
+            .toSortedMap(compareBy { COHORT_ORDER.indexOf(it).takeIf { i -> i >= 0 } ?: COHORT_ORDER.size })
+            .map { (label, group) -> cohort(label, group) }
+
+    /**
+     * Candidate rows with the primary reviewer's verdict attached. The task is unique per (trading
+     * date, strategy, symbol), the same key the row was recorded under. A task without a finished
+     * result reads as NO_VERDICT_IN_TIME; no task at all as NOT_REVIEWED.
+     */
+    private fun candidateRows(
+        all: List<ShadowSpread>,
+        reviews: List<ReviewWithResults>,
+        primaryId: String,
+        from: LocalDate?,
+        rulesVersion: String?,
+    ): List<ShadowSpread> {
+        val byKey = reviews.associateBy { Triple(it.task.tradingDate, it.task.strategyId, it.task.symbol) }
+        return all
+            .filter { it.sourceOutcome == ShadowSpreadService.REVIEWED_CANDIDATE && !it.backfilled }
+            .filter { from == null || !it.day().isBefore(from) }
+            .mapNotNull { row ->
+                val review = byKey[Triple(row.day(), row.strategyId, row.symbol)]
+                if (rulesVersion != null && review?.task?.rulesVersion != rulesVersion) return@mapNotNull null
+                val result =
+                    review?.results?.firstOrNull { it.reviewerId == primaryId && it.status == AiResultStatus.DONE }
+                row.copy(aiTaskId = review?.task?.id, aiVerdict = result?.verdict?.name, aiConfidence = result?.confidence)
+            }
     }
 
     private fun ShadowSpread.verdictLabel(): String = aiVerdict ?: if (aiTaskId != null) NO_VERDICT_IN_TIME else NOT_REVIEWED

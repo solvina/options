@@ -225,6 +225,15 @@ export type AiReviewReport = {
      * Reviewed titles gating would have blocked
      */
     wouldGate?: number;
+    /**
+     * Every reviewed title as a would-be trade from its first qualification, by the primary verdict (no veto applied).
+     */
+    candidates?: Array<ReportCohort>;
+    candidateApproveMinusVeto?: ReportDifference;
+    /**
+     * Minus the realized P&L of vetoed candidate trades (positive = the vetoes helped).
+     */
+    candidateLossesAvoidedMinusWinsForgone?: number;
 };
 
 export type ReportCohort = {
