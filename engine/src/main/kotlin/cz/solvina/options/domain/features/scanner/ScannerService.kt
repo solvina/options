@@ -61,6 +61,8 @@ class ScannerService(
     private val candidateReview: CandidateReviewPort = CandidateReviewPort.NoOp,
     /** Candidate email when the title is entered directly (no pool); pooled titles go through [candidateReview]. */
     private val opportunityNotifier: OpportunityNotificationPort = OpportunityNotificationPort.NoOp,
+    /** Snapshot-wait measurements, logged with each run's summary (observe-only). */
+    private val scanTelemetry: ScanTelemetryPort = ScanTelemetryPort.NoOp,
 ) : ScannerPort {
     private val ivRanksSnapshot = ConcurrentHashMap<String, Double>()
 
@@ -114,12 +116,46 @@ class ScannerService(
         // (or never scanned since startup) sort first and keep universe order among themselves.
         val watchlist = universePort.getActiveSymbols().sortedBy { scanSequence[it] ?: -1L }
         logger.debug { "Scan order: ${watchlist.joinToString { it.value }}" }
-        for (symbol in watchlist) {
-            scanWatchlistSymbol(symbol, symbolsWithOpenSpread, totalCapital, runId)
-            scanSequence[symbol] = scanCounter.incrementAndGet()
+        val started = System.nanoTime()
+        var completed = false
+        scanTelemetry.drain() // start the run's measurement window clean
+        try {
+            for (symbol in watchlist) {
+                scanWatchlistSymbol(symbol, symbolsWithOpenSpread, totalCapital, runId)
+                scanSequence[symbol] = scanCounter.incrementAndGet()
+            }
+            completed = true
+            logger.info { "Scanner run complete" }
+        } finally {
+            logRunSummary(started, completed, watchlist.size)
         }
+    }
 
-        logger.info { "Scanner run complete" }
+    /**
+     * One greppable SCAN_SUMMARY line per run, also for runs cancelled at the time limit: duration,
+     * coverage, outcome and reject-reason counts, and the snapshot-wait measurements. The baseline
+     * for judging any change to how long market-data requests wait.
+     */
+    private fun logRunSummary(
+        startedNanos: Long,
+        completed: Boolean,
+        total: Int,
+    ) {
+        runCatching {
+            val rows = scanStatusRegistry.snapshot()
+            val outcomes = rows.groupingBy { it.outcome.name }.eachCount().toSortedMap()
+            val rejects =
+                rows
+                    .mapNotNull { it.rejectReason?.name }
+                    .groupingBy { it }
+                    .eachCount()
+                    .toSortedMap()
+            val secs = (System.nanoTime() - startedNanos) / 1_000_000_000L
+            logger.info {
+                "SCAN_SUMMARY ${if (completed) "complete" else "CUT"} ${secs}s scanned=${rows.size}/$total " +
+                    "outcomes=$outcomes rejects=$rejects wait: ${scanTelemetry.drain()}"
+            }
+        }.onFailure { logger.warn { "Scan summary failed: ${it.message}" } }
     }
 
     private suspend fun scanWatchlistSymbol(

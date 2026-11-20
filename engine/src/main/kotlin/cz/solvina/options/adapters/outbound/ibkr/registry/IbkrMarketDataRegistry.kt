@@ -7,6 +7,7 @@ import kotlinx.coroutines.CompletableDeferred
 import org.springframework.stereotype.Component
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ConcurrentLinkedQueue
 
 private val logger = KotlinLogging.logger {}
 
@@ -19,8 +20,25 @@ data class PendingMarketDataRequest(
 ) {
     internal val deferred: CompletableDeferred<MarketDataSnapshot> = CompletableDeferred()
 
+    /** System.nanoTime() at creation; [history] times are measured from the same clock. */
+    val startedNanos: Long = System.nanoTime()
+
+    /** Every snapshot update with its arrival time. Observe-only: lets [SnapshotWaitStats] replay
+     *  when an earlier, quiet-based return would have happened and what it would have missed. */
+    val history: ConcurrentLinkedQueue<TimedSnapshot> = ConcurrentLinkedQueue()
+
+    internal fun record(updated: MarketDataSnapshot) {
+        snapshot = updated
+        history.add(TimedSnapshot(System.nanoTime(), updated))
+    }
+
     suspend fun await(): MarketDataSnapshot = deferred.await()
 }
+
+data class TimedSnapshot(
+    val atNanos: Long,
+    val snapshot: MarketDataSnapshot,
+)
 
 /** Continuous reqMktData(snapshot=false) subscription. Each tick replaces [snapshot] with a new
  *  immutable instance via copy(); [onUpdate] is called after each replacement. */
@@ -147,14 +165,15 @@ class IbkrMarketDataRegistry(
         val normalizedField = normalizeDelayedPriceField(field)
         val now = Instant.now()
         pendingMarketData[reqId]?.let { request ->
-            request.snapshot =
+            request.record(
                 when (normalizedField) {
                     1 -> request.snapshot.copy(bid = price, asOf = now)
                     2 -> request.snapshot.copy(ask = price, asOf = now)
                     4 -> request.snapshot.copy(last = price, asOf = now)
                     9 -> request.snapshot.copy(close = price, asOf = now)
                     else -> return@let
-                }
+                },
+            )
             completeIfReady(reqId)
         }
         pendingContinuousMarketData[reqId]?.let { request ->
@@ -201,7 +220,7 @@ class IbkrMarketDataRegistry(
             )
 
         pendingMarketData[reqId]?.let { request ->
-            request.snapshot = request.snapshot.withGreeks()
+            request.record(request.snapshot.withGreeks())
             completeIfReady(reqId)
         }
         // Continuous subscription — update Greeks silently (read on next bid/ask tick via emitIfReady)

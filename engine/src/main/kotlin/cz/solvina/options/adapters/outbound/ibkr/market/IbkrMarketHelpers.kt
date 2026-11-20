@@ -57,6 +57,7 @@ class MarketSnapshotHelper(
     private val registry: IbkrMarketDataRegistry,
     private val idCounter: IbkrOrderIdCounter,
     private val client: EClientSocket,
+    private val waitStats: SnapshotWaitStats = SnapshotWaitStats(),
 ) {
     suspend fun reqMktDataSnapshot(
         symbol: Symbol,
@@ -83,6 +84,7 @@ class MarketSnapshotHelper(
         // true invariant — previously these requests bypassed the budget entirely.
         val reqId = idCounter.nextOrderId()
         val pending = registry.createPendingMarketDataRequest(reqId, symbol, isReady)
+        var timedOut = false
         return try {
             // TWS_LIMITS: +1 market-data line for the duration of ONE snapshot. Self-retiring — the
             // finally below always cancelMktData once the snapshot completes, quiesces, or times out.
@@ -97,8 +99,10 @@ class MarketSnapshotHelper(
             // rather than discarding them — partial bid/ask still beats an all-NaN snapshot, and the
             // caller's own NaN checks (e.g. delta → BS-fallback) decide what's usable.
             logger.warn { "Market data snapshot for [$symbol] timed out after 5s" }
+            timedOut = true
             pending.snapshot
         } finally {
+            waitStats.record(symbol, purpose, pending, isReady, System.nanoTime(), timedOut)
             registry.remove(reqId)
             client.cancelMktData(reqId)
             MarketDataLineTracker.unsubscribed("[$symbol] $purpose (reqMktData)")
