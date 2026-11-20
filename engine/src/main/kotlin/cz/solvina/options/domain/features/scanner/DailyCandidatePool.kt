@@ -3,12 +3,15 @@ package cz.solvina.options.domain.features.scanner
 import cz.solvina.options.domain.features.regime.RegimeSignal
 import cz.solvina.options.domain.features.spread.model.StrategyId
 import cz.solvina.options.domain.models.Symbol
+import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.boot.context.properties.ConfigurationProperties
 import org.springframework.stereotype.Component
 import java.time.Clock
 import java.time.Instant
 import java.time.LocalDate
 import java.util.concurrent.ConcurrentHashMap
+
+private val logger = KotlinLogging.logger {}
 
 /**
  * `scanner.pool.*`. When enabled, scans only collect candidates; orders go out at the decision times,
@@ -76,28 +79,41 @@ object CandidateFlags {
 }
 
 /**
- * Titles that qualified today and wait for the next decision. In memory: a restart loses only the
- * first-seen times, because the next scans refill it and a decision re-prices every title anyway.
+ * Titles that qualified today and wait for the next decision. Kept in memory and written through
+ * to [store], so an engine restart mid-session reloads the day's titles instead of waiting for the
+ * scans to find them again (2026-11-20: a 19:50 deploy cost DIA and QQQ their 21:00 decision).
+ * The store is best effort: a failed write is logged and the in-memory pool carries on.
  */
 @Component
 class DailyCandidatePool(
     private val clock: Clock,
+    private val store: CandidatePoolStorePort? = null,
 ) {
     private val firstSeen = ConcurrentHashMap<Symbol, Instant>()
 
     @Volatile private var day: LocalDate? = null
 
-    private fun rollOver() {
+    @Synchronized
+    private fun rollOver(): LocalDate {
         val today = LocalDate.now(clock)
         if (day != today) {
             firstSeen.clear()
             day = today
+            persist("load") {
+                firstSeen.putAll(it.load(today))
+                it.deleteBefore(today)
+            }
+            if (firstSeen.isNotEmpty()) {
+                logger.info { "Candidate pool restored for $today: ${firstSeen.keys.joinToString { s -> s.value }}" }
+            }
         }
+        return today
     }
 
     fun offer(symbol: Symbol) {
-        rollOver()
-        firstSeen.putIfAbsent(symbol, Instant.now(clock))
+        val today = rollOver()
+        val now = Instant.now(clock)
+        if (firstSeen.putIfAbsent(symbol, now) == null) persist("add $symbol") { it.add(today, symbol, now) }
     }
 
     fun contains(symbol: Symbol): Boolean {
@@ -113,8 +129,41 @@ class DailyCandidatePool(
     }
 
     fun remove(symbol: Symbol) {
-        firstSeen.remove(symbol)
+        val today = rollOver()
+        if (firstSeen.remove(symbol) != null) persist("remove $symbol") { it.remove(today, symbol) }
     }
 
-    fun clear() = firstSeen.clear()
+    fun clear() {
+        val today = rollOver()
+        firstSeen.clear()
+        persist("clear") { it.clear(today) }
+    }
+
+    private inline fun persist(
+        what: String,
+        block: (CandidatePoolStorePort) -> Unit,
+    ) {
+        val s = store ?: return
+        runCatching { block(s) }.onFailure { logger.warn { "Candidate pool store $what failed: ${it.message}" } }
+    }
+}
+
+/** Durable copy of the day's pool. */
+interface CandidatePoolStorePort {
+    fun load(day: LocalDate): Map<Symbol, Instant>
+
+    fun add(
+        day: LocalDate,
+        symbol: Symbol,
+        firstSeenAt: Instant,
+    )
+
+    fun remove(
+        day: LocalDate,
+        symbol: Symbol,
+    )
+
+    fun clear(day: LocalDate)
+
+    fun deleteBefore(day: LocalDate)
 }

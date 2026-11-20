@@ -1,0 +1,22 @@
+databaseChangeLog:
+  # ---------------------------------------------------------------------------
+  # 2026-11-21: durable copy of the day's candidate pool (DailyCandidatePool). Written through on
+  # every add/remove/clear and reloaded on the first use after a restart, so a mid-session deploy
+  # no longer drops titles from the 13:00 / 15:00 NY decisions. Rows of earlier days are deleted
+  # on the first use of a new day.
+  # ---------------------------------------------------------------------------
+  - changeSet:
+      id: v49__candidate_pool
+      author: claude
+      changes:
+        - createTable:
+            tableName: candidate_pool
+            columns:
+              - column: { name: id, type: UUID, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: pool_date, type: DATE, constraints: { nullable: false } }
+              - column: { name: symbol, type: TEXT, constraints: { nullable: false } }
+              - column: { name: first_seen_at, type: "TIMESTAMP WITH TIME ZONE", constraints: { nullable: false } }
+        - addUniqueConstraint:
+            tableName: candidate_pool
+            columnNames: pool_date, symbol
+            constraintName: uq_candidate_pool_day_symbol
