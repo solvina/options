@@ -9,6 +9,7 @@ import cz.solvina.options.domain.features.market.GreeksEstimator
 import cz.solvina.options.domain.features.market.OptionChainPort
 import cz.solvina.options.domain.features.market.model.ChainCoverage
 import cz.solvina.options.domain.features.market.model.OptionQuote
+import cz.solvina.options.domain.features.scanner.StrategyParams
 import cz.solvina.options.domain.features.scanner.StrategyParamsRegistry
 import cz.solvina.options.domain.features.spread.model.StrategyId
 import cz.solvina.options.domain.models.Money
@@ -108,6 +109,14 @@ class IbkrOptionChainAdapter(
             return emptyList()
         }
 
+        // Puts locate the target delta from live quotes instead of the moneyness guess below, which
+        // read targetDelta as a %-OTM distance (0.25 → 25% below spot) and so only ever priced strikes
+        // 15–20% OTM: on low-vol names (KO: 0.15…0.05) nothing reached the delta band. Calls keep the
+        // original path for now.
+        if (isPut) {
+            return fetchPutChainByProbe(symbol, expiry, spot, width, validStrikes, strat, params)
+        }
+
         // Strikes near the moneyness-based target (high-delta region)
         val nearTarget =
             validStrikes
@@ -166,9 +175,92 @@ class IbkrOptionChainAdapter(
                     .awaitAll()
                     .filterNotNull()
             }
+        return finishChain(symbol, expiry, spot, candidateStrikes.size, fetched)
+    }
+
+    /**
+     * Bull-put chain in two rounds, both priced from IBKR's own greeks (no model):
+     *  1. probe — [StrategyParams.candidateStrikeCount] strikes spread evenly across the OTM band;
+     *  2. refine — the strikes between the two probes whose live |delta| brackets the target, plus
+     *     the bought-leg candidates one width below every sold candidate.
+     * Falls back to the probes alone when none of them returned a live delta.
+     */
+    private suspend fun fetchPutChainByProbe(
+        symbol: Symbol,
+        expiry: LocalDate,
+        spot: BigDecimal,
+        width: BigDecimal,
+        validStrikes: List<BigDecimal>,
+        strat: StrategyParams,
+        params: OptionParams,
+    ): List<OptionQuote> {
+        val notMissing = { strike: BigDecimal ->
+            !contractCache.isMissing(OptionContractKey(symbol, expiry, strike, OptionType.PUT))
+        }
+        val count = strat.candidateStrikeCount
+        val probes = PutStrikeProbe.probeStrikes(validStrikes.filter(notMissing), count)
+        val probed = fetchQuotes(symbol, expiry, probes, OptionType.PUT, params)
+
+        val probeDeltas =
+            probed.map { q ->
+                q.contract.strike to
+                    q.greeks.delta
+                        .takeIf { !it.isNaN() }
+                        ?.let { abs(it) }
+            }
+        val bracket = PutStrikeProbe.bracket(probeDeltas, strat.targetDelta)
+        val soldCandidates =
+            if (bracket == null) {
+                probes
+            } else {
+                PutStrikeProbe.refineStrikes(validStrikes.filter(notMissing), bracket, count, strat.targetDelta) +
+                    listOfNotNull(bracket.upper, bracket.lower)
+            }
+        val boughtLegs =
+            soldCandidates
+                .flatMap { sold ->
+                    val boughtTarget = sold.subtract(width)
+                    validStrikes.filter { it <= boughtTarget }.sortedDescending().take(2)
+                }.toSet()
+        val alreadyPriced = probed.map { it.contract.strike }.toSet() + probes
+        val round2 = (soldCandidates + boughtLegs).distinct().filter { it !in alreadyPriced && notMissing(it) }
+
+        logger.debug {
+            "[$symbol] PUT probe ${probes.size} strike(s) ${probeDeltas.joinToString {
+                "${it.first}:${it.second?.let { d ->
+                    "%.3f".format(d)
+                } ?: "NaN"}"
+            }}" +
+                " → bracket ${bracket?.let { "${it.lower}..${it.upper}" } ?: "none"}, refining ${round2.size} strike(s)"
+        }
+        val refined = fetchQuotes(symbol, expiry, round2, OptionType.PUT, params)
+        return finishChain(symbol, expiry, spot, probes.size + round2.size, probed + refined)
+    }
+
+    private suspend fun fetchQuotes(
+        symbol: Symbol,
+        expiry: LocalDate,
+        strikes: List<BigDecimal>,
+        optionType: OptionType,
+        params: OptionParams,
+    ): List<OptionQuote> =
+        coroutineScope {
+            strikes
+                .map { strike -> async { fetchQuote(symbol, expiry, strike, optionType, params) } }
+                .awaitAll()
+                .filterNotNull()
+        }
+
+    private fun finishChain(
+        symbol: Symbol,
+        expiry: LocalDate,
+        spot: BigDecimal,
+        strikesRequested: Int,
+        fetched: List<OptionQuote>,
+    ): List<OptionQuote> {
         coverageBySymbol[symbol.value] =
             ChainCoverage(
-                strikesRequested = candidateStrikes.size,
+                strikesRequested = strikesRequested,
                 strikesWithGreeks = fetched.count { GreeksEstimator.hasLiveGreeks(it) },
                 fetchedAt = Instant.now(),
             )
