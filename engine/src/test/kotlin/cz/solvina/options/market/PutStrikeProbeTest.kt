@@ -64,3 +64,40 @@ class PutStrikeProbeTest {
         assertTrue(PutStrikeProbe.refineStrikes(grid, b, 7, 0.25).isEmpty())
     }
 }
+
+class PutStrikeAimTest {
+    @Test
+    fun `aim lands where Black-Scholes gives the target delta`() {
+        val aim =
+            cz.solvina.options.adapters.outbound.ibkr.market.PutStrikeAim
+                .strikeForDelta(spot = 70.0, t = 41 / 365.0, sigma = 0.20, targetDelta = 0.25)
+        val d =
+            kotlin.math.abs(
+                cz.solvina.options.domain.features.market.BlackScholes
+                    .putDelta(70.0, aim, 41 / 365.0, 0.04, 0.20),
+            )
+
+        assertEquals(0.25, d, 1e-4)
+        // A 25-delta, 41-DTE put on a 20%-vol name sits a few % OTM — nowhere near 25% OTM.
+        assertTrue(aim in 65.0..68.5, "aim=$aim")
+    }
+
+    @Test
+    fun `higher volatility pushes the aim further OTM`() {
+        val aim = cz.solvina.options.adapters.outbound.ibkr.market.PutStrikeAim
+        val calm = aim.strikeForDelta(100.0, 0.11, 0.20, 0.25)
+        val wild = aim.strikeForDelta(100.0, 0.11, 0.60, 0.25)
+
+        assertTrue(wild < calm)
+    }
+
+    @Test
+    fun `coverage needs the live deltas to straddle the target or one close hit`() {
+        val aim = cz.solvina.options.adapters.outbound.ibkr.market.PutStrikeAim
+
+        assertTrue(aim.covers(listOf(0.31, 0.27, 0.19), 0.25))
+        assertTrue(aim.covers(listOf(0.33, 0.27), 0.25)) // 0.27 within tolerance
+        assertTrue(!aim.covers(listOf(0.45, 0.38, 0.33), 0.25))
+        assertTrue(!aim.covers(emptyList(), 0.25))
+    }
+}

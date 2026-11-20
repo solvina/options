@@ -12,6 +12,7 @@ import cz.solvina.options.domain.features.market.model.OptionQuote
 import cz.solvina.options.domain.features.scanner.StrategyParams
 import cz.solvina.options.domain.features.scanner.StrategyParamsRegistry
 import cz.solvina.options.domain.features.spread.model.StrategyId
+import cz.solvina.options.domain.features.volatility.VolatilityPort
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
 import cz.solvina.options.domain.models.OptionGreeks
@@ -33,6 +34,9 @@ import kotlin.math.abs
 
 private val logger = KotlinLogging.logger {}
 
+// A cached aim IV older than this falls back to the ATM figure (vol regimes move within days).
+private val AIM_IV_MAX_AGE: java.time.Duration = java.time.Duration.ofDays(3)
+
 @Component
 class IbkrOptionChainAdapter(
     private val marketSnapshotHelper: MarketSnapshotHelper,
@@ -41,7 +45,14 @@ class IbkrOptionChainAdapter(
     private val contractCache: IbkrContractCache,
     private val contractFactory: IbkrContractFactory,
     private val clock: Clock,
+    // Source of the at-the-money IV used to AIM the bull-put strike search when no recent IBKR
+    // option IV for the symbol is cached. Never used to price or select anything.
+    private val volatilityPort: VolatilityPort,
 ) : OptionChainPort {
+    // IBKR's own IV near the target delta from the last bull-put chain, per symbol. Includes the
+    // OTM skew, so it aims better than the ATM figure. In-memory: rebuilt by the first scan.
+    private val putAimIv = ConcurrentHashMap<String, Pair<Double, Instant>>()
+
     // Greek-delivery coverage of the most recent chain fetch per symbol. Observational only; read by
     // the scan-status table to expose market-data starvation (many strikes requested, few greeks back).
     private val coverageBySymbol = ConcurrentHashMap<String, ChainCoverage>()
@@ -179,10 +190,11 @@ class IbkrOptionChainAdapter(
     }
 
     /**
-     * Bull-put chain in two rounds, both priced from IBKR's own greeks (no model):
-     *  1. probe — [StrategyParams.candidateStrikeCount] strikes spread evenly across the OTM band;
-     *  2. refine — the strikes between the two probes whose live |delta| brackets the target, plus
-     *     the bought-leg candidates one width below every sold candidate.
+     * Bull-put chain. The short strike is always chosen on IBKR's live deltas; only the search differs:
+     *  1. aim — when an IV is known, Black-Scholes points at the target-delta strike and ONE round
+     *     prices the nearest strikes plus their bought legs. Done when the live deltas cover the target.
+     *  2. otherwise probe — [StrategyParams.candidateStrikeCount] strikes spread across the OTM band,
+     *     then refine the strikes between the two probes whose live |delta| brackets the target.
      * Falls back to the probes alone when none of them returned a live delta.
      */
     private suspend fun fetchPutChainByProbe(
@@ -198,11 +210,45 @@ class IbkrOptionChainAdapter(
             !contractCache.isMissing(OptionContractKey(symbol, expiry, strike, OptionType.PUT))
         }
         val count = strat.candidateStrikeCount
-        val probes = PutStrikeProbe.probeStrikes(validStrikes.filter(notMissing), count)
-        val probed = fetchQuotes(symbol, expiry, probes, OptionType.PUT, params)
+        val years = yearsTo(expiry)
+        val boughtLegsFor = { sold: List<BigDecimal> ->
+            sold
+                .flatMap { k -> validStrikes.filter { it <= k.subtract(width) }.sortedDescending().take(2) }
+                .toSet()
+        }
 
+        // 1. Black-Scholes aim: one round around the strike the model puts at the target delta.
+        val aimed = mutableListOf<OptionQuote>()
+        val aimIv = aimVolatility(symbol)
+        if (aimIv != null) {
+            val aim = PutStrikeAim.strikeForDelta(spot.toDouble(), years, aimIv.first, strat.targetDelta)
+            val sold = PutStrikeAim.nearest(validStrikes.filter(notMissing), aim, count)
+            val round = (sold + boughtLegsFor(sold)).distinct().filter(notMissing)
+            aimed += fetchQuotes(symbol, expiry, round, OptionType.PUT, params)
+            val soldDeltas =
+                aimed.filter { it.contract.strike in sold && !it.greeks.delta.isNaN() }.map { abs(it.greeks.delta) }
+            val hit = PutStrikeAim.covers(soldDeltas, strat.targetDelta)
+            logger.debug {
+                "[$symbol] PUT aim iv=${"%.3f".format(aimIv.first)} (${aimIv.second}) → strike ${"%.2f".format(aim)}, " +
+                    "priced ${round.size}, live sold |delta| ${soldDeltas.joinToString { "%.3f".format(it) }} → " +
+                    if (hit) "hit" else "miss, probing"
+            }
+            if (hit) {
+                rememberAimIv(symbol, aimed, strat.targetDelta)
+                return finishChain(symbol, expiry, spot, round.size, aimed)
+            }
+        }
+
+        // 2. Model-free fallback: probe the whole band, then refine inside the live-delta bracket.
+        val priced = aimed.map { it.contract.strike }.toSet()
+        val probes = PutStrikeProbe.probeStrikes(validStrikes.filter(notMissing), count)
+        val probed =
+            fetchQuotes(symbol, expiry, probes.filter { it !in priced }, OptionType.PUT, params) +
+                aimed.filter { it.contract.strike in probes }
+
+        // The aimed round's live deltas are real data too — they sharpen the bracket for free.
         val probeDeltas =
-            probed.map { q ->
+            (probed + aimed).distinctBy { it.contract.strike }.map { q ->
                 q.contract.strike to
                     q.greeks.delta
                         .takeIf { !it.isNaN() }
@@ -216,13 +262,8 @@ class IbkrOptionChainAdapter(
                 PutStrikeProbe.refineStrikes(validStrikes.filter(notMissing), bracket, count, strat.targetDelta) +
                     listOfNotNull(bracket.upper, bracket.lower)
             }
-        val boughtLegs =
-            soldCandidates
-                .flatMap { sold ->
-                    val boughtTarget = sold.subtract(width)
-                    validStrikes.filter { it <= boughtTarget }.sortedDescending().take(2)
-                }.toSet()
-        val alreadyPriced = probed.map { it.contract.strike }.toSet() + probes
+        val boughtLegs = boughtLegsFor(soldCandidates)
+        val alreadyPriced = probed.map { it.contract.strike }.toSet() + probes + priced
         val round2 = (soldCandidates + boughtLegs).distinct().filter { it !in alreadyPriced && notMissing(it) }
 
         logger.debug {
@@ -234,8 +275,33 @@ class IbkrOptionChainAdapter(
                 " → bracket ${bracket?.let { "${it.lower}..${it.upper}" } ?: "none"}, refining ${round2.size} strike(s)"
         }
         val refined = fetchQuotes(symbol, expiry, round2, OptionType.PUT, params)
-        return finishChain(symbol, expiry, spot, probes.size + round2.size, probed + refined)
+        val all = (aimed + probed + refined).distinctBy { it.contract.strike }
+        rememberAimIv(symbol, all, strat.targetDelta)
+        return finishChain(symbol, expiry, spot, aimed.size + probes.size + round2.size, all)
     }
+
+    /** Cached IBKR IV for [symbol] while fresh, else the ATM IV behind its IV rank; null = no aim. */
+    private suspend fun aimVolatility(symbol: Symbol): Pair<Double, String>? {
+        val now = Instant.now(clock)
+        putAimIv[symbol.value]
+            ?.takeIf { (iv, at) -> iv > 0.0 && at.isAfter(now.minus(AIM_IV_MAX_AGE)) }
+            ?.let { return it.first to "last chain" }
+        val rank = runCatching { volatilityPort.getIvRank(symbol) }.getOrNull() ?: return null
+        return rank.currentIv.takeIf { it > 0.0 && it < 5.0 }?.let { it to "ATM" }
+    }
+
+    private fun rememberAimIv(
+        symbol: Symbol,
+        quotes: List<OptionQuote>,
+        targetDelta: Double,
+    ) {
+        quotes
+            .filter { GreeksEstimator.hasLiveGreeks(it) && it.greeks.iv > 0.0 }
+            .minByOrNull { abs(abs(it.greeks.delta) - targetDelta) }
+            ?.let { putAimIv[symbol.value] = it.greeks.iv to Instant.now(clock) }
+    }
+
+    private fun yearsTo(expiry: LocalDate): Double = ChronoUnit.DAYS.between(LocalDate.now(clock), expiry).coerceAtLeast(1) / 365.0
 
     private suspend fun fetchQuotes(
         symbol: Symbol,
@@ -266,7 +332,7 @@ class IbkrOptionChainAdapter(
             )
         // Strikes that arrived priced but without greeks get them estimated from live neighbours;
         // any left NaN remain long-leg candidates only (the short-leg delta band never matches NaN).
-        val years = ChronoUnit.DAYS.between(LocalDate.now(clock), expiry).coerceAtLeast(1) / 365.0
+        val years = yearsTo(expiry)
         return GreeksEstimator.fillMissing(fetched, spot.toDouble(), years).also { quotes ->
             quotes.filter { it.greeksEstimated }.forEach { q ->
                 logger.info {
