@@ -436,6 +436,8 @@ class IbkrContractCache(
             val conId = cacheOptionConIdFromDetails(key, details)
             inFlightOptionConIds.remove(key)
             resultDeferred.complete(conId)
+            // The minimal-spec lookup returns the whole chain; the conId is cached, drop the rows.
+            optionContractReqIds.remove(key)?.let { contractDetailsRegistry.release(it) }
             logger.debug { "[$key] conId = $conId" }
             conId
         }.getOrElse { e ->
@@ -456,6 +458,8 @@ class IbkrContractCache(
             val strikes = cacheVerifiedStrikesFromDetails(symbol, expiry, optionType, details)
             inFlightVerifiedStrikes.remove(vkey)
             resultDeferred.complete(strikes)
+            // Strikes and conIds are cached now; the chain's rows are no longer needed.
+            verifiedStrikesReqIds.remove(vkey)?.let { contractDetailsRegistry.release(it) }
             strikes
         }.getOrElse { e ->
             inFlightVerifiedStrikes.remove(vkey, resultDeferred)

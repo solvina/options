@@ -2,9 +2,6 @@ package cz.solvina.options.adapters.outbound.ibkr.registry
 
 import com.ib.client.ContractDetails
 import io.github.oshai.kotlinlogging.KotlinLogging
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.withTimeout
 import org.springframework.stereotype.Component
 import java.time.Duration
@@ -26,25 +23,6 @@ class UnknownContractDetailsRequest(
     val reqId: Int,
 ) : IllegalStateException("Unknown contract details request $reqId")
 
-sealed interface ContractDetailsRegistryUpdate {
-    val id: Int
-
-    data class Row(
-        override val id: Int,
-        val contractDetails: ContractDetails,
-    ) : ContractDetailsRegistryUpdate
-
-    data class End(
-        override val id: Int,
-        val details: List<ContractDetails>,
-    ) : ContractDetailsRegistryUpdate
-
-    data class RequestFailed(
-        override val id: Int,
-        val cause: RuntimeException,
-    ) : ContractDetailsRegistryUpdate
-}
-
 @Component
 class IbkrContractDetailsRegistry {
     private val requests = ConcurrentHashMap<Int, ContractDetailsRequestState>()
@@ -59,11 +37,12 @@ class IbkrContractDetailsRegistry {
      * it above the cadence is what makes the caching worth having.
      */
     private val terminalStateTtl: Duration = Duration.ofMinutes(30)
-    private val updateBus = MutableSharedFlow<ContractDetailsRegistryUpdate>(replay = 4096, extraBufferCapacity = 4096)
 
-    val rows: Flow<ContractDetailsRegistryUpdate.Row> = updateBus.filterIsInstance()
-    val ends: Flow<ContractDetailsRegistryUpdate.End> = updateBus.filterIsInstance()
-    val requestFailures: Flow<ContractDetailsRegistryUpdate.RequestFailed> = updateBus.filterIsInstance()
+    /**
+     * A request IBKR never finished (no End, no error) is dropped after this. Callers wait at most
+     * 30s; before 2026-11-23 such states were never evicted and kept their partial rows forever.
+     */
+    private val activeStateTtl: Duration = Duration.ofMinutes(5)
 
     fun startRequest(
         reqId: Int,
@@ -76,6 +55,15 @@ class IbkrContractDetailsRegistry {
     }
 
     fun current(reqId: Int): ContractDetailsRequestState? = requests[reqId]
+
+    /**
+     * Drop a request's state once its caller has cached what it needed. A whole-chain option lookup
+     * holds thousands of rows (QQQ: 6,226 per side); keeping them for [terminalStateTtl] after the
+     * result is already cached is what filled the heap on 2026-11-23.
+     */
+    fun release(reqId: Int) {
+        requests.remove(reqId)
+    }
 
     suspend fun awaitEnd(
         reqId: Int,
@@ -95,7 +83,6 @@ class IbkrContractDetailsRegistry {
         val request = requests[reqId] ?: return
         if (request.terminal) return
         request.details.add(contractDetails)
-        updateBus.tryEmit(ContractDetailsRegistryUpdate.Row(reqId, contractDetails))
     }
 
     fun onContractDetailsEnd(reqId: Int) {
@@ -104,7 +91,6 @@ class IbkrContractDetailsRegistry {
         request.status = ContractRequestStatus.COMPLETED
         request.terminalAt = Instant.now()
         request.terminalSignal.complete(Unit)
-        updateBus.tryEmit(ContractDetailsRegistryUpdate.End(reqId, request.details.toList()))
     }
 
     fun onError(
@@ -116,7 +102,6 @@ class IbkrContractDetailsRegistry {
         logger.warn { "Contract resolution failed [reqId=$id code=$code flow=contractDetails]: $msg" }
         val ex = RuntimeException("IBKR error [code=$code]: $msg")
         request.markFailed(ex)
-        updateBus.tryEmit(ContractDetailsRegistryUpdate.RequestFailed(id, ex))
     }
 
     fun cancelAllPending(cause: Exception) {
@@ -125,7 +110,6 @@ class IbkrContractDetailsRegistry {
         if (active.isNotEmpty()) logger.warn { "Cancelling ${active.size} pending contract details requests due to disconnect" }
         active.forEach {
             it.markFailed(ex)
-            updateBus.tryEmit(ContractDetailsRegistryUpdate.RequestFailed(it.reqId, ex))
         }
     }
 
@@ -147,6 +131,9 @@ class IbkrContractDetailsRegistry {
     }
 
     private fun evictTerminalStates(now: Instant = Instant.now()) {
-        requests.entries.removeIf { (_, state) -> state.terminalAt?.let { Duration.between(it, now) > terminalStateTtl } ?: false }
+        requests.entries.removeIf { (_, state) ->
+            state.terminalAt?.let { Duration.between(it, now) > terminalStateTtl }
+                ?: (Duration.between(state.startedAt, now) > activeStateTtl)
+        }
     }
 }
