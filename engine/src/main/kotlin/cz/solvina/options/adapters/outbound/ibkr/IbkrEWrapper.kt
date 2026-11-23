@@ -372,7 +372,7 @@ class IbkrEWrapper(
                 "orderTypes" to contractDetails.orderTypes(),
             )
         }
-        contractDetailsRegistry.onContractDetails(reqId, contractDetails)
+        contractDetailsRegistry.onContractDetails(reqId, slimOptionDetails(contractDetails))
     }
 
     override fun bondContractDetails(
@@ -1061,4 +1061,24 @@ class IbkrEWrapper(
     ) {
         logger.debug { "userInfo: reqId=$reqId" }
     }
+}
+
+/**
+ * Drops the long free-text fields from an OPTION contract-details row before it is retained.
+ * A verified-strikes chain lookup returns tens of thousands of option rows, kept for reuse (registry
+ * TTL + replay bus); each carried ~2 KB of order types, exchange lists and trading/liquid hours
+ * that nothing reads for options (trading hours come from the STOCK row). On 2026-11-23 78k such
+ * rows filled the 400m heap and the EReader thread died with OutOfMemoryError. Stock rows are kept
+ * whole (their liquidHours and marketRuleIds are used).
+ */
+internal fun slimOptionDetails(details: ContractDetails): ContractDetails {
+    if (details.contract()?.secType()?.toString() != "OPT") return details
+    details.orderTypes(null)
+    details.validExchanges(null)
+    details.tradingHours(null)
+    details.liquidHours(null)
+    details.longName(null)
+    details.secIdList(null)
+    details.ineligibilityReasonList(null)
+    return details
 }
