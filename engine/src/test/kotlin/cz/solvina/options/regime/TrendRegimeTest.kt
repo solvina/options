@@ -82,4 +82,43 @@ class TrendRegimeTest {
         assertEquals(DirectionalBias.BEARISH, directionalBias(TrendRegime.DOWNTREND, null, 70.0, 30.0))
         assertEquals(DirectionalBias.NEUTRAL, directionalBias(TrendRegime.NEUTRAL, null, 70.0, 30.0))
     }
+
+    @Test
+    fun `oversold below both averages is a falling knife, not a dip`() {
+        assertEquals(
+            DirectionalBias.BEARISH,
+            directionalBias(TrendRegime.NEUTRAL, BigDecimal("28"), 70.0, 30.0, belowBothAverages = true),
+        )
+        assertEquals(
+            DirectionalBias.BEARISH,
+            directionalBias(TrendRegime.DOWNTREND, BigDecimal("25"), 70.0, 30.0, belowBothAverages = true),
+        )
+        // Oversold between the averages is still faded (bull put).
+        assertEquals(DirectionalBias.BULLISH, directionalBias(TrendRegime.NEUTRAL, BigDecimal("28"), 70.0, 30.0))
+    }
+
+    @Test
+    fun `overbought above both averages is a breakout, not a top`() {
+        assertEquals(
+            DirectionalBias.BULLISH,
+            directionalBias(TrendRegime.UPTREND, BigDecimal("80"), 70.0, 30.0, aboveBothAverages = true),
+        )
+        assertEquals(
+            DirectionalBias.BULLISH,
+            directionalBias(TrendRegime.NEUTRAL, BigDecimal("75"), 70.0, 30.0, aboveBothAverages = true),
+        )
+    }
+
+    @Test
+    fun `a crash through both averages before the cross reads bearish (UNH 2026-11-23)`() {
+        // 230 bars climbing to ~400, then a two-week slide to ~334: SMA50 still above SMA200,
+        // close below both, RSI deep oversold.
+        val climb = (0 until 230).map { BigDecimal(300 + it * 100.0 / 230) }
+        val slide = (1..14).map { BigDecimal(400 - it * 4.7) }
+        val r = classifyRegime(climb + slide, 50, 200)
+
+        assertEquals(TrendRegime.NEUTRAL, r.regime)
+        assertTrue(r.smaFast!! > r.smaSlow!! && r.lastClose!! < r.smaSlow!!)
+        assertEquals(DirectionalBias.BEARISH, r.bias)
+    }
 }

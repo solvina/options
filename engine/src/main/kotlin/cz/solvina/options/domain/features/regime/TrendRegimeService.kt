@@ -72,7 +72,15 @@ internal fun classifyRegime(
             else -> TrendRegime.NEUTRAL
         }
     val rsi = computeRsi(closes, rsiPeriod)
-    val bias = directionalBias(regime, rsi, rsiOverbought, rsiOversold)
+    val bias =
+        directionalBias(
+            regime,
+            rsi,
+            rsiOverbought,
+            rsiOversold,
+            belowBothAverages = last < smaFast && last < smaSlow,
+            aboveBothAverages = last > smaFast && last > smaSlow,
+        )
     val change10d =
         closes.getOrNull(closes.size - 11)?.takeIf { it.signum() > 0 }?.let {
             (last.toDouble() / it.toDouble() - 1.0) * 100.0

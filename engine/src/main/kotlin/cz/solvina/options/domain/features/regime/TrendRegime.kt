@@ -45,12 +45,19 @@ data class RegimeSignal(
  *
  * [rsi] null (insufficient history) falls back to trend only. Overbought = rsi ≥ [overbought];
  * oversold = rsi ≤ [oversold].
+ *
+ * Never fade a breakdown or a breakout (2026-11-23, UNH): oversold while the close is BELOW both
+ * moving averages is a falling knife, not a dip → BEARISH (bear call only). Overbought while ABOVE
+ * both → BULLISH (bull put only). Before this, UNH (close 334, SMA50 388, SMA200 369, RSI 28) read
+ * NEUTRAL & oversold → BULLISH, because SMA50 had not yet crossed under SMA200.
  */
 fun directionalBias(
     regime: TrendRegime,
     rsi: BigDecimal?,
     overbought: Double,
     oversold: Double,
+    belowBothAverages: Boolean = false,
+    aboveBothAverages: Boolean = false,
 ): DirectionalBias {
     if (rsi == null) {
         return when (regime) {
@@ -62,6 +69,8 @@ fun directionalBias(
     val overboughtHit = rsi >= BigDecimal(overbought)
     val oversoldHit = rsi <= BigDecimal(oversold)
     return when {
+        oversoldHit && belowBothAverages -> DirectionalBias.BEARISH
+        overboughtHit && aboveBothAverages -> DirectionalBias.BULLISH
         regime == TrendRegime.UPTREND && !overboughtHit -> DirectionalBias.BULLISH
         regime == TrendRegime.DOWNTREND && !oversoldHit -> DirectionalBias.BEARISH
         regime == TrendRegime.NEUTRAL && oversoldHit -> DirectionalBias.BULLISH
