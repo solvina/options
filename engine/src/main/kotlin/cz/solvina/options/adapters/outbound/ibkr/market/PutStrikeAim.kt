@@ -2,11 +2,12 @@ package cz.solvina.options.adapters.outbound.ibkr.market
 
 import cz.solvina.options.domain.features.market.BlackScholes
 import cz.solvina.options.domain.features.market.GreeksEstimator
+import cz.solvina.options.domain.models.OptionType
 import java.math.BigDecimal
 import kotlin.math.abs
 
 /**
- * Black-Scholes AIM for the bull-put short strike. It only decides which strikes to ask IBKR for;
+ * Black-Scholes AIM for the spread short strike (bull put and bear call). It only decides which strikes to ask IBKR for;
  * the short strike is still chosen on IBKR's live deltas, and every price stays a market quote.
  */
 internal object PutStrikeAim {
@@ -26,6 +27,28 @@ internal object PutStrikeAim {
             val mid = (lo + hi) / 2
             val d = abs(BlackScholes.putDelta(spot, mid, t, GreeksEstimator.RISK_FREE_RATE, sigma))
             if (d < targetDelta) lo = mid else hi = mid
+        }
+        return (lo + hi) / 2
+    }
+
+    /**
+     * The strike whose |delta| equals [targetDelta] for [type]. Call |delta| FALLS as the strike
+     * rises (search above spot); put |delta| rises with the strike (search below spot).
+     */
+    fun strikeForDelta(
+        type: OptionType,
+        spot: Double,
+        t: Double,
+        sigma: Double,
+        targetDelta: Double,
+    ): Double {
+        if (type == OptionType.PUT) return strikeForDelta(spot, t, sigma, targetDelta)
+        var lo = spot
+        var hi = spot * 5
+        repeat(60) {
+            val mid = (lo + hi) / 2
+            val d = abs(BlackScholes.delta(OptionType.CALL, spot, mid, t, GreeksEstimator.RISK_FREE_RATE, sigma))
+            if (d > targetDelta) lo = mid else hi = mid
         }
         return (lo + hi) / 2
     }

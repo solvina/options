@@ -101,3 +101,39 @@ class PutStrikeAimTest {
         assertTrue(!aim.covers(emptyList(), 0.25))
     }
 }
+
+class CallStrikeSearchTest {
+    private val aim = cz.solvina.options.adapters.outbound.ibkr.market.PutStrikeAim
+    private val call = cz.solvina.options.domain.models.OptionType.CALL
+
+    @Test
+    fun `call aim lands above spot where Black-Scholes gives the target delta`() {
+        val k = aim.strikeForDelta(call, spot = 70.0, t = 41 / 365.0, sigma = 0.20, targetDelta = 0.25)
+        val d =
+            cz.solvina.options.domain.features.market.BlackScholes
+                .delta(call, 70.0, k, 41 / 365.0, 0.04, 0.20)
+
+        assertEquals(0.25, d, 1e-4)
+        // A 25-delta call sits a few % above spot — not 25% above it (the old guess).
+        assertTrue(k in 71.5..75.0, "aim=$k")
+    }
+
+    @Test
+    fun `the put probe brackets a call chain once strikes are mirrored`() {
+        // Call |delta| falls as the strike rises: 101→0.45, 104→0.32, 107→0.20, 110→0.12.
+        val calls = listOf(101, 104, 107, 110).map { BigDecimal(it) }
+        val deltas = mapOf(101 to 0.45, 104 to 0.32, 107 to 0.20, 110 to 0.12)
+        val mirrored = calls.map { it.negate() to deltas.getValue(it.toInt()) }
+
+        val b = assertNotNullBracket(PutStrikeProbe.bracket(mirrored, 0.25))
+
+        // Upper = nearer-the-money side (|delta| above target), lower = further OTM.
+        assertEquals(BigDecimal(104), b.upper!!.negate())
+        assertEquals(BigDecimal(107), b.lower!!.negate())
+        val listed = (101..110).map { BigDecimal(it) }
+        val refined = PutStrikeProbe.refineStrikes(listed.map { it.negate() }, b, 2, 0.25).map { it.negate() }
+        assertEquals(setOf(BigDecimal(105), BigDecimal(106)), refined.toSet())
+    }
+
+    private fun assertNotNullBracket(b: PutStrikeProbe.Bracket?): PutStrikeProbe.Bracket = kotlin.test.assertNotNull(b)
+}
