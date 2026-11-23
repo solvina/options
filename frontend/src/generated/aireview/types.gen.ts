@@ -71,6 +71,11 @@ export type ReviewResult = {
     risks?: Array<Risk>;
     newsSummary?: string;
     /**
+     * Which credit spread the reviewer would sell on this name right now, whatever the reviewed strategy: BULL_PUT, BEAR_CALL, or NONE for neither. Advisory only: the engine records it and follows the other strategy as a would-be trade, it never trades on it.
+     *
+     */
+    preferredStrategy?: 'BULL_PUT' | 'BEAR_CALL' | 'NONE';
+    /**
      * What the reviewer actually read. Reviews cannot be replayed later (news moves on); this is the record.
      */
     sources?: Array<Source>;
@@ -234,6 +239,10 @@ export type AiReviewReport = {
      * Minus the realized P&L of vetoed candidate trades (positive = the vetoes helped).
      */
     candidateLossesAvoidedMinusWinsForgone?: number;
+    /**
+     * The other spread the reviewer said it would rather sell, followed as a would-be trade (AI_PREFERRED), by strategy.
+     */
+    preferred?: Array<ReportCohort>;
 };
 
 export type ReportCohort = {
