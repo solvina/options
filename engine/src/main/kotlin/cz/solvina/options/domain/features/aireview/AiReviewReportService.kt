@@ -72,6 +72,8 @@ data class AiReviewReport(
     val candidates: List<Cohort> = emptyList(),
     val candidateApproveMinusVeto: Difference? = null,
     val candidateLossesAvoidedMinusWinsForgone: Double = 0.0,
+    /** The other spread the reviewer said it would rather sell, followed as a would-be trade, by strategy. */
+    val preferred: List<Cohort> = emptyList(),
 )
 
 /**
@@ -98,7 +100,7 @@ class AiReviewReportService(
         val all = shadows.findAll()
         val rows =
             all
-                .filter { !it.backfilled && it.score != null && it.sourceOutcome != ShadowSpreadService.REVIEWED_CANDIDATE }
+                .filter { !it.backfilled && it.score != null && it.sourceOutcome !in ShadowSpreadService.SCORING_ONLY }
                 .filter {
                     from == null ||
                         !it.openedAt
@@ -145,6 +147,13 @@ class AiReviewReportService(
             decisions = scopedTasks.groupingBy { it.decision?.action ?: "UNDECIDED" }.eachCount(),
             wouldGate = scopedTasks.count { it.decision?.wouldGate == true },
             candidates = byVerdict(candidates),
+            preferred =
+                all
+                    .filter { it.sourceOutcome == ShadowSpreadService.AI_PREFERRED && !it.backfilled }
+                    .filter { from == null || !it.day().isBefore(from) }
+                    .groupBy { it.strategyId.name }
+                    .toSortedMap()
+                    .map { (label, group) -> cohort(label, group) },
             candidateApproveMinusVeto = difference(candidates),
             candidateLossesAvoidedMinusWinsForgone =
                 -candidates.filter { it.aiVerdict == AiVerdict.VETO.name && it.isClosed() }.sumOf { it.pnl() },

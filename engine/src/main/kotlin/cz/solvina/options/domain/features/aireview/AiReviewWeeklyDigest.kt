@@ -52,6 +52,11 @@ class AiReviewWeeklyDigest(
                     appendLine("APPROVE − VETO per trade ${usd(d.mean)}, n=${d.approveClosed}/${d.vetoClosed}")
                 }
             }
+            if (r.preferred.isNotEmpty()) {
+                appendLine()
+                appendLine("The other spread the AI said it would rather sell (would-be trades):")
+                r.preferred.forEach { appendLine(line(it)) }
+            }
             if (r.rulesVersions.size > 1) appendLine("Rules changed ${r.rulesVersions.size - 1}× since the first review.")
             append("Advisory only; the page Would-be Trades has the detail.")
         }

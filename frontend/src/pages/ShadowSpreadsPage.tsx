@@ -127,6 +127,16 @@ function AiPanel({ report, rulesVersion, setRulesVersion }: { report: AiReviewRe
             {(report.candidates ?? []).map((c) => (
               <CohortRow key={`cand-${c.label}`} c={c} />
             ))}
+            {(report.preferred ?? []).length > 0 && (
+              <tr>
+                <td colSpan={7} className="pt-3 text-xs text-muted-foreground">
+                  The other spread the AI said it would rather sell, followed as a would-be trade
+                </td>
+              </tr>
+            )}
+            {(report.preferred ?? []).map((c) => (
+              <CohortRow key={`pref-${c.label}`} c={c} label={`AI preferred ${c.label}`} />
+            ))}
           </tbody>
         </table>
       </div>
@@ -189,8 +199,10 @@ export function ShadowSpreadsPage() {
   if (isLoading) return <p className="text-muted-foreground text-sm">Loading…</p>
   if (isError || !data) return <p className="text-destructive text-sm">Failed to load would-be trades.</p>
   const rows = (data as ShadowSpreadDto[]).filter((r) => !rulesVersion || r.aiRulesVersion === rulesVersion)
-  // REVIEWED_CANDIDATE rows score the AI verdicts (see the AI panel); they are not decision rows.
-  const live = rows.filter((r) => !r.backfilled && r.sourceOutcome !== 'REVIEWED_CANDIDATE')
+  // REVIEWED_CANDIDATE / AI_PREFERRED rows score the AI (see the AI panel); they are not decision rows.
+  const live = rows.filter(
+    (r) => !r.backfilled && r.sourceOutcome !== 'REVIEWED_CANDIDATE' && r.sourceOutcome !== 'AI_PREFERRED',
+  )
   const backfilled = rows.filter((r) => r.backfilled)
 
   return (

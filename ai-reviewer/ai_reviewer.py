@@ -101,7 +101,7 @@ class Config:
 # ── contract: result schema derived from the OpenAPI spec ─────────────────────────────────────
 
 # What the model writes. The rest of ReviewResult (ids, lease, provenance, raw output) is ours.
-MODEL_FIELDS = ["verdict", "confidence", "reason", "risks", "newsSummary", "sources"]
+MODEL_FIELDS = ["verdict", "confidence", "reason", "risks", "newsSummary", "preferredStrategy", "sources"]
 
 
 def model_output_schema(spec_file: Path) -> dict:
@@ -196,6 +196,9 @@ def sanitize(output: dict, schema: dict) -> dict:
     }
     if output.get("newsSummary"):
         out["newsSummary"] = clip(output["newsSummary"], props["newsSummary"]["maxLength"])
+    # Advisory and optional: an unknown value is dropped rather than failing the review.
+    if output.get("preferredStrategy") in props["preferredStrategy"]["enum"]:
+        out["preferredStrategy"] = output["preferredStrategy"]
     return out
 
 

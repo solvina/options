@@ -323,4 +323,59 @@ class AiLayerTest {
             assertEquals(200.0, r.candidateLossesAvoidedMinusWinsForgone, "the veto avoided a 200 loss")
             assertEquals(250.0, assertNotNull(r.candidateApproveMinusVeto).mean)
         }
+
+    // -------------------------------------------------------------------------
+    // Preferred strategy: the other spread the reviewer would rather sell
+    // -------------------------------------------------------------------------
+
+    private suspend fun reviewPreferring(
+        symbol: String,
+        preferred: String?,
+    ) {
+        aiReview.createTask(testSnapshot(symbol, morning))
+        val claimed = assertNotNull(aiReview.claim("claude-opus", listOf("1"), null))
+        aiReview.submitResult(
+            claimed.task.id,
+            ResultSubmission(
+                "claude-opus",
+                claimed.result.leaseToken!!,
+                "1",
+                AiVerdict.VETO,
+                0.8,
+                "falling knife",
+                preferredStrategy = preferred,
+            ),
+        )
+    }
+
+    @Test
+    fun `only a preference for the OTHER strategy is a switch`() =
+        runTest {
+            reviewPreferring("UNH", "BEAR_CALL")
+            reviewPreferring("XOM", "BULL_PUT")
+            reviewPreferring("CME", "NONE")
+            reviewPreferring("GILD", null)
+            val day = testSnapshot("UNH", morning).tradingDate
+
+            assertEquals(StrategyId.BEAR_CALL, aiReview.preferredSwitch(day, Symbol("UNH")))
+            listOf("XOM", "CME", "GILD", "WELL").forEach {
+                assertNull(aiReview.preferredSwitch(day, Symbol(it)), it)
+            }
+        }
+
+    @Test
+    fun `an AI-preferred would-be trade stays out of the decision rows and has its own cohort`() =
+        runTest {
+            shadows.recordCandidate(candidate("UNH", 0.5, StrategyId.BEAR_CALL).request, 0.5, morning, ShadowSpreadService.AI_PREFERRED)
+            assertTrue(shadows.hasOpen(Symbol("UNH"), ShadowSpreadService.AI_PREFERRED))
+
+            clock.now = decision
+            shadows.recordDecision(listOf(candidate("UNH", 0.9)))
+            val decided = port.rows.values.single { it.sourceOutcome == "POOL_DECISION" }
+            assertTrue(decided.selected, "an AI_PREFERRED row must not block the rules portfolio")
+
+            val r = AiReviewReportService(port, store, config, clock).report()
+            assertEquals(listOf("BEAR_CALL"), r.preferred.map { it.label })
+            assertTrue(r.cohorts.flatMap { listOf(it.label) }.none { it == "AI_PREFERRED" })
+        }
 }

@@ -81,6 +81,7 @@ class AiReviewApiImpl(
                 candidates = r.candidates.map { it.toDto() },
                 candidateApproveMinusVeto = r.candidateApproveMinusVeto?.toDto(),
                 candidateLossesAvoidedMinusWinsForgone = r.candidateLossesAvoidedMinusWinsForgone.toBigDecimal(),
+                preferred = r.preferred.map { it.toDto() },
             ),
         )
     }
@@ -143,6 +144,7 @@ class AiReviewApiImpl(
                 sourcesJson = r.sources?.let { json(it) },
                 provenanceJson = r.provenance?.let { json(it) },
                 extrasJson = r.extras?.let { json(it) },
+                preferredStrategy = r.preferredStrategy?.value,
                 rawResponse = r.rawResponse,
                 promptHash = r.provenance?.promptHash,
                 model = r.provenance?.model,

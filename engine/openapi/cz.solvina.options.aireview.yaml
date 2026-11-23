@@ -309,6 +309,13 @@ components:
           items:
             $ref: '#/components/schemas/Risk'
         newsSummary: { type: string, maxLength: 4000 }
+        preferredStrategy:
+          type: string
+          enum: [BULL_PUT, BEAR_CALL, NONE]
+          description: >
+            Which credit spread the reviewer would sell on this name right now, whatever the
+            reviewed strategy: BULL_PUT, BEAR_CALL, or NONE for neither. Advisory only: the engine
+            records it and follows the other strategy as a would-be trade, it never trades on it.
         sources:
           type: array
           maxItems: 30
@@ -480,6 +487,10 @@ components:
         candidateLossesAvoidedMinusWinsForgone:
           type: number
           description: Minus the realized P&L of vetoed candidate trades (positive = the vetoes helped).
+        preferred:
+          type: array
+          description: The other spread the reviewer said it would rather sell, followed as a would-be trade (AI_PREFERRED), by strategy.
+          items: { $ref: '#/components/schemas/ReportCohort' }
 
     ReportCohort:
       type: object

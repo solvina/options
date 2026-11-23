@@ -1,0 +1,14 @@
+databaseChangeLog:
+  # ---------------------------------------------------------------------------
+  # 2026-11-23: the reviewer's advisory direction (BULL_PUT / BEAR_CALL / NONE). When it prefers the
+  # other spread than the one it reviewed, the scanner follows that spread as an AI_PREFERRED
+  # would-be trade so the preference can be scored before it is ever allowed to act.
+  # ---------------------------------------------------------------------------
+  - changeSet:
+      id: v50__ai_preferred_strategy
+      author: claude
+      changes:
+        - addColumn:
+            tableName: ai_review_result
+            columns:
+              - column: { name: preferred_strategy, type: TEXT }

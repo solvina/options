@@ -35,6 +35,9 @@ import java.util.concurrent.atomic.AtomicLong
 private val logger = KotlinLogging.logger {}
 private val tradeLogger = KotlinLogging.logger("TRADES")
 
+/** Tries per symbol per day to price the AI-preferred other spread before giving up. */
+private const val MAX_PREFERENCE_TRIES = 3
+
 @Service
 class ScannerService(
     private val universePort: UniversePort,
@@ -63,6 +66,8 @@ class ScannerService(
     private val opportunityNotifier: OpportunityNotificationPort = OpportunityNotificationPort.NoOp,
     /** Snapshot-wait measurements, logged with each run's summary (observe-only). */
     private val scanTelemetry: ScanTelemetryPort = ScanTelemetryPort.NoOp,
+    /** The AI reviewer's preferred other spread, followed as a would-be trade (never traded). */
+    private val aiPreference: AiPreferencePort = AiPreferencePort.NoOp,
 ) : ScannerPort {
     private val ivRanksSnapshot = ConcurrentHashMap<String, Double>()
 
@@ -122,12 +127,53 @@ class ScannerService(
         try {
             for (symbol in watchlist) {
                 scanWatchlistSymbol(symbol, symbolsWithOpenSpread, totalCapital, runId)
+                followAiPreference(symbol, totalCapital)
                 scanSequence[symbol] = scanCounter.incrementAndGet()
             }
             completed = true
             logger.info { "Scanner run complete" }
         } finally {
             logRunSummary(started, completed, watchlist.size)
+        }
+    }
+
+    // Symbol -> NY day already tried, so a preferred spread that does not qualify is tried at most
+    // MAX_PREFERENCE_TRIES times a day (each try prices a chain).
+    private val preferenceTries = ConcurrentHashMap<Symbol, Pair<java.time.LocalDate, Int>>()
+
+    /**
+     * When the AI reviewer said it would rather sell the OTHER spread on [symbol] (e.g. a bear call
+     * instead of the reviewed bull put), price that spread with the normal selector and follow it as
+     * an AI_PREFERRED would-be trade. Scoring only: it is never entered and never pooled, and the
+     * direction gate is deliberately not applied (the point is to test the AI's call).
+     */
+    private suspend fun followAiPreference(
+        symbol: Symbol,
+        totalCapital: Money,
+    ) {
+        val shadows = shadowSpreads ?: return
+        runCatching {
+            val preferred = aiPreference.preferredSwitch(symbol) ?: return
+            if (preferred == StrategyId.BEAR_CALL && !bearCallConfig.enabled) return
+            if (shadows.hasOpen(symbol, ShadowSpreadService.AI_PREFERRED)) return
+            val today = java.time.LocalDate.now(clock)
+            val tries = preferenceTries[symbol]?.takeIf { it.first == today }?.second ?: 0
+            if (tries >= MAX_PREFERENCE_TRIES) return
+            preferenceTries[symbol] = today to tries + 1
+            val result =
+                when (preferred) {
+                    StrategyId.BULL_PUT -> bullPutSelector.select(symbol, totalCapital)
+                    StrategyId.BEAR_CALL -> bearCallSelector.select(symbol, totalCapital)
+                }
+            if (result is CandidateResult.Selected) {
+                shadows.recordCandidate(result.request, result.qualityScore(), Instant.now(clock), ShadowSpreadService.AI_PREFERRED)
+                tradeLogger.info { "AIPREF $symbol  AI would rather sell $preferred — following it as a would-be trade" }
+            } else {
+                logger.info { "[$symbol] AI-preferred $preferred did not qualify: ${(result as? CandidateResult.Rejected)?.reason}" }
+            }
+        }.onFailure { e ->
+            currentCoroutineContext().ensureActive()
+            logger.warn { "[$symbol] AI-preferred spread not followed: ${e.message}" }
         }
     }
 

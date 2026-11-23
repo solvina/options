@@ -13,6 +13,7 @@ import cz.solvina.options.domain.features.spread.underlyingStopTrigger
 import cz.solvina.options.domain.features.universe.UniversePort
 import cz.solvina.options.domain.models.OptionContract
 import cz.solvina.options.domain.models.OptionType
+import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.withTimeoutOrNull
 import org.springframework.stereotype.Service
@@ -60,6 +61,12 @@ class ShadowSpreadService(
          * decision rows: never "held", never selected, never in either simulated portfolio.
          */
         const val REVIEWED_CANDIDATE = "REVIEWED_CANDIDATE"
+
+        /** The other spread the AI reviewer said it would rather sell on the name (advisory, scored only). */
+        const val AI_PREFERRED = "AI_PREFERRED"
+
+        /** Rows that only score the AI: never held, never in either simulated portfolio. */
+        val SCORING_ONLY = setOf(REVIEWED_CANDIDATE, AI_PREFERRED)
     }
 
     /** First qualification of [request]. One open candidate row per title. */
@@ -67,9 +74,11 @@ class ShadowSpreadService(
         request: TradeExecutionRequest,
         score: Double,
         firstSeenAt: Instant,
+        source: String = REVIEWED_CANDIDATE,
     ) {
+        require(source in SCORING_ONLY) { "not a scoring source: $source" }
         val duplicate =
-            port.findOpen().any { it.symbol == request.underlyingSymbol && it.sourceOutcome == REVIEWED_CANDIDATE }
+            port.findOpen().any { it.symbol == request.underlyingSymbol && it.sourceOutcome == source }
         if (duplicate) return
         val shadow =
             port.save(
@@ -81,7 +90,7 @@ class ShadowSpreadService(
                     soldStrike = request.soldContract.strike,
                     boughtStrike = request.boughtContract.strike,
                     openedAt = Instant.now(clock),
-                    sourceOutcome = REVIEWED_CANDIDATE,
+                    sourceOutcome = source,
                     midCredit = request.targetCredit,
                     floorCredit = request.floorCredit,
                     naturalCredit = request.soldBid.subtract(request.boughtAsk),
@@ -97,6 +106,12 @@ class ShadowSpreadService(
         }
     }
 
+    /** True when [symbol] already has an open would-be trade from [source]. */
+    suspend fun hasOpen(
+        symbol: Symbol,
+        source: String,
+    ): Boolean = port.findOpen().any { it.symbol == symbol && it.sourceOutcome == source }
+
     suspend fun record(
         request: TradeExecutionRequest,
         outcome: ExecutionOutcome,
@@ -105,7 +120,7 @@ class ShadowSpreadService(
         // One position per title, whatever its strikes or direction: an account can hold only one
         // spread per symbol, and copies of one title are one bet (MU was counted 7 times).
         val duplicate =
-            port.findOpen().any { it.symbol == request.underlyingSymbol && it.sourceOutcome != REVIEWED_CANDIDATE }
+            port.findOpen().any { it.symbol == request.underlyingSymbol && it.sourceOutcome !in SCORING_ONLY }
         if (duplicate) return
         val shadow =
             port.save(
@@ -146,8 +161,8 @@ class ShadowSpreadService(
         val startOfDay = LocalDate.now(clock).atStartOfDay(clock.zone).toInstant()
         val tradingDate = now.atZone(NEW_YORK).toLocalDate()
         // Candidate rows track verdicts on their own; they never count as a held title here.
-        val open = port.findOpen().filter { it.sourceOutcome != REVIEWED_CANDIDATE }
-        val all = port.findAll().filter { it.sourceOutcome != REVIEWED_CANDIDATE }
+        val open = port.findOpen().filter { it.sourceOutcome !in SCORING_ONLY }
+        val all = port.findAll().filter { it.sourceOutcome !in SCORING_ONLY }
         val heldBySymbol = open.associateBy { it.symbol }
         val verdicts =
             runCatching { aiReview?.primaryVerdicts(tradingDate, now).orEmpty() }

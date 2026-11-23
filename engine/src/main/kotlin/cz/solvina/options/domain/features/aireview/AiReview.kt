@@ -138,6 +138,8 @@ data class AiReviewResult(
     val sourcesJson: String? = null,
     val provenanceJson: String? = null,
     val extrasJson: String? = null,
+    /** Which spread the reviewer would sell on the name now: BULL_PUT, BEAR_CALL or NONE. Advisory. */
+    val preferredStrategy: String? = null,
     val rawResponse: String? = null,
     val promptHash: String? = null,
     /** True when [promptHash] was not registered when the result arrived. */
@@ -169,6 +171,7 @@ data class ResultSubmission(
     val sourcesJson: String? = null,
     val provenanceJson: String? = null,
     val extrasJson: String? = null,
+    val preferredStrategy: String? = null,
     val rawResponse: String? = null,
     val promptHash: String? = null,
     val model: String? = null,

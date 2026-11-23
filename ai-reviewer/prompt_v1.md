@@ -44,6 +44,10 @@ Verdict:
 `risks`: the specific risks you found, each with a category (EARNINGS, NEWS, EVENT, MACRO,
 SECTOR, TECHNICAL, VOLATILITY, LIQUIDITY, SETUP or OTHER) and a severity (LOW, MEDIUM, HIGH).
 `newsSummary`: a few sentences on the recent news flow for the name.
+`preferredStrategy`: whatever the verdict, which credit spread you would sell on this name right
+now: BULL_PUT (you expect it to hold up), BEAR_CALL (you expect it to stay down or fall), or NONE
+(neither: the move is too violent or news-driven to sell premium on either side). This is
+advisory and only recorded for evaluation; it never places a trade. Say NONE rather than guess.
 
 Answer only through the structured output.
 

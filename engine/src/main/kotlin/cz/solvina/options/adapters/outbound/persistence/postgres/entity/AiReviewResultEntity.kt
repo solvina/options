@@ -52,6 +52,8 @@ class AiReviewResultEntity(
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(columnDefinition = "jsonb")
     var extras: String? = null,
+    @Column(name = "preferred_strategy", columnDefinition = "TEXT")
+    var preferredStrategy: String? = null,
     @Column(name = "raw_response", columnDefinition = "TEXT")
     var rawResponse: String? = null,
     @Column(name = "prompt_hash", columnDefinition = "TEXT")

@@ -1,5 +1,6 @@
 package cz.solvina.options.domain.features.aireview
 
+import cz.solvina.options.domain.features.spread.model.StrategyId
 import cz.solvina.options.domain.models.Symbol
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.stereotype.Service
@@ -87,6 +88,30 @@ class AiReviewService(
                         ?.takeIf { it.status == AiResultStatus.DONE && it.completedAt?.isAfter(at) == false }
                 val vetoes = r?.verdict == AiVerdict.VETO && (r.confidence ?: 0.0) >= config.layerMinConfidence
                 task.symbol to PrimaryVerdict(task.id, task.strategyId, r?.verdict, r?.confidence, vetoes)
+            }
+    }
+
+    /**
+     * The spread the primary reviewer would rather sell on [symbol] today, when it is the OTHER
+     * strategy than the one it reviewed (e.g. BEAR_CALL on a reviewed bull put). Null otherwise —
+     * no task, no finished result, no preference, NONE, or the same strategy.
+     */
+    suspend fun preferredSwitch(
+        tradingDate: LocalDate,
+        symbol: Symbol,
+    ): StrategyId? {
+        if (!config.enabled) return null
+        val primary = config.primaryReviewer?.id ?: return null
+        return store
+            .findTasksForDate(tradingDate)
+            .filter { it.symbol == symbol && it.status == AiTaskStatus.OPEN }
+            .firstNotNullOfOrNull { task ->
+                store
+                    .findResult(task.id, primary)
+                    ?.takeIf { it.status == AiResultStatus.DONE }
+                    ?.preferredStrategy
+                    ?.let { p -> StrategyId.entries.firstOrNull { it.name == p } }
+                    ?.takeIf { it != task.strategyId }
             }
     }
 
@@ -221,6 +246,7 @@ class AiReviewService(
                 sourcesJson = submission.sourcesJson,
                 provenanceJson = submission.provenanceJson,
                 extrasJson = submission.extrasJson,
+                preferredStrategy = submission.preferredStrategy,
                 rawResponse = submission.rawResponse,
                 promptHash = submission.promptHash,
                 promptUnregistered = unregistered,
