@@ -90,6 +90,7 @@ class IbkrOrdersRegistry {
             OpenOrder(
                 orderId = orderId,
                 symbol = contract.symbol() ?: "",
+                secType = contract.secType()?.toString() ?: previous?.secType ?: "",
                 action = order.action()?.toString() ?: "",
                 orderType = order.orderType()?.toString() ?: "",
                 limitPrice = order.lmtPrice().takeIf { !it.isNaN() && it != Double.MAX_VALUE },

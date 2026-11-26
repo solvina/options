@@ -1257,4 +1257,185 @@ class SpreadManagementServiceTest {
             blockedEntries.add(BlockedEntry(symbol, duration))
         }
     }
+
+    // -------------------------------------------------------------------------
+    // Combo exit (2026-11-26)
+    // -------------------------------------------------------------------------
+
+    private class FakeComboPort(
+        private val fills: Boolean,
+        private val fillPrice: BigDecimal? = null,
+    ) : cz.solvina.options.domain.features.order.OrderExecutionPort {
+        val prices = mutableListOf<BigDecimal>()
+        var cancels = 0
+
+        override fun supportsComboClose(symbol: Symbol) = true
+
+        override suspend fun placeComboCloseOrder(
+            existingOrderId: Int?,
+            soldContract: OptionContract,
+            boughtContract: OptionContract,
+            netDebit: Money,
+            qty: Int,
+        ): Int {
+            prices.add(netDebit.amount)
+            return existingOrderId ?: 501
+        }
+
+        override suspend fun awaitFill(orderId: Int): OrderStatus {
+            if (fills) return OrderStatus.FILLED
+            kotlinx.coroutines.awaitCancellation()
+        }
+
+        override suspend fun cancelAndAwait(orderId: Int): OrderStatus {
+            cancels++
+            return OrderStatus.CANCELLED
+        }
+
+        override fun consumeFillPrice(orderId: Int): BigDecimal? = fillPrice
+
+        override suspend fun submitComboLimitOrder(
+            soldContract: OptionContract,
+            boughtContract: OptionContract,
+            netCredit: Money,
+            qty: Int,
+            legQuotes: cz.solvina.options.domain.features.order.LegQuotes?,
+        ): Int = error("entry not expected")
+
+        override suspend fun replaceComboWithNewPrice(
+            existingOrderId: Int,
+            soldContract: OptionContract,
+            boughtContract: OptionContract,
+            newCredit: Money,
+            qty: Int,
+        ): Int = error("entry not expected")
+
+        override suspend fun getSymbolsWithOpenOrders(): Set<Symbol> = emptySet()
+    }
+
+    private fun bothLegsHeld() =
+        object : cz.solvina.options.domain.features.account.PositionsPort {
+            override suspend fun getPositions() =
+                listOf(soldContract to "-1", boughtContract to "1").map { (c, q) ->
+                    cz.solvina.options.domain.features.account.AccountPosition(
+                        account = "DU1",
+                        symbol = symbol.value,
+                        secType = "OPT",
+                        currency = "USD",
+                        expiry = expiry,
+                        strike = c.strike,
+                        optionRight = "P",
+                        quantity = BigDecimal(q),
+                        avgCost = BigDecimal.ZERO,
+                        marketPrice = 0.0,
+                        marketValue = 0.0,
+                    )
+                }
+        }
+
+    private fun comboService(
+        spreadPort: BullPutSpreadPort,
+        marketDataPort: MarketDataPort,
+        orderPort: OrderPort,
+        comboPort: FakeComboPort,
+    ): SpreadManagementService {
+        every { marketDataPort.streamedOptionMid(any()) } returns null
+        every { marketDataPort.streamedUnderlyingPrice(any()) } returns null
+        coEvery { marketDataPort.reconcilePositionQuoteStreams(any()) } returns Unit
+        // NBBO: sold 0.28/0.32, bought 0.04/0.06 → mid 0.25, best debit 0.22
+        val tickPort =
+            object : cz.solvina.options.domain.features.market.MarketTickPort {
+                override fun streamUnderlyingPrice(symbol: Symbol) = kotlinx.coroutines.flow.flowOf(500.0)
+
+                override fun streamSpreadCredit(
+                    soldContract: OptionContract,
+                    boughtContract: OptionContract,
+                ) = kotlinx.coroutines.flow.flowOf(
+                    cz.solvina.options.domain.features.market.SpreadCreditTick(
+                        soldBid = 0.28,
+                        soldAsk = 0.32,
+                        boughtBid = 0.04,
+                        boughtAsk = 0.06,
+                        netCredit = 0.25,
+                    ),
+                )
+            }
+        return SpreadManagementService(
+            closers = buildClosers(spreadPort),
+            marketDataPort = marketDataPort,
+            orderPort = orderPort,
+            universePort = universePort,
+            volatilityPort =
+                object : VolatilityPort {
+                    override suspend fun getIvRank(symbol: Symbol) = IvRank(35.0, 0.25, Instant.now())
+                },
+            executionPort = mockk(relaxed = true),
+            config = config.copy(exitComboEnabled = true),
+            clock = clockAtEntry,
+            quoteHealthService = mockk(relaxed = true),
+            strategyRegistry = strategyRegistry,
+            strategyParams = strategyParams,
+            positionsPort = bothLegsHeld(),
+            marketTickPort = tickPort,
+            orderExecutionPort = comboPort,
+        )
+    }
+
+    private fun stubTpQuotes(
+        spreadPort: BullPutSpreadPort,
+        marketDataPort: MarketDataPort,
+        spread: BullPutSpread,
+    ) {
+        coEvery { spreadPort.findOpen() } returns listOf(spread)
+        coEvery { spreadPort.findByStatus(SpreadStatus.CLOSING) } returns emptyList()
+        coEvery { spreadPort.findById(spread.id!!) } returns spread
+        coEvery { marketDataPort.getOptionMidLive(soldContract) } returns Money(BigDecimal("0.30"))
+        coEvery { marketDataPort.getOptionMidLive(boughtContract) } returns Money(BigDecimal("0.05"))
+        coEvery { marketDataPort.getUnderlyingPrice(any()) } returns Money(BigDecimal("500"))
+    }
+
+    @Test
+    fun `take profit closes both legs with one combo order starting toward the best debit`() =
+        runTest {
+            val spread = buildOpenSpread()
+            val spreadPort = mockk<BullPutSpreadPort>()
+            val marketDataPort = mockMarketData()
+            val orderPort = mockk<OrderPort>(relaxed = true)
+            stubTpQuotes(spreadPort, marketDataPort, spread)
+            val updated = slot<BullPutSpread>()
+            coEvery { spreadPort.update(capture(updated)) } answers { firstArg() }
+            val combo = FakeComboPort(fills = true, fillPrice = BigDecimal("0.24"))
+
+            comboService(spreadPort, marketDataPort, orderPort, combo).checkExits()
+
+            // start = mid 0.25 − 50% × (0.25 − 0.22) = 0.235 → floored to 0.23
+            assertEquals(BigDecimal("0.23"), combo.prices.first().setScale(2))
+            assertEquals(SpreadStatus.CLOSED_PROFIT, updated.captured.status)
+            assertEquals(0, BigDecimal("0.24").compareTo(updated.captured.closePricePerShare))
+            coVerify(exactly = 0) { orderPort.placeAndAwaitFill(any(), any(), any(), any()) }
+            coVerify(exactly = 0) { orderPort.placeMarketOrder(any(), any(), any()) }
+        }
+
+    @Test
+    fun `unfilled combo take profit is cancelled and the spread stays open without a market order`() =
+        runTest {
+            val spread = buildOpenSpread()
+            val spreadPort = mockk<BullPutSpreadPort>()
+            val marketDataPort = mockMarketData()
+            val orderPort = mockk<OrderPort>(relaxed = true)
+            stubTpQuotes(spreadPort, marketDataPort, spread)
+            val updates = mutableListOf<BullPutSpread>()
+            coEvery { spreadPort.update(capture(updates)) } answers { firstArg() }
+            val combo = FakeComboPort(fills = false)
+
+            comboService(spreadPort, marketDataPort, orderPort, combo).checkExits()
+
+            assertEquals(1, combo.cancels, "the timeout cancels the combo once")
+            assertTrue(updates.none { it.status != SpreadStatus.OPEN }, "spread must stay OPEN: ${updates.map { it.status }}")
+            // walks up from 0.23 to the ceiling max(0.25 × 1.05, 0.25 + 0.01) = 0.2625 → 0.27, never beyond
+            assertTrue(combo.prices.zipWithNext().all { (a, b) -> b >= a }, "debit only steps up: ${combo.prices}")
+            assertEquals(BigDecimal("0.27"), combo.prices.last().setScale(2))
+            coVerify(exactly = 0) { orderPort.placeMarketOrder(any(), any(), any()) }
+            coVerify(exactly = 0) { orderPort.placeAndAwaitFill(any(), any(), any(), any()) }
+        }
 }

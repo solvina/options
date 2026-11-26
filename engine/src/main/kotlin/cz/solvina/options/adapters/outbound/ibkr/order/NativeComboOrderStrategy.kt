@@ -10,6 +10,7 @@ import cz.solvina.options.adapters.outbound.ibkr.cache.IbkrContractCache
 import cz.solvina.options.adapters.outbound.ibkr.cache.OptionContractKey
 import cz.solvina.options.adapters.outbound.ibkr.cache.resolveConIdOrCached
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderIdCounter
+import cz.solvina.options.domain.features.order.ceilToOptionTick
 import cz.solvina.options.domain.features.order.floorToOptionTick
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
@@ -171,6 +172,39 @@ class NativeComboOrderStrategy(
         client.placeOrder(existingOrderId, bagContract, order)
     }
 
+    override fun supportsComboClose(): Boolean = true
+
+    override suspend fun placeSpreadCloseOrder(
+        existingOrderId: Int?,
+        soldContract: OptionContract,
+        boughtContract: OptionContract,
+        netDebit: Money,
+        qty: Int,
+    ): Int {
+        require(netDebit.amount > BigDecimal.ZERO) { "Close debit must be positive, got \$${netDebit.amount}" }
+        // Reversed legs (BUY the short back, SELL the long) on a BUY order with a POSITIVE limit =
+        // the most we pay to close. Unambiguous, unlike SELLing the entry BAG at a negative price.
+        val bagContract = resolveBagContract(soldContract, boughtContract, closing = true)
+        val order =
+            Order().apply {
+                action("BUY")
+                orderType("LMT")
+                lmtPrice(netDebit.amount.ceilToOptionTick().toDouble())
+                totalQuantity(Decimal.get(qty.toLong()))
+                tif("DAY")
+                if (connectionConfig.account.isNotBlank()) account(connectionConfig.account)
+            }
+        val orderId = existingOrderId ?: ibkrOrderIdCounter.nextOrderId()
+        check(orderId != 0) { "Order id sequence not ready (nextOrderId=0)" }
+        logger.info {
+            "[$exchangeId] ${if (existingOrderId == null) "Submitting" else "Amending"} COMBO CLOSE order $orderId: " +
+                "BUY ${soldContract.strike}${soldContract.type.ibkrCode} / SELL ${boughtContract.strike}${boughtContract.type.ibkrCode} " +
+                "@ net debit \$${order.lmtPrice()}"
+        }
+        client.placeOrder(orderId, bagContract, order)
+        return orderId
+    }
+
     /**
      * Resolve both legs' conIds (from the cache; a 6s timeout > the cache's own 5s network timeout so
      * the cache governs the lookup and cleans up its own in-flight state — see E3) and assemble the
@@ -179,6 +213,7 @@ class NativeComboOrderStrategy(
     private suspend fun resolveBagContract(
         soldContract: OptionContract,
         boughtContract: OptionContract,
+        closing: Boolean = false,
     ): Contract {
         val soldKey =
             OptionContractKey(
@@ -205,6 +240,7 @@ class NativeComboOrderStrategy(
             underlyingSymbol = soldContract.symbol.value,
             soldConId = soldConId,
             boughtConId = boughtConId,
+            closing = closing,
         )
     }
 
@@ -226,12 +262,14 @@ class NativeComboOrderStrategy(
         underlyingSymbol: String,
         soldConId: Int,
         boughtConId: Int,
+        closing: Boolean = false,
     ): Contract {
+        // closing = reversed legs: buy the short back, sell the long.
         val soldLeg =
             ComboLeg().apply {
                 conid(soldConId)
                 ratio(1)
-                action("SELL")
+                action(if (closing) "BUY" else "SELL")
                 exchange(exchangeId)
             }
 
@@ -239,7 +277,7 @@ class NativeComboOrderStrategy(
             ComboLeg().apply {
                 conid(boughtConId)
                 ratio(1)
-                action("BUY")
+                action(if (closing) "SELL" else "BUY")
                 exchange(exchangeId)
             }
 

@@ -139,6 +139,25 @@ class ExchangeStrategyRouter(
         strategy.modifySpreadPrice(existingOrderId, soldContract, boughtContract, newCredit, qty)
     }
 
+    /** True if [exchange]'s strategy can close a spread with one atomic combo order. */
+    fun supportsComboClose(exchange: String): Boolean = (strategies[exchange] ?: strategies["SMART"])?.supportsComboClose() ?: false
+
+    /** Submit (existingOrderId null) or amend a combo close order via [exchange]'s strategy. */
+    suspend fun placeSpreadCloseOrder(
+        exchange: String,
+        existingOrderId: Int?,
+        soldContract: OptionContract,
+        boughtContract: OptionContract,
+        netDebit: Money,
+        qty: Int,
+    ): Int {
+        val strategy =
+            strategies[exchange]
+                ?: strategies["SMART"]
+                ?: error("SMART strategy not registered")
+        return strategy.placeSpreadCloseOrder(existingOrderId, soldContract, boughtContract, netDebit, qty)
+    }
+
     /**
      * Get strategy details for logging/debugging
      */

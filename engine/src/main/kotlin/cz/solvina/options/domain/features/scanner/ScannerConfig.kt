@@ -38,6 +38,18 @@ data class ScannerConfig(
     val entryLadderMinutes: Long = 0,
     // At the floor, keep resting there until executionTimeoutMinutes instead of cancelling (legacy false).
     val entryRestAtFloor: Boolean = false,
+    // Combo exit (2026-11-26): TP/TIME exits close BOTH legs with one atomic combo order, starting
+    // exitStartPctTowardBest of the way from mid toward the best debit (soldBid − boughtAsk), stepping
+    // on the price-adjust timer up to a ceiling of exitMaxPayPctOfMid × mid in exitLadderMinutes, and
+    // resting there until exitTimeoutMinutes. Unfilled → cancelled, spread stays OPEN, retried next
+    // cycle (no market fallback). Within exitMarketFallbackDte days of expiry the legacy leg-by-leg
+    // path (which escalates to market) is kept. Off by default (legacy behaviour).
+    val exitComboEnabled: Boolean = false,
+    val exitStartPctTowardBest: Double = 0.5,
+    val exitMaxPayPctOfMid: Double = 1.05,
+    val exitLadderMinutes: Long = 4,
+    val exitTimeoutMinutes: Long = 5,
+    val exitMarketFallbackDte: Int = 1,
     val maxLegBidAskSpreadPct: Double = 0.30,
     // Fresh-credit safety abort: a flat $0.10 is ~30% of a $0.35 credit but ~3% of a $3.00 one, so the
     // effective threshold is percentage-of-target, floored at $0.05 for very small target credits.

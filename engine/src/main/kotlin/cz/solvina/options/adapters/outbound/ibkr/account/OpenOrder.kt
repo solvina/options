@@ -18,4 +18,6 @@ data class OpenOrder(
     val lastFillPrice: Double = 0.0,
     val whyHeld: String? = null,
     val mktCapPrice: Double = 0.0,
+    // Contract secType (STK / OPT / BAG) — lets option-order guards ignore stock orders on the same symbol.
+    val secType: String = "",
 )

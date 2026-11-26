@@ -68,6 +68,22 @@ interface OrderExecutionStrategy {
         newCredit: Money,
         qty: Int,
     ): Unit = throw UnsupportedOperationException("$javaClass does not support in-place modify")
+
+    /** True if this exchange can close a credit spread with ONE atomic combo order (US native combo). */
+    fun supportsComboClose(): Boolean = false
+
+    /**
+     * Close an open credit spread with one atomic combo: BUY [soldContract] back + SELL [boughtContract]
+     * for a net [netDebit] paid. [existingOrderId] null submits a new order; non-null amends that
+     * working close order in place. Returns the order id.
+     */
+    suspend fun placeSpreadCloseOrder(
+        existingOrderId: Int?,
+        soldContract: OptionContract,
+        boughtContract: OptionContract,
+        netDebit: Money,
+        qty: Int,
+    ): Int = throw UnsupportedOperationException("$javaClass does not support combo close")
 }
 
 /**

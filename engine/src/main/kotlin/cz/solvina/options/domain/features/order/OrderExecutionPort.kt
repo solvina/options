@@ -123,4 +123,23 @@ interface OrderExecutionPort {
      * isn't there). Defaults to false; only the live IBKR adapter overrides it.
      */
     fun wasSelfCancelled(orderId: Int): Boolean = false
+
+    /** True when [symbol]'s exchange can close a spread with ONE atomic combo order (US). */
+    fun supportsComboClose(symbol: Symbol): Boolean = false
+
+    /**
+     * Close a credit spread with one combo: BUY [soldContract] back + SELL [boughtContract] for at most
+     * [netDebit]. [existingOrderId] null submits; non-null amends that working order in place. Returns
+     * the order id; fill/cancel go through [awaitFill] / [cancelAndAwait] / [consumeFillPrice].
+     */
+    suspend fun placeComboCloseOrder(
+        existingOrderId: Int?,
+        soldContract: OptionContract,
+        boughtContract: OptionContract,
+        netDebit: Money,
+        qty: Int,
+    ): Int = throw UnsupportedOperationException("combo close not supported")
+
+    /** True when an OPTION/combo order (not a stock order) is still working at the broker for [symbol]. */
+    suspend fun hasWorkingOptionOrders(symbol: Symbol): Boolean = false
 }

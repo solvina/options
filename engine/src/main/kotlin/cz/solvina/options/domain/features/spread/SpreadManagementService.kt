@@ -5,8 +5,12 @@ import cz.solvina.options.domain.features.execution.TradeExecutionPort
 import cz.solvina.options.domain.features.market.MarketDataPort
 import cz.solvina.options.domain.features.market.MarketTickPort
 import cz.solvina.options.domain.features.order.LegAction
+import cz.solvina.options.domain.features.order.OrderExecutionPort
 import cz.solvina.options.domain.features.order.OrderPort
 import cz.solvina.options.domain.features.order.OrderStatus
+import cz.solvina.options.domain.features.order.ceilToOptionTick
+import cz.solvina.options.domain.features.order.floorToOptionTick
+import cz.solvina.options.domain.features.order.optionTickFor
 import cz.solvina.options.domain.features.order.roundToOptionTick
 import cz.solvina.options.domain.features.scanner.ScannerConfig
 import cz.solvina.options.domain.features.scanner.StrategyParamsRegistry
@@ -19,11 +23,17 @@ import cz.solvina.options.domain.features.volatility.VolatilityPort
 import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
 import io.github.oshai.kotlinlogging.KotlinLogging
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.math.RoundingMode
@@ -63,7 +73,15 @@ class SpreadManagementService(
     // Optional like positionsPort: injected in prod, absent in unit tests. Without it, stop-loss
     // closes fall back to plain market orders (the pre-2026-07 behaviour).
     private val marketTickPort: MarketTickPort? = null,
+    // Combo exits (see ScannerConfig.exitComboEnabled). Absent in most unit tests → legacy exit path.
+    private val orderExecutionPort: OrderExecutionPort? = null,
+    // Combo closes run in this scope so a 5-min close never holds up the other spreads' stop checks.
+    // Null (unit tests) → the close runs inline.
+    private val closeScope: CoroutineScope? = null,
 ) {
+    // Spreads with a combo close in flight — skipped by the monitor until the attempt resolves.
+    private val activeComboCloses = ConcurrentHashMap<UUID, Job>()
+
     // Consecutive SL-breach observations per spread (in-memory: a restart resets the count, which
     // only delays a stop by one extra monitor cycle). One garbage mid must never market-out a
     // position — LITE was stopped 29 s after entry on a single wide-book observation.
@@ -401,6 +419,10 @@ class SpreadManagementService(
     }
 
     private suspend fun checkSpreadExit(spread: Spread) {
+        if (spread.id?.let { activeComboCloses.containsKey(it) } == true) {
+            logger.debug { "[${spread.symbol}] Combo close in flight — skipping exit evaluation this cycle" }
+            return
+        }
         val today = LocalDate.now(clock)
         val expiry = spread.soldLeg.contract.expiry
         val dte = ChronoUnit.DAYS.between(today, expiry).toInt()
@@ -563,6 +585,10 @@ class SpreadManagementService(
             boughtMidLive != null &&
             (closeStatus == SpreadStatus.CLOSED_PROFIT || closeStatus == SpreadStatus.CLOSED_TIME)
         ) {
+            if (comboCloseEligible(spread, dte)) {
+                startComboClose(spread, closeStatus, reason, exitContext)
+                return
+            }
             logger.info { "[${spread.symbol}] Closing spread via limit chase — $reason" }
             val spreadValue = soldMidLive.amount.subtract(boughtMidLive.amount)
             closeSpread(spread, closeStatus, soldMidLive, boughtMidLive, spreadValue, exitContext, closeReason = reason)
@@ -659,6 +685,177 @@ class SpreadManagementService(
                     .setScale(2, RoundingMode.HALF_UP)
             }.getOrNull()
         return underlyingPrice to ivRank
+    }
+
+    // -------------------------------------------------------------------------
+    // Combo exit (2026-11-26)
+    // -------------------------------------------------------------------------
+
+    private suspend fun comboCloseEligible(
+        spread: Spread,
+        dte: Int,
+    ): Boolean {
+        val port = orderExecutionPort ?: return false
+        if (!config.exitComboEnabled || marketTickPort == null) return false
+        // Near expiry certainty beats price: keep the legacy path, which escalates to market.
+        if (dte <= config.exitMarketFallbackDte) return false
+        if (!port.supportsComboClose(spread.symbol)) return false
+        // A combo close reverses BOTH legs — if one is already flat (or positions can't be read) it
+        // could open a fresh position on that leg, so only a confirmed two-leg spread goes combo.
+        val held = legsStillHeld(spread)
+        if (held != Pair(true, true)) {
+            logger.info { "[${spread.symbol}] Combo close skipped: legs held=$held — using leg-by-leg close" }
+            return false
+        }
+        return true
+    }
+
+    private suspend fun startComboClose(
+        spread: Spread,
+        closeStatus: SpreadStatus,
+        reason: String,
+        exitContext: Pair<BigDecimal?, BigDecimal?>,
+    ) {
+        val id = spread.id
+        val scope = closeScope
+        if (scope == null || id == null) {
+            comboClose(spread, closeStatus, reason, exitContext)
+            return
+        }
+        val job =
+            scope.launch(start = CoroutineStart.LAZY) {
+                try {
+                    comboClose(spread, closeStatus, reason, exitContext)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    logger.error(e) { "[${spread.symbol}] Combo close crashed: ${e.message}" }
+                } finally {
+                    activeComboCloses.remove(id)
+                }
+            }
+        if (activeComboCloses.putIfAbsent(id, job) == null) job.start() else job.cancel()
+    }
+
+    /**
+     * Close a spread with ONE combo order: start part-way from mid toward the best debit, step up on
+     * the timer to a ceiling, rest there until the timeout. Filled → spread closed at the fill price.
+     * Not filled → order cancelled, spread stays OPEN, the next monitor cycle tries again. Never goes
+     * to market (that is reserved for stops and the last days before expiry).
+     */
+    private suspend fun comboClose(
+        spread: Spread,
+        closeStatus: SpreadStatus,
+        reason: String,
+        exitContext: Pair<BigDecimal?, BigDecimal?>,
+    ) {
+        val port = orderExecutionPort ?: return
+        val tickPort = marketTickPort ?: return
+        val sold = spread.soldLeg.contract
+        val bought = spread.boughtLeg.contract
+        // A close order from an earlier attempt (e.g. before a restart) may still be working; a second
+        // one could fill too and open the reverse spread.
+        if (port.hasWorkingOptionOrders(spread.symbol)) {
+            logger.warn { "[${spread.symbol}] Combo close deferred: an option order is still working at the broker" }
+            return
+        }
+        val nbbo =
+            runCatching {
+                withTimeout(3_000L.milliseconds) { tickPort.streamSpreadCredit(sold, bought).first() }
+            }.getOrNull()?.takeIf { it.soldAsk > 0.0 && it.boughtAsk > 0.0 && it.soldBid >= 0.0 && it.boughtBid >= 0.0 }
+        if (nbbo == null) {
+            logger.info { "[${spread.symbol}] Combo close deferred: no usable NBBO — stays OPEN, retry next cycle" }
+            return
+        }
+        val minPrice = BigDecimal("0.01")
+        val mid =
+            ((nbbo.soldBid + nbbo.soldAsk) / 2.0 - (nbbo.boughtBid + nbbo.boughtAsk) / 2.0)
+                .toBigDecimal()
+                .setScale(4, RoundingMode.HALF_UP)
+        val best = (nbbo.soldBid - nbbo.boughtAsk).toBigDecimal().setScale(4, RoundingMode.HALF_UP)
+        val midPrice = mid.max(minPrice)
+        val ceiling =
+            midPrice
+                .multiply(BigDecimal(config.exitMaxPayPctOfMid))
+                .max(midPrice.add(optionTickFor(midPrice)))
+                .ceilToOptionTick()
+        val pct = BigDecimal(config.exitStartPctTowardBest.coerceIn(0.0, 1.0))
+        val rawStart = if (best < mid) mid.subtract(mid.subtract(best).multiply(pct)) else mid
+        val start = rawStart.floorToOptionTick().max(minPrice).min(ceiling)
+        val intervalMs = config.priceAdjustIntervalSeconds.coerceAtLeast(1) * 1_000L
+        val steps = (config.exitLadderMinutes * 60 / config.priceAdjustIntervalSeconds.coerceAtLeast(1)).coerceAtLeast(1)
+        val stepSize = ceiling.subtract(start).max(BigDecimal.ZERO).divide(BigDecimal(steps), 4, RoundingMode.UP)
+
+        var price = start
+        val orderId =
+            runCatching { port.placeComboCloseOrder(null, sold, bought, Money(price), spread.quantity) }
+                .getOrElse { e ->
+                    logger.warn(e) { "[${spread.symbol}] Combo close submit failed — stays OPEN, retry next cycle" }
+                    return
+                }
+        logger.info {
+            "[${spread.symbol}] Closing spread via COMBO — $reason: start=\$$price mid=\$$mid best=\$$best " +
+                "ceiling=\$$ceiling orderId=$orderId"
+        }
+
+        val terminal: OrderStatus? =
+            withTimeoutOrNull((config.exitTimeoutMinutes * 60_000L).milliseconds) {
+                coroutineScope {
+                    val fill = async { runCatching { port.awaitFill(orderId) }.getOrNull() }
+                    var observed: OrderStatus? = null
+                    while (observed == null) {
+                        val st =
+                            if (fill.isCompleted) {
+                                delay(intervalMs.milliseconds)
+                                fill.await()
+                            } else {
+                                withTimeoutOrNull(intervalMs.milliseconds) { fill.await() }
+                            }
+                        if (st != null && st != OrderStatus.PENDING) {
+                            observed = st
+                        } else if (price < ceiling) {
+                            val tick = optionTickFor(price)
+                            val step = stepSize.divide(tick, 0, RoundingMode.UP).multiply(tick).max(tick)
+                            val next = price.add(step).min(ceiling)
+                            runCatching { port.placeComboCloseOrder(orderId, sold, bought, Money(next), spread.quantity) }
+                                .onSuccess { price = next }
+                                .onFailure { e -> logger.warn(e) { "[${spread.symbol}] Combo close amend failed — keeping \$$price" } }
+                        }
+                    }
+                    fill.cancel()
+                    observed
+                }
+            }
+        val outcome =
+            terminal ?: runCatching { port.cancelAndAwait(orderId) }
+                .onFailure { e -> logger.warn(e) { "[${spread.symbol}] Combo close cancel failed for order $orderId" } }
+                .getOrNull()
+
+        if (outcome != OrderStatus.FILLED) {
+            logger.info {
+                "[${spread.symbol}] Combo close NOT filled (status=${outcome ?: "unknown"}, last=\$$price, mid=\$$mid) — " +
+                    "stays OPEN, retry next cycle"
+            }
+            tradeLogger.info {
+                "EXIT_UNFILLED ${spread.symbol}  ${spread.legsLabel}  reason=$reason  last=\$$price  mid=\$$mid" +
+                    "  ceiling=\$$ceiling  order=$orderId  (stays OPEN)"
+            }
+            return
+        }
+
+        val reported = port.consumeFillPrice(orderId)?.abs()
+        val closePrice =
+            if (reported != null && reported <= ceiling.add(BigDecimal("0.10"))) reported else price
+        val current = spread.id?.let { closers.findById(it) } ?: spread
+        closers.forSpread(current).close(current, closeStatus, reason, closePrice, exitContext.first, exitContext.second)
+        logger.info { "[${spread.symbol}] Spread closed via COMBO: $closeStatus at \$$closePrice (mid \$$mid, order $orderId)" }
+        tradeLogger.info {
+            "EXIT   ${spread.symbol}  ${spread.legsLabel}" +
+                "  exp=${sold.expiry}  reason=$reason  value=\$$closePrice  mid=\$$mid  (combo)" +
+                "  credit=\$${spread.creditPerShare}  pnl=\$${spread.creditPerShare.subtract(
+                    closePrice,
+                ).multiply(config.contractMultiplier).multiply(BigDecimal(spread.quantity))}"
+        }
     }
 
     private suspend fun closeSpread(

@@ -70,6 +70,16 @@ scanner:
   entry-start-pct-toward-far: 0.90
   entry-ladder-minutes: 10
   entry-rest-at-floor: true
+  # 2026-11-26 combo exit: TP/TIME exits close both legs as ONE combo order (were leg-by-leg limits at
+  # each leg's mid, escalating to MARKET after ~6 min). Start 50% from mid toward the best debit, step
+  # every 30s to a ceiling of 105% of mid within 4 min, rest to 5 min; unfilled → stays OPEN and retries
+  # next cycle. Stops and TIME exits within 1 DTE keep the legacy path (marketable / market).
+  exit-combo-enabled: true
+  exit-start-pct-toward-best: 0.50
+  exit-max-pay-pct-of-mid: 1.05
+  exit-ladder-minutes: 4
+  exit-timeout-minutes: 5
+  exit-market-fallback-dte: 1
   # 2026-08-02: 0.10 → 0.25. At 0.10 this gate rejected 18 of the 20 candidates that cleared every
   # scanner filter over 07-16→07-30 — on QCOM/ORCL/MU/AMT/TMUS, i.e. some of the most liquid option
   # books in the US market — and the engine placed zero orders in that window. Real 43-DTE equity

@@ -196,4 +196,28 @@ class IbkrOrderExecutionAdapter(
     override fun consumeRejectReason(orderId: Int): String? = registry.consumeRejectReason(orderId)
 
     override fun wasSelfCancelled(orderId: Int): Boolean = registry.wasSelfCancelled(orderId)
+
+    override fun supportsComboClose(symbol: Symbol): Boolean =
+        strategyRouter.supportsComboClose(contractFactory.defFor(symbol).optionExchange)
+
+    override suspend fun placeComboCloseOrder(
+        existingOrderId: Int?,
+        soldContract: OptionContract,
+        boughtContract: OptionContract,
+        netDebit: Money,
+        qty: Int,
+    ): Int =
+        strategyRouter.placeSpreadCloseOrder(
+            contractFactory.defFor(soldContract.symbol).optionExchange,
+            existingOrderId,
+            soldContract,
+            boughtContract,
+            netDebit,
+            qty,
+        )
+
+    override suspend fun hasWorkingOptionOrders(symbol: Symbol): Boolean =
+        runCatching { openOrdersAdapter.getOpenOrders() }
+            .getOrDefault(emptyList())
+            .any { it.symbol == symbol.value && it.secType in setOf("BAG", "OPT") }
 }
