@@ -26,8 +26,18 @@ data class ScannerConfig(
     val contractMultiplier: BigDecimal = BigDecimal("100"),
     // Trade execution (tick-by-tick price improvement) — shared mechanics
     val executionTimeoutMinutes: Long = 15,
+    // Tick-driven ladder steps (every N market-data ticks). 0 disables them: a combo's two legs tick
+    // several times a second, so tick-driven steps ran an entry to its floor in seconds (11-26).
     val ticksBeforePriceAdjust: Int = 5,
     val priceAdjustIntervalSeconds: Int = 30,
+    // Entry start price as a fraction of the way from fresh mid (0.0) to the far side
+    // (soldAsk - boughtBid, 1.0). 0.0 = start at mid (legacy).
+    val entryStartPctTowardFar: Double = 0.0,
+    // Minutes the timer ladder takes to walk from the start price down to the floor; the step size is
+    // sized to fit. 0 = one option tick per step (legacy).
+    val entryLadderMinutes: Long = 0,
+    // At the floor, keep resting there until executionTimeoutMinutes instead of cancelling (legacy false).
+    val entryRestAtFloor: Boolean = false,
     val maxLegBidAskSpreadPct: Double = 0.30,
     // Fresh-credit safety abort: a flat $0.10 is ~30% of a $0.35 credit but ~3% of a $3.00 one, so the
     // effective threshold is percentage-of-target, floored at $0.05 for very small target credits.

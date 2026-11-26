@@ -10,6 +10,7 @@ import cz.solvina.options.domain.features.order.OrderExecutionPort
 import cz.solvina.options.domain.features.order.OrderReplacementUnverifiedException
 import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.features.order.StrandedLongLegException
+import cz.solvina.options.domain.features.order.ceilToOptionTick
 import cz.solvina.options.domain.features.order.optionTickFor
 import cz.solvina.options.domain.features.order.roundToOptionTick
 import cz.solvina.options.domain.features.scanner.ScannerConfig
@@ -298,6 +299,18 @@ class TradeExecutionService(
         pendingSpread = writer.stampOrderIds(pendingSpread, currentOrderId, freshCredit)
         var currentCredit = freshCredit
         var ticksSinceAdjust = 0
+        // Ladder step sized so the timer walk from the start price reaches the floor in
+        // entryLadderMinutes (then rests there if entryRestAtFloor). 0 -> one tick per step.
+        val ladderStepSize: BigDecimal? =
+            if (config.entryLadderMinutes > 0 && config.priceAdjustIntervalSeconds > 0) {
+                val steps = (config.entryLadderMinutes * 60 / config.priceAdjustIntervalSeconds).coerceAtLeast(1)
+                freshCredit
+                    .subtract(effectiveRequest.floorCredit)
+                    .max(BigDecimal.ZERO)
+                    .divide(BigDecimal(steps), 4, RoundingMode.UP)
+            } else {
+                null
+            }
         // Set once a reprice hits an unverifiable cancel: further laddering is suppressed and the
         // current order is ridden to fill/timeout (see ladderStep).
         var ladderFrozen = false
@@ -366,7 +379,7 @@ class TradeExecutionService(
             if (ladderFrozen) return true
             val stepped =
                 try {
-                    ladder(effectiveRequest, currentOrderId, currentCredit)
+                    ladder(effectiveRequest, currentOrderId, currentCredit, ladderStepSize)
                 } catch (e: OrderReplacementUnverifiedException) {
                     // The old order could not be confirmed gone, so no replacement was submitted
                     // (double-fill is prevented). Freezing here — instead of letting this escape and
@@ -506,6 +519,7 @@ class TradeExecutionService(
                         }
 
                         is ExecutionEvent.Credit -> {
+                            if (config.ticksBeforePriceAdjust <= 0) continue
                             ticksSinceAdjust++
                             if (ticksSinceAdjust >= config.ticksBeforePriceAdjust) {
                                 ticksSinceAdjust = 0
@@ -579,17 +593,19 @@ class TradeExecutionService(
             // the requested range before trusting it; anything outside that range falls back to the
             // ladder limit we know is correct rather than risk persisting a bogus credit.
             val reportedFill = orderExecutionPort.consumeFillPrice(currentOrderId)?.abs()
+            // Upper sanity bound: the start price can sit above target when the ladder opens toward the far side.
+            val fillCeiling = request.targetCredit.max(freshCredit).add(BigDecimal("0.10"))
             val grossCredit =
                 if (reportedFill != null &&
                     reportedFill >= effectiveRequest.floorCredit &&
-                    reportedFill <= request.targetCredit.add(BigDecimal("0.10"))
+                    reportedFill <= fillCeiling
                 ) {
                     reportedFill
                 } else {
                     if (reportedFill != null) {
                         logger.warn {
                             "[${request.underlyingSymbol}] Reported fill price \$$reportedFill outside expected range " +
-                                "[\$${effectiveRequest.floorCredit}, \$${request.targetCredit.add(BigDecimal("0.10"))}] — " +
+                                "[\$${effectiveRequest.floorCredit}, \$$fillCeiling] — " +
                                 "using last ladder limit \$$currentCredit instead"
                         }
                     }
@@ -652,9 +668,25 @@ class TradeExecutionService(
         request: TradeExecutionRequest,
         currentOrderId: Int,
         currentCredit: BigDecimal,
+        stepSize: BigDecimal? = null,
     ): Pair<BigDecimal, Int>? {
         val tickSize = optionTickFor(currentCredit)
-        val newCredit = currentCredit.subtract(tickSize).setScale(2, RoundingMode.HALF_DOWN)
+        // Step = sized ladder step rounded UP to whole ticks (never below one tick).
+        val step =
+            stepSize
+                ?.divide(tickSize, 0, RoundingMode.UP)
+                ?.multiply(tickSize)
+                ?.max(tickSize)
+                ?: tickSize
+        var newCredit = currentCredit.subtract(step).setScale(2, RoundingMode.HALF_DOWN)
+        if (newCredit < request.floorCredit && config.entryRestAtFloor) {
+            if (currentCredit <= request.floorCredit) {
+                // Already resting at the floor - leave the order alone until fill or timeout.
+                return Pair(currentCredit, currentOrderId)
+            }
+            newCredit = request.floorCredit.ceilToOptionTick().setScale(2, RoundingMode.UP)
+            logger.info { "[${request.underlyingSymbol}] Ladder reached floor \$$newCredit - resting there until timeout" }
+        }
         if (newCredit < request.floorCredit) {
             logger.info { "[${request.underlyingSymbol}] FLOOR_REACHED — next=\$$newCredit < floor=\$${request.floorCredit}" }
             val cancelStatus = orderExecutionPort.cancelAndAwait(currentOrderId)
@@ -823,10 +855,24 @@ class TradeExecutionService(
             // book's mark-to-mid loss. The ladder walks DOWN from here; executeInternal raises the
             // floor to entryMinFillPctOfMid × mid so the worst acceptable fill is bounded too.
             // Retain the fresh per-leg NBBO for leg-by-leg pricing (LegQuotes).
-            val freshCredit = currentMid.roundToOptionTick().coerceAtLeast(request.floorCredit)
+            // 2026-11-26: optionally start ABOVE mid, part-way to the far side (soldAsk - boughtBid),
+            // and let the timer ladder walk down through mid to the floor. Manual fills came in well
+            // above the quoted mid; starting at mid gave that edge away up front.
+            val farCredit =
+                (tick.soldAsk - tick.boughtBid)
+                    .toBigDecimal()
+                    .setScale(4, RoundingMode.HALF_UP)
+            val startPct = config.entryStartPctTowardFar.coerceIn(0.0, 1.0)
+            val startCredit =
+                if (startPct > 0.0 && farCredit > currentMid) {
+                    currentMid.add(farCredit.subtract(currentMid).multiply(BigDecimal(startPct)))
+                } else {
+                    currentMid
+                }
+            val freshCredit = startCredit.roundToOptionTick().coerceAtLeast(request.floorCredit)
             logger.info {
-                "[${request.underlyingSymbol}] Fresh quotes: mid=\$$currentMid bid=\$$bidCredit floor=\$${request.floorCredit} " +
-                    "using=\$$freshCredit (ladder starts at mid)"
+                "[${request.underlyingSymbol}] Fresh quotes: mid=\$$currentMid bid=\$$bidCredit far=\$$farCredit " +
+                    "floor=\$${request.floorCredit} using=\$$freshCredit (ladder starts ${(startPct * 100).toInt()}% toward far)"
             }
             Triple(freshCredit, null, tick)
         } catch (e: TimeoutCancellationException) {

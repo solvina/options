@@ -61,8 +61,15 @@ scanner:
   max-open-spreads-per-sector: 10   # per-GICS-sector diversification cap; loose for now (≈non-binding), tighten to 2-3 later
 
   execution-timeout-minutes: 15
-  ticks-before-price-adjust: 5
+  # 2026-11-26 entry ladder rework: tick-driven steps ran every entry to its floor at ~1 cent/second and
+  # the floor CANCELLED the order (median 84s on the book, zero fills since 11-04). Now: start 90% of the
+  # way from mid to the far side, step down only on the 30s timer, reach the floor in ~10 min, then rest
+  # there until the 15-min timeout.
+  ticks-before-price-adjust: 0      # 0 = no tick-driven steps
   price-adjust-interval-seconds: 30
+  entry-start-pct-toward-far: 0.90
+  entry-ladder-minutes: 10
+  entry-rest-at-floor: true
   # 2026-08-02: 0.10 → 0.25. At 0.10 this gate rejected 18 of the 20 candidates that cleared every
   # scanner filter over 07-16→07-30 — on QCOM/ORCL/MU/AMT/TMUS, i.e. some of the most liquid option
   # books in the US market — and the engine placed zero orders in that window. Real 43-DTE equity

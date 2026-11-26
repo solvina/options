@@ -1474,4 +1474,91 @@ class TradeExecutionServiceTest {
                 if (prices.indexOf(credit) < prices.size - 1) delay(delayMs.milliseconds)
             }
         }
+
+    // ---- 2026-11-26 entry ladder rework: start toward far side, timer-only steps, rest at floor ----
+
+    @Test
+    fun `entry starts toward the far side, steps only on the timer and rests at the floor until timeout`() =
+        runTest {
+            val submitted = mutableListOf<BigDecimal>()
+            val cancels = AtomicInteger(0)
+            val orderPort =
+                object : OrderExecutionPort {
+                    private val nextId = AtomicInteger(1)
+
+                    override suspend fun submitComboLimitOrder(
+                        soldContract: OptionContract,
+                        boughtContract: OptionContract,
+                        netCredit: Money,
+                        qty: Int,
+                        legQuotes: LegQuotes?,
+                    ): Int {
+                        submitted.add(netCredit.amount)
+                        return nextId.getAndIncrement()
+                    }
+
+                    override suspend fun awaitFill(orderId: Int): OrderStatus {
+                        delay(Long.MAX_VALUE.milliseconds)
+                        return OrderStatus.CANCELLED
+                    }
+
+                    override suspend fun cancelAndAwait(orderId: Int): OrderStatus {
+                        cancels.incrementAndGet()
+                        return OrderStatus.CANCELLED
+                    }
+
+                    override suspend fun replaceComboWithNewPrice(
+                        existingOrderId: Int,
+                        soldContract: OptionContract,
+                        boughtContract: OptionContract,
+                        newCredit: Money,
+                        qty: Int,
+                    ): Int = submitComboLimitOrder(soldContract, boughtContract, newCredit, qty, null)
+
+                    override suspend fun getSymbolsWithOpenOrders(): Set<Symbol> = emptySet()
+
+                    override fun consumeFillPrice(orderId: Int): BigDecimal? = null
+                }
+            // Wide-ish book: mid = 1.50 - 0.45 = 1.05, far = 1.60 - 0.40 = 1.20. Ticks keep arriving fast.
+            val busyFlow =
+                flow {
+                    repeat(100_000) {
+                        emit(SpreadCreditTick(soldBid = 1.40, soldAsk = 1.60, boughtBid = 0.40, boughtAsk = 0.50, netCredit = 0.90))
+                        delay(20.milliseconds)
+                    }
+                }
+            val service =
+                buildService(
+                    marketTickPort = fixedMarketTickPort(500.0, busyFlow),
+                    orderExecutionPort = orderPort,
+                    config =
+                        baseConfig.copy(
+                            executionTimeoutMinutes = 15,
+                            ticksBeforePriceAdjust = 0,
+                            priceAdjustIntervalSeconds = 30,
+                            entryStartPctTowardFar = 0.90,
+                            entryLadderMinutes = 10,
+                            entryRestAtFloor = true,
+                            entryMinFillPctOfMid = 0.95,
+                        ),
+                )
+
+            val deferred =
+                backgroundScope.async {
+                    service.execute(buildRequest(targetCredit = BigDecimal("1.05"), floorCredit = BigDecimal("0.50")))
+                }
+
+            advanceTimeBy(29_000.milliseconds)
+            assertEquals(listOf(BigDecimal("1.19")), submitted, "start = mid + 90% of (far - mid); no tick-driven steps")
+
+            advanceTimeBy((16 * 60_000).milliseconds)
+            val result = deferred.await()
+
+            assertEquals(ExecutionOutcome.TIMED_OUT, result.outcome, "floor must rest until timeout, not cancel")
+            assertTrue(submitted.all { it >= BigDecimal("1.00") }, "never below 95% of mid: $submitted")
+            assertEquals(BigDecimal("1.00"), submitted.last().setScale(2))
+            assertEquals(1, cancels.get(), "only the timeout cancels")
+            // 1.19 -> 1.00 one cent per 30s step = 19 steps, then rests
+            assertEquals(20, submitted.size)
+        }
 }
