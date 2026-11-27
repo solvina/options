@@ -239,7 +239,9 @@ class SpreadManagementService(
         }
         spreadKey?.let { closeFilledLegs.remove(it) }
 
-        val closePrice = realizedCloseValue(spread, soldOrder?.orderId, boughtOrder?.orderId) ?: estimatedSpreadValue
+        val closePrice =
+            (realizedCloseValue(spread, soldOrder?.orderId, boughtOrder?.orderId) ?: estimatedSpreadValue)
+                .add(exitFeePerShare(spread, listOf(soldOrder?.orderId, boughtOrder?.orderId)) { orderPort.awaitCommission(it) })
         val updated =
             closers.forSpread(spread).close(
                 spread = spread,
@@ -929,8 +931,9 @@ class SpreadManagementService(
         }
 
         val reported = port.consumeFillPrice(orderId)?.abs()
-        val closePrice =
+        val fillValue =
             if (reported != null && reported <= ceiling.max(start).add(BigDecimal("0.10"))) reported else price
+        val closePrice = fillValue.add(exitFeePerShare(spread, listOf(orderId)) { port.awaitCommission(it) })
         val current = spread.id?.let { closers.findById(it) } ?: spread
         closers.forSpread(current).close(current, closeStatus, reason, closePrice, exitContext.first, exitContext.second)
         logger.info { "[${spread.symbol}] Spread closed via COMBO: $closeStatus at \$$closePrice (mid \$$mid, order $orderId)" }
@@ -962,6 +965,27 @@ class SpreadManagementService(
             return null
         }
         return buy.abs().subtract(sell.abs()).setScale(4, RoundingMode.HALF_UP)
+    }
+
+    /**
+     * Exit commission per share for the close orders [orderIds] (2026-11-27: until then exits were
+     * booked gross while entries were net of an estimated fee). Uses IBKR's reported commissions when
+     * every order has one, else the per-contract estimate for two legs. Added to the close value, so
+     * closePricePerShare is net of exit costs just as creditPerShare is net of entry costs.
+     */
+    private suspend fun exitFeePerShare(
+        spread: Spread,
+        orderIds: List<Int?>,
+        commissionOf: suspend (Int) -> BigDecimal?,
+    ): BigDecimal {
+        val perShareDivisor = config.contractMultiplier.multiply(BigDecimal(spread.quantity))
+        val ids = orderIds.filterNotNull().filter { it > 0 }
+        val reported = ids.map { id -> runCatching { commissionOf(id) }.getOrNull() }
+        return if (ids.isNotEmpty() && reported.all { it != null }) {
+            reported.filterNotNull().fold(BigDecimal.ZERO, BigDecimal::add).divide(perShareDivisor, 6, RoundingMode.HALF_UP)
+        } else {
+            config.feePerContract.multiply(BigDecimal("2")).divide(config.contractMultiplier, 6, RoundingMode.HALF_UP)
+        }
     }
 
     private suspend fun closeSpread(
@@ -1064,7 +1088,11 @@ class SpreadManagementService(
                 }.getOrNull()
 
             if (marketSellBack?.status == OrderStatus.FILLED) {
-                val closePrice = realizedCloseValue(spread, buyBackOrder.orderId, marketSellBack.orderId) ?: currentSpreadValue
+                val closePrice =
+                    (realizedCloseValue(spread, buyBackOrder.orderId, marketSellBack.orderId) ?: currentSpreadValue)
+                        .add(
+                            exitFeePerShare(spread, listOf(buyBackOrder.orderId, marketSellBack.orderId)) { orderPort.awaitCommission(it) },
+                        )
                 closer.close(closing, closeStatus, closeReason, closePrice, exitContext.first, exitContext.second)
                 logger.info { "[${spread.symbol}] Spread closed: bought leg sold at market after limit chase failed" }
                 tradeLogger.info {
@@ -1084,7 +1112,9 @@ class SpreadManagementService(
             return
         }
 
-        val closePrice = realizedCloseValue(spread, buyBackOrder.orderId, sellBackOrder.orderId) ?: currentSpreadValue
+        val closePrice =
+            (realizedCloseValue(spread, buyBackOrder.orderId, sellBackOrder.orderId) ?: currentSpreadValue)
+                .add(exitFeePerShare(spread, listOf(buyBackOrder.orderId, sellBackOrder.orderId)) { orderPort.awaitCommission(it) })
         closer.close(closing, closeStatus, closeReason, closePrice, exitContext.first, exitContext.second)
         logger.info { "[${spread.symbol}] Spread closed: $closeStatus at \$$closePrice (pre-order mid \$$currentSpreadValue)" }
         tradeLogger.info {

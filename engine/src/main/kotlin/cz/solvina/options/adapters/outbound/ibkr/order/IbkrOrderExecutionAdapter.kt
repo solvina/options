@@ -193,6 +193,8 @@ class IbkrOrderExecutionAdapter(
 
     override fun consumeFillPrice(orderId: Int): BigDecimal? = registry.consumeFillPrice(orderId)
 
+    override suspend fun awaitCommission(orderId: Int): BigDecimal? = registry.awaitCommission(orderId)
+
     override fun consumeRejectReason(orderId: Int): String? = registry.consumeRejectReason(orderId)
 
     override fun wasSelfCancelled(orderId: Int): Boolean = registry.wasSelfCancelled(orderId)

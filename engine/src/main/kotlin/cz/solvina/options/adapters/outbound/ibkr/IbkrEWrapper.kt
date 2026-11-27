@@ -393,6 +393,7 @@ class IbkrEWrapper(
         execution: Execution,
     ) {
         logger.debug { "execDetails: reqId=$reqId" }
+        runCatching { orderRegistry.recordExecution(execution.execId() ?: "", execution.orderId()) }
         twsRaw.debug {
             twsJson(
                 "EXEC_DETAILS",
@@ -584,7 +585,8 @@ class IbkrEWrapper(
     }
 
     override fun commissionReport(commissionReport: CommissionReport) {
-        logger.debug { "commissionReport: ${commissionReport.execId()}" }
+        logger.debug { "commissionReport: ${commissionReport.execId()} ${commissionReport.commission()}" }
+        runCatching { orderRegistry.recordCommission(commissionReport.execId() ?: "", commissionReport.commission()) }
     }
 
     override fun position(

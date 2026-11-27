@@ -140,6 +140,9 @@ interface OrderExecutionPort {
         qty: Int,
     ): Int = throw UnsupportedOperationException("combo close not supported")
 
+    /** Total commission IBKR reported for [orderId] (all legs), or null if none arrived in time. */
+    suspend fun awaitCommission(orderId: Int): BigDecimal? = null
+
     /** True when an OPTION/combo order (not a stock order) is still working at the broker for [symbol]. */
     suspend fun hasWorkingOptionOrders(symbol: Symbol): Boolean = false
 }

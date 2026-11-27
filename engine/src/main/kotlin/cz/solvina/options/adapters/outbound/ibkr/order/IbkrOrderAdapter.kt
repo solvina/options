@@ -105,6 +105,8 @@ class IbkrOrderAdapter(
 
     override fun consumeFillPrice(orderId: Int): BigDecimal? = registry.consumeFillPrice(orderId)
 
+    override suspend fun awaitCommission(orderId: Int): BigDecimal? = registry.awaitCommission(orderId)
+
     override suspend fun cancelOrder(orderId: Int) {
         logger.info { "Cancelling order $orderId" }
         // Our own cleanup cancel, not a broker rejection — mark it so the code-202 callback is

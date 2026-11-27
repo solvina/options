@@ -30,6 +30,12 @@ class IbkrOrdersRegistry {
     private var openOrdersSynchronized = CompletableDeferred<Boolean>()
     private val openOrders = ConcurrentHashMap<Int, OpenOrder>()
     private val fillPrices = ConcurrentHashMap<Int, BigDecimal>()
+
+    // Real IBKR commissions (2026-11-27): execDetails maps execId → orderId, commissionReport carries
+    // the commission per execution (a combo fill reports one per leg). Summed per order id.
+    private val execOrderIds = ConcurrentHashMap<String, Int>()
+    private val pendingCommissions = ConcurrentHashMap<String, BigDecimal>()
+    private val commissions = ConcurrentHashMap<Int, BigDecimal>()
     private val selfCancelledOrders = ConcurrentHashMap.newKeySet<Int>()
     private val rejectReasons = ConcurrentHashMap<Int, String>()
     private val filledOrders = ConcurrentHashMap.newKeySet<Int>()
@@ -319,4 +325,53 @@ class IbkrOrdersRegistry {
             existing?.takeUnless { it.isCompleted }
                 ?: CompletableDeferred<OrderStatus>().also { waiterSince.putIfAbsent(orderId, Instant.now()) }
         } ?: CompletableDeferred(OrderStatus.PENDING)
+
+    /** execDetails callback: remember which order an execution belongs to. */
+    fun recordExecution(
+        execId: String,
+        orderId: Int,
+    ) {
+        if (execId.isBlank() || orderId <= 0) return
+        execOrderIds[execId] = orderId
+        pendingCommissions.remove(execId)?.let { addCommission(orderId, it) }
+    }
+
+    /** commissionReport callback. IBKR sends Double.MAX_VALUE when the commission is not known. */
+    fun recordCommission(
+        execId: String,
+        commission: Double,
+    ) {
+        if (execId.isBlank() || commission.isNaN() || commission <= 0.0 || commission >= 1e9) return
+        val amount = BigDecimal.valueOf(commission)
+        val orderId = execOrderIds[execId]
+        if (orderId == null) pendingCommissions[execId] = amount else addCommission(orderId, amount)
+    }
+
+    private fun addCommission(
+        orderId: Int,
+        amount: BigDecimal,
+    ) {
+        commissions.merge(orderId, amount) { a, b -> a.add(b) }
+    }
+
+    /**
+     * Total commission IBKR reported for [orderId], waiting up to [timeout] for the first report and a
+     * short settle window for the other legs' reports. Null when none arrived (caller estimates).
+     */
+    suspend fun awaitCommission(
+        orderId: Int,
+        timeout: kotlin.time.Duration = kotlin.time.Duration.parse("6s"),
+    ): BigDecimal? {
+        val deadline = System.nanoTime() + timeout.inWholeNanoseconds
+        while (commissions[orderId] == null && System.nanoTime() < deadline) kotlinx.coroutines.delay(250)
+        if (commissions[orderId] == null) return null
+        var last = commissions[orderId]
+        repeat(6) {
+            kotlinx.coroutines.delay(250)
+            val now = commissions[orderId]
+            if (now == last) return now
+            last = now
+        }
+        return commissions[orderId]
+    }
 }

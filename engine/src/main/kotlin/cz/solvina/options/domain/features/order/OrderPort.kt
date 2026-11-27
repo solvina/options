@@ -25,4 +25,7 @@ interface OrderPort {
      * broker reported none. Lets closes record what was actually paid instead of a pre-order mid.
      */
     fun consumeFillPrice(orderId: Int): BigDecimal? = null
+
+    /** Total commission IBKR reported for [orderId], or null if none arrived in time. */
+    suspend fun awaitCommission(orderId: Int): BigDecimal? = null
 }

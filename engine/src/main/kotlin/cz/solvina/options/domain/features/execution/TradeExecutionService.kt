@@ -612,10 +612,14 @@ class TradeExecutionService(
                     currentCredit
                 }
             // Deduct entry fees (2 legs × feePerContract / contractMultiplier = fee per share)
+            // Real IBKR commission when reported (2026-11-27), else the per-contract estimate.
+            val reportedCommission = runCatching { orderExecutionPort.awaitCommission(currentOrderId) }.getOrNull()
             val feePerShare =
-                config.feePerContract
-                    .multiply(BigDecimal("2"))
-                    .divide(config.contractMultiplier, 6, RoundingMode.HALF_UP)
+                reportedCommission
+                    ?.divide(config.contractMultiplier.multiply(BigDecimal(request.quantity)), 6, RoundingMode.HALF_UP)
+                    ?: config.feePerContract
+                        .multiply(BigDecimal("2"))
+                        .divide(config.contractMultiplier, 6, RoundingMode.HALF_UP)
             val netCredit = grossCredit.subtract(feePerShare).setScale(4, RoundingMode.HALF_UP)
             writer.markFilled(pendingSpread, currentOrderId, netCredit, entryMid)
             logger.info {

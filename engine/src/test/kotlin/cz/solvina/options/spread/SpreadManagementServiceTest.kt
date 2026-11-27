@@ -1412,7 +1412,7 @@ class SpreadManagementServiceTest {
             // start = mid 0.25 − 50% × (0.25 − 0.22) = 0.235 → floored to 0.23
             assertEquals(BigDecimal("0.23"), combo.prices.first().setScale(2))
             assertEquals(SpreadStatus.CLOSED_PROFIT, updated.captured.status)
-            assertEquals(0, BigDecimal("0.24").compareTo(updated.captured.closePricePerShare))
+            assertEquals(0, BigDecimal("0.253").compareTo(updated.captured.closePricePerShare), "fill 0.24 + est. exit fee 0.013")
             coVerify(exactly = 0) { orderPort.placeAndAwaitFill(any(), any(), any(), any()) }
             coVerify(exactly = 0) { orderPort.placeMarketOrder(any(), any(), any()) }
         }
@@ -1463,7 +1463,7 @@ class SpreadManagementServiceTest {
             val closed = updates.last()
             assertEquals(SpreadStatus.CLOSED_PROFIT, closed.status)
             // mid said 0.25; the fills say 0.32 - 0.04 = 0.28
-            assertEquals(0, BigDecimal("0.28").compareTo(closed.closePricePerShare))
+            assertEquals(0, BigDecimal("0.293").compareTo(closed.closePricePerShare), "fills 0.28 + est. exit fee 0.013")
         }
 
     @Test
@@ -1610,5 +1610,31 @@ class SpreadManagementServiceTest {
             assertEquals(BigDecimal("0.23"), combo.prices.first().setScale(2))
             assertEquals(SpreadStatus.CLOSED_MANUAL, updated.captured.status)
             coVerify(exactly = 0) { orderPort.placeAndAwaitFill(any(), any(), any(), any()) }
+        }
+
+    @Test
+    fun `leg close adds the commissions IBKR reported to the close value`() =
+        runTest {
+            val spreadPort = mockk<BullPutSpreadPort>()
+            val marketDataPort = mockMarketData()
+            val orderPort = mockk<OrderPort>()
+            coEvery { spreadPort.findOpen() } returns listOf(buildOpenSpread())
+            coEvery { spreadPort.findByStatus(SpreadStatus.CLOSING) } returns emptyList()
+            coEvery { marketDataPort.getOptionMidLive(soldContract) } returns Money(BigDecimal("0.30"))
+            coEvery { marketDataPort.getOptionMidLive(boughtContract) } returns Money(BigDecimal("0.05"))
+            coEvery { marketDataPort.getUnderlyingPrice(any()) } returns Money(BigDecimal("500"))
+            coEvery { orderPort.placeAndAwaitFill(soldContract, LegAction.BUY, any(), any()) } returns LegOrder(71, OrderStatus.FILLED)
+            coEvery { orderPort.placeAndAwaitFill(boughtContract, LegAction.SELL, any(), any()) } returns LegOrder(72, OrderStatus.FILLED)
+            every { orderPort.consumeFillPrice(71) } returns BigDecimal("0.32")
+            every { orderPort.consumeFillPrice(72) } returns BigDecimal("0.04")
+            coEvery { orderPort.awaitCommission(71) } returns BigDecimal("1.05")
+            coEvery { orderPort.awaitCommission(72) } returns BigDecimal("1.00")
+            val updates = mutableListOf<BullPutSpread>()
+            coEvery { spreadPort.update(capture(updates)) } answers { firstArg() }
+
+            buildService(spreadPort, marketDataPort, orderPort).checkExits()
+
+            // 0.28 + (1.05 + 1.00) / 100
+            assertEquals(0, BigDecimal("0.3005").compareTo(updates.last().closePricePerShare))
         }
 }
