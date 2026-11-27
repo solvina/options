@@ -854,11 +854,11 @@ class SpreadManagementService(
         val midPrice = mid.max(minPrice)
         val ceiling =
             midPrice
-                .multiply(BigDecimal(config.exitMaxPayPctOfMid))
+                .multiply(BigDecimal.valueOf(config.exitMaxPayPctOfMid))
                 .max(midPrice.add(optionTickFor(midPrice)))
                 .ceilToOptionTick()
         val natural = (nbbo.soldAsk - nbbo.boughtBid).toBigDecimal().setScale(4, RoundingMode.HALF_UP)
-        val pct = BigDecimal(config.exitStartPctTowardBest.coerceIn(0.0, 1.0))
+        val pct = BigDecimal.valueOf(config.exitStartPctTowardBest.coerceIn(0.0, 1.0))
         val rawStart = if (best < mid) mid.subtract(mid.subtract(best).multiply(pct)) else mid
         val start =
             if (stop) {

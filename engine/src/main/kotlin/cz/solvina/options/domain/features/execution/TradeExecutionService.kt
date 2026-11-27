@@ -865,7 +865,7 @@ class TradeExecutionService(
             val startPct = config.entryStartPctTowardFar.coerceIn(0.0, 1.0)
             val startCredit =
                 if (startPct > 0.0 && farCredit > currentMid) {
-                    currentMid.add(farCredit.subtract(currentMid).multiply(BigDecimal(startPct)))
+                    currentMid.add(farCredit.subtract(currentMid).multiply(BigDecimal.valueOf(startPct)))
                 } else {
                     currentMid
                 }

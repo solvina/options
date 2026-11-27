@@ -114,4 +114,18 @@ class OrderChaseServiceTest {
             assertEquals(100, result.orderId)
             assertTrue(placedPrices.isEmpty(), "no replacement order may be placed after a fill raced the cancel")
         }
+
+    @Test
+    fun `price step is applied in dollars, not as a percentage`() =
+        runTest {
+            service.waitForFillOrChase(
+                initialOrderId = 100,
+                contract = Contract(),
+                action = "BUY",
+                initialPrice = BigDecimal("2.00"),
+                qty = 1,
+            )
+            // step 0.10 dollars: 2.00 -> 2.10 (a 10% step would have given 2.20)
+            assertEquals(2.10, placedPrices[0], 1e-9)
+        }
 }

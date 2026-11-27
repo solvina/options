@@ -68,6 +68,7 @@ class IbkrOrderAdapter(
             action = action.name,
             initialPrice = limitPrice.amount,
             qty = qty,
+            optionContract = contract,
         )
     }
 

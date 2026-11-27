@@ -107,7 +107,7 @@ scanner:
   entry-min-fill-pct-of-mid: 0.95  # ladder floor: never rest below 95% of fresh mid
   order-chase-timeout-minutes: 3   # Conservative: 5 → 3 (give up sooner, retry next scan)
   order-chase-max-retries: 1       # Conservative: 3 → 1 (one attempt per order, not aggressive chasing)
-  order-chase-price-step: 0.01     # Conservative: 0.03 → 0.01 (gradual adjustments, avoid floor hits)
+  order-chase-price-step: 0.01     # DOLLARS per reprice (until 11-27 the code applied it as a %); reprice also follows a fresh mid
   # Entry cooldown, split by cause 2026-08-03 (was a single 240 for both).
   #
   # Five of the six outcomes that reach the cooldown — DRIFT_ABORTED, TIMED_OUT, FLOOR_REACHED,

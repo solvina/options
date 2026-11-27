@@ -7,13 +7,16 @@ import com.ib.client.Order
 import com.ib.client.OrderCancel
 import cz.solvina.options.adapters.outbound.ibkr.account.IbkrOrdersRegistry
 import cz.solvina.options.adapters.outbound.ibkr.registry.IbkrOrderIdCounter
+import cz.solvina.options.domain.features.market.MarketDataPort
 import cz.solvina.options.domain.features.order.LegOrder
 import cz.solvina.options.domain.features.order.OrderStatus
 import cz.solvina.options.domain.features.order.ceilToOptionTick
 import cz.solvina.options.domain.features.order.floorToOptionTick
 import cz.solvina.options.domain.features.scanner.ScannerConfig
+import cz.solvina.options.domain.models.OptionContract
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.delay
+import org.springframework.beans.factory.ObjectProvider
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import kotlin.time.Duration.Companion.minutes
@@ -27,6 +30,8 @@ class OrderChaseService(
     private val ibkrOrderIdCounter: IbkrOrderIdCounter,
     private val client: EClientSocket,
     private val config: ScannerConfig,
+    // Lazy: fresh quotes for repricing. Absent in unit tests → reprice off the previous limit only.
+    private val marketData: ObjectProvider<MarketDataPort>? = null,
 ) {
     suspend fun waitForFillOrChase(
         initialOrderId: Int,
@@ -34,6 +39,7 @@ class OrderChaseService(
         action: String,
         initialPrice: BigDecimal,
         qty: Int,
+        optionContract: OptionContract? = null,
     ): LegOrder {
         var orderId = initialOrderId
         var price = initialPrice
@@ -69,15 +75,18 @@ class OrderChaseService(
                 // walks it UP toward the ask. Applying the SELL direction to a BUY (e.g. the short
                 // leg's buy-back when closing a spread) would make the order progressively less
                 // fillable instead of more.
+                // 2026-11-27: orderChasePriceStep is DOLLARS (the yml always described it that way; the
+                // code applied it as a percentage, so 0.01 meant +1%). The reprice also follows a fresh
+                // mid when the market has moved past the old limit, instead of only nudging a stale price.
+                val step = BigDecimal.valueOf(config.orderChasePriceStep).max(BigDecimal("0.01"))
+                val fresh = freshMid(optionContract)
                 price =
                     if (action == "BUY") {
-                        price
-                            .multiply(BigDecimal.ONE.add(BigDecimal(config.orderChasePriceStep)))
-                            .ceilToOptionTick()
+                        val nudged = price.add(step)
+                        (if (fresh != null) nudged.max(fresh) else nudged).ceilToOptionTick()
                     } else {
-                        price
-                            .multiply(BigDecimal.ONE.subtract(BigDecimal(config.orderChasePriceStep)))
-                            .floorToOptionTick()
+                        val nudged = price.subtract(step)
+                        (if (fresh != null) nudged.min(fresh) else nudged).floorToOptionTick().max(BigDecimal("0.01"))
                     }
                 orderId = ibkrOrderIdCounter.nextOrderId()
                 logger.info { "Repricing: new orderId=$orderId price=$price (attempt ${attempt + 1}/${config.orderChaseMaxRetries})" }
@@ -96,6 +105,14 @@ class OrderChaseService(
 
         logger.warn { "Order not filled after ${config.orderChaseMaxRetries} retries" }
         return LegOrder(orderId, OrderStatus.CANCELLED)
+    }
+
+    private suspend fun freshMid(contract: OptionContract?): BigDecimal? {
+        if (contract == null) return null
+        val port = marketData?.ifAvailable ?: return null
+        return runCatching { port.streamedOptionMid(contract)?.amount ?: port.getOptionMidLive(contract)?.amount }
+            .getOrNull()
+            ?.takeIf { it > BigDecimal.ZERO }
     }
 
     private suspend fun cancelAndWait(orderId: Int) {
