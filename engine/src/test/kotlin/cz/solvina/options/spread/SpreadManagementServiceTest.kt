@@ -1072,14 +1072,15 @@ class SpreadManagementServiceTest {
     // -------------------------------------------------------------------------
 
     @Test
-    fun `worthless sold leg closes the spread without placing a buy-back order`() =
+    fun `worthless sold leg already flat at the broker is not bought back`() =
         runTest {
-            // When the sold put is worth $0.00 (deep OTM, near expiry), placing a buy-back
-            // limit order at $0 would never fill. Skip it and close directly.
+            // 2026-11-27: a $0 short that is still HELD is now bought back for a penny (see the
+            // penny buy-back test). Only when the broker reports the short already flat is the
+            // buy-back skipped.
             val spread = buildOpenSpread()
             val spreadPort = mockk<BullPutSpreadPort>()
             val marketDataPort = mockMarketData()
-            val orderPort = mockk<OrderPort>()
+            val orderPort = mockk<OrderPort>(relaxed = true)
 
             coEvery { spreadPort.findById(spread.id!!) } returns spread
             coEvery { spreadPort.update(any()) } answers { firstArg() }
@@ -1090,9 +1091,13 @@ class SpreadManagementServiceTest {
             coEvery { marketDataPort.getOptionMidLive(boughtContract) } returns Money(BigDecimal("0.05"))
             coEvery { marketDataPort.getUnderlyingPrice(any()) } returns Money(BigDecimal("490"))
 
-            buildService(spreadPort, marketDataPort, orderPort).softClose(spread.id!!)
+            val onlyLongHeld =
+                object : cz.solvina.options.domain.features.account.PositionsPort {
+                    override suspend fun getPositions() = bothLegsHeld().getPositions().filter { it.strike == boughtContract.strike }
+                }
+            buildService(spreadPort, marketDataPort, orderPort, positionsPort = onlyLongHeld).softClose(spread.id!!)
 
-            // No buy-back order should be submitted when the option is worthless
+            // No buy-back order should be submitted for a short that is already flat
             coVerify(exactly = 0) { orderPort.placeAndAwaitFill(soldContract, LegAction.BUY, any(), any()) }
         }
 
@@ -1636,5 +1641,31 @@ class SpreadManagementServiceTest {
 
             // 0.28 + (1.05 + 1.00) / 100
             assertEquals(0, BigDecimal("0.3005").compareTo(updates.last().closePricePerShare))
+        }
+
+    @Test
+    fun `worthless short still held is bought back for a penny instead of being left open`() =
+        runTest {
+            val spread = buildOpenSpread()
+            val spreadPort = mockk<BullPutSpreadPort>()
+            val marketDataPort = mockMarketData()
+            val orderPort = mockk<OrderPort>(relaxed = true)
+            coEvery { spreadPort.findById(spread.id!!) } returns spread
+            coEvery { marketDataPort.getOptionMid(soldContract) } returns Money(BigDecimal("0.004"))
+            coEvery { marketDataPort.getOptionMidLive(soldContract) } returns Money(BigDecimal("0.004"))
+            coEvery { marketDataPort.getOptionMid(boughtContract) } returns Money(BigDecimal("0.001"))
+            coEvery { marketDataPort.getUnderlyingPrice(any()) } returns Money(BigDecimal("520"))
+            val updates = mutableListOf<BullPutSpread>()
+            coEvery { spreadPort.update(capture(updates)) } answers { firstArg() }
+            val limits = mutableListOf<Pair<LegAction, BigDecimal>>()
+            coEvery { orderPort.placeAndAwaitFill(any(), any(), any(), any()) } answers {
+                limits += secondArg<LegAction>() to thirdArg<Money>().amount
+                LegOrder(61, OrderStatus.FILLED)
+            }
+
+            buildService(spreadPort, marketDataPort, orderPort, positionsPort = bothLegsHeld()).softClose(spread.id!!)
+
+            assertEquals(listOf(LegAction.BUY to BigDecimal("0.01")), limits.map { it.first to it.second.setScale(2) })
+            assertEquals(SpreadStatus.CLOSED_MANUAL, updates.last().status)
         }
 }

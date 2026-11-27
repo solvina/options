@@ -1025,26 +1025,30 @@ class SpreadManagementService(
                 }
                 return
             }
-            closer.close(closing, closeStatus, closeReason, currentSpreadValue, exitContext.first, exitContext.second)
-            logger.info {
-                "[${spread.symbol}] Sold leg worthless (${if (liveConfirmsWorthless) "live quote" else "broker flat"}) " +
-                    "— closed $closeStatus without buy-back"
+            if (brokerConfirmsShortFlat) {
+                closer.close(closing, closeStatus, closeReason, currentSpreadValue, exitContext.first, exitContext.second)
+                logger.info {
+                    "[${spread.symbol}] Sold leg priced \$0 and already flat at the broker — closed $closeStatus without buy-back"
+                }
+                tradeLogger.info {
+                    "EXIT   ${spread.symbol}  ${spread.legsLabel}" +
+                        "  exp=${spread.soldLeg.contract.expiry}  reason=$closeReason  value=\$0 (short already flat)" +
+                        "  credit=\$${spread.creditPerShare}  pnl=\$${spread.creditPerShare.multiply(
+                            config.contractMultiplier,
+                        ).multiply(BigDecimal(spread.quantity))}"
+                }
+                return
             }
-            tradeLogger.info {
-                "EXIT   ${spread.symbol}  ${spread.legsLabel}" +
-                    "  exp=${spread.soldLeg.contract.expiry}  reason=$closeReason  value=\$0 (worthless)" +
-                    "  credit=\$${spread.creditPerShare}  pnl=\$${spread.creditPerShare.multiply(
-                        config.contractMultiplier,
-                    ).multiply(BigDecimal(spread.quantity))}"
-            }
-            return
+            // Still held: buy it back for a penny (2026-11-27). Marking the spread closed with the short
+            // still open left both legs in the account — assignment risk on a late move and two orphans.
+            logger.info { "[${spread.symbol}] Sold leg priced \$0 but still held — buying it back at \$0.01" }
         }
 
         val buyBackOrder =
             orderPort.placeAndAwaitFill(
                 contract = spread.soldLeg.contract,
                 action = LegAction.BUY,
-                limitPrice = roundedSoldMid,
+                limitPrice = if (roundedSoldMid.amount <= BigDecimal.ZERO) Money(BigDecimal("0.01")) else roundedSoldMid,
                 qty = spread.quantity,
             )
         if (buyBackOrder.status != OrderStatus.FILLED) {
@@ -1053,6 +1057,21 @@ class SpreadManagementService(
             }
             tradeLogger.info {
                 "CLOSING ${spread.symbol}  ${spread.legsLabel}  reason=buy_back_unfilled"
+            }
+            return
+        }
+
+        if (roundedBoughtMid.amount <= BigDecimal.ZERO) {
+            // A $0 long has no bid; a sell order would never fill and strand the spread in CLOSING. With
+            // the short bought back the long is pure upside — leave it to expire.
+            val closePrice =
+                (runCatching { orderPort.consumeFillPrice(buyBackOrder.orderId) }.getOrNull()?.abs() ?: currentSpreadValue)
+                    .add(exitFeePerShare(spread, listOf(buyBackOrder.orderId)) { orderPort.awaitCommission(it) })
+            closer.close(closing, closeStatus, closeReason, closePrice, exitContext.first, exitContext.second)
+            logger.info { "[${spread.symbol}] Short bought back; long leg worthless (\$0) — left to expire" }
+            tradeLogger.info {
+                "EXIT   ${spread.symbol}  ${spread.legsLabel}" +
+                    "  exp=${spread.soldLeg.contract.expiry}  reason=$closeReason  value=\$$closePrice  (worthless long left to expire)"
             }
             return
         }
