@@ -5,6 +5,7 @@ import cz.solvina.options.domain.features.execution.model.TradeExecutionRequest
 import cz.solvina.options.domain.features.execution.model.TradeExecutionResult
 import cz.solvina.options.domain.features.market.MarketTickPort
 import cz.solvina.options.domain.features.market.SpreadCreditTick
+import cz.solvina.options.domain.features.order.ExecMetrics
 import cz.solvina.options.domain.features.order.LegQuotes
 import cz.solvina.options.domain.features.order.OrderExecutionPort
 import cz.solvina.options.domain.features.order.OrderReplacementUnverifiedException
@@ -299,6 +300,9 @@ class TradeExecutionService(
         pendingSpread = writer.stampOrderIds(pendingSpread, currentOrderId, freshCredit)
         var currentCredit = freshCredit
         var ticksSinceAdjust = 0
+        // Fill-quality metrics for the EXEC journal line.
+        val submittedAt = Instant.now(clock)
+        var amends = 0
         // Ladder step sized so the timer walk from the start price reaches the floor in
         // entryLadderMinutes (then rests there if entryRestAtFloor). 0 -> one tick per step.
         val ladderStepSize: BigDecimal? =
@@ -392,6 +396,7 @@ class TradeExecutionService(
                     ladderFrozen = true
                     return true
                 } ?: return false
+            if (stepped.first.compareTo(currentCredit) != 0) amends++
             currentCredit = stepped.first
             if (stepped.second != currentOrderId) {
                 currentOrderId = stepped.second
@@ -632,7 +637,42 @@ class TradeExecutionService(
                     "  exp=${request.soldContract.expiry}  credit=\$$netCredit  iv_rank=${"%.1f".format(request.ivRankAtEntry)}%" +
                     "  underlying=${request.underlyingPriceAtEntry}  order=$currentOrderId"
             }
+            tradeLogger.info {
+                ExecMetrics.line(
+                    "ENTRY",
+                    request.underlyingSymbol.value,
+                    request.legsLabel,
+                    "FILLED",
+                    entryMid,
+                    freshCredit,
+                    currentCredit,
+                    grossCredit,
+                    submittedAt,
+                    Instant.now(clock),
+                    amends,
+                    currentOrderId,
+                    creditSide = true,
+                )
+            }
             return TradeExecutionResult(ExecutionOutcome.FILLED, netCredit, currentOrderId)
+        }
+
+        tradeLogger.info {
+            ExecMetrics.line(
+                "ENTRY",
+                request.underlyingSymbol.value,
+                request.legsLabel,
+                outcome.name,
+                entryMid,
+                freshCredit,
+                currentCredit,
+                null,
+                submittedAt,
+                Instant.now(clock),
+                amends,
+                currentOrderId,
+                creditSide = true,
+            )
         }
 
         tradeLogger.info {

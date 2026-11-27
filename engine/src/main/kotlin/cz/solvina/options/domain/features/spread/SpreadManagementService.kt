@@ -4,6 +4,7 @@ import cz.solvina.options.domain.features.account.AccountPosition
 import cz.solvina.options.domain.features.execution.TradeExecutionPort
 import cz.solvina.options.domain.features.market.MarketDataPort
 import cz.solvina.options.domain.features.market.MarketTickPort
+import cz.solvina.options.domain.features.order.ExecMetrics
 import cz.solvina.options.domain.features.order.LegAction
 import cz.solvina.options.domain.features.order.LegOrder
 import cz.solvina.options.domain.features.order.OrderExecutionPort
@@ -874,6 +875,8 @@ class SpreadManagementService(
         val stepSize = ceiling.subtract(start).max(BigDecimal.ZERO).divide(BigDecimal(steps), 4, RoundingMode.UP)
 
         var price = start
+        val submittedAt = Instant.now(clock)
+        var amends = 0
         val orderId =
             runCatching { port.placeComboCloseOrder(null, sold, bought, Money(price), spread.quantity) }
                 .getOrElse { e ->
@@ -905,8 +908,10 @@ class SpreadManagementService(
                             val step = stepSize.divide(tick, 0, RoundingMode.UP).multiply(tick).max(tick)
                             val next = price.add(step).min(ceiling)
                             runCatching { port.placeComboCloseOrder(orderId, sold, bought, Money(next), spread.quantity) }
-                                .onSuccess { price = next }
-                                .onFailure { e -> logger.warn(e) { "[${spread.symbol}] Combo close amend failed — keeping \$$price" } }
+                                .onSuccess {
+                                    price = next
+                                    amends++
+                                }.onFailure { e -> logger.warn(e) { "[${spread.symbol}] Combo close amend failed — keeping \$$price" } }
                         }
                     }
                     fill.cancel()
@@ -918,7 +923,26 @@ class SpreadManagementService(
                 .onFailure { e -> logger.warn(e) { "[${spread.symbol}] Combo close cancel failed for order $orderId" } }
                 .getOrNull()
 
+        val execNote = if (stop) "combo stop" else "combo"
         if (outcome != OrderStatus.FILLED) {
+            tradeLogger.info {
+                ExecMetrics.line(
+                    "EXIT",
+                    spread.symbol.value,
+                    spread.legsLabel,
+                    (outcome ?: "UNKNOWN").toString(),
+                    mid,
+                    start,
+                    price,
+                    null,
+                    submittedAt,
+                    Instant.now(clock),
+                    amends,
+                    orderId,
+                    creditSide = false,
+                    note = execNote,
+                )
+            }
             logger.info {
                 "[${spread.symbol}] Combo close NOT filled (status=${outcome ?: "unknown"}, last=\$$price, mid=\$$mid) — " +
                     "stays OPEN, retry next cycle"
@@ -934,6 +958,24 @@ class SpreadManagementService(
         val fillValue =
             if (reported != null && reported <= ceiling.max(start).add(BigDecimal("0.10"))) reported else price
         val closePrice = fillValue.add(exitFeePerShare(spread, listOf(orderId)) { port.awaitCommission(it) })
+        tradeLogger.info {
+            ExecMetrics.line(
+                "EXIT",
+                spread.symbol.value,
+                spread.legsLabel,
+                "FILLED",
+                mid,
+                start,
+                price,
+                fillValue,
+                submittedAt,
+                Instant.now(clock),
+                amends,
+                orderId,
+                creditSide = false,
+                note = execNote,
+            )
+        }
         val current = spread.id?.let { closers.findById(it) } ?: spread
         closers.forSpread(current).close(current, closeStatus, reason, closePrice, exitContext.first, exitContext.second)
         logger.info { "[${spread.symbol}] Spread closed via COMBO: $closeStatus at \$$closePrice (mid \$$mid, order $orderId)" }
