@@ -1438,4 +1438,30 @@ class SpreadManagementServiceTest {
             coVerify(exactly = 0) { orderPort.placeMarketOrder(any(), any(), any()) }
             coVerify(exactly = 0) { orderPort.placeAndAwaitFill(any(), any(), any(), any()) }
         }
+
+    @Test
+    fun `leg-by-leg close records the broker fill prices, not the pre-order mid`() =
+        runTest {
+            val spreadPort = mockk<BullPutSpreadPort>()
+            val marketDataPort = mockMarketData()
+            val orderPort = mockk<OrderPort>()
+            coEvery { spreadPort.findOpen() } returns listOf(buildOpenSpread())
+            coEvery { spreadPort.findByStatus(SpreadStatus.CLOSING) } returns emptyList()
+            coEvery { marketDataPort.getOptionMidLive(soldContract) } returns Money(BigDecimal("0.30"))
+            coEvery { marketDataPort.getOptionMidLive(boughtContract) } returns Money(BigDecimal("0.05"))
+            coEvery { marketDataPort.getUnderlyingPrice(any()) } returns Money(BigDecimal("500"))
+            coEvery { orderPort.placeAndAwaitFill(soldContract, LegAction.BUY, any(), any()) } returns LegOrder(71, OrderStatus.FILLED)
+            coEvery { orderPort.placeAndAwaitFill(boughtContract, LegAction.SELL, any(), any()) } returns LegOrder(72, OrderStatus.FILLED)
+            every { orderPort.consumeFillPrice(71) } returns BigDecimal("0.32")
+            every { orderPort.consumeFillPrice(72) } returns BigDecimal("0.04")
+            val updates = mutableListOf<BullPutSpread>()
+            coEvery { spreadPort.update(capture(updates)) } answers { firstArg() }
+
+            buildService(spreadPort, marketDataPort, orderPort).checkExits()
+
+            val closed = updates.last()
+            assertEquals(SpreadStatus.CLOSED_PROFIT, closed.status)
+            // mid said 0.25; the fills say 0.32 - 0.04 = 0.28
+            assertEquals(0, BigDecimal("0.28").compareTo(closed.closePricePerShare))
+        }
 }

@@ -206,16 +206,19 @@ class SpreadManagementService(
             return spread
         }
 
+        val closePrice = realizedCloseValue(spread, soldOrderId, boughtOrderId) ?: estimatedSpreadValue
         val updated =
             closers.forSpread(spread).close(
                 spread = spread,
                 status = closeStatus,
                 closeReason = closeReason,
-                closePrice = estimatedSpreadValue,
+                closePrice = closePrice,
                 underlyingAtExit = exitContext.first,
                 ivAtExit = exitContext.second,
             )
-        logger.info { "[${spread.symbol}] Force-closed. status=$closeStatus value=\$$estimatedSpreadValue" }
+        logger.info {
+            "[${spread.symbol}] Force-closed. status=$closeStatus value=\$$closePrice (pre-order estimate \$$estimatedSpreadValue)"
+        }
         return updated
     }
 
@@ -858,6 +861,26 @@ class SpreadManagementService(
         }
     }
 
+    /**
+     * Net debit actually paid to close, per share: buy-back fill - sell-back fill, from the broker's
+     * reported average fill prices. Null when either fill price is unknown (e.g. a leg was already
+     * flat and skipped) - the caller then falls back to its pre-order estimate. Before 2026-11-27 every
+     * leg-path close recorded that pre-order mid, so stop/market P&L looked better than the fills.
+     */
+    private fun realizedCloseValue(
+        spread: Spread,
+        buyOrderId: Int?,
+        sellOrderId: Int?,
+    ): BigDecimal? {
+        val buy = buyOrderId?.let { id -> runCatching { orderPort.consumeFillPrice(id) }.getOrNull() }
+        val sell = sellOrderId?.let { id -> runCatching { orderPort.consumeFillPrice(id) }.getOrNull() }
+        if (buy == null || sell == null) {
+            logger.info { "[${spread.symbol}] Close fill prices incomplete (buy=$buy sell=$sell) - recording the pre-order estimate" }
+            return null
+        }
+        return buy.abs().subtract(sell.abs()).setScale(4, RoundingMode.HALF_UP)
+    }
+
     private suspend fun closeSpread(
         spread: Spread,
         closeStatus: SpreadStatus,
@@ -958,11 +981,12 @@ class SpreadManagementService(
                 }.getOrNull()
 
             if (marketSellBack?.status == OrderStatus.FILLED) {
-                closer.close(closing, closeStatus, closeReason, currentSpreadValue, exitContext.first, exitContext.second)
+                val closePrice = realizedCloseValue(spread, buyBackOrder.orderId, marketSellBack.orderId) ?: currentSpreadValue
+                closer.close(closing, closeStatus, closeReason, closePrice, exitContext.first, exitContext.second)
                 logger.info { "[${spread.symbol}] Spread closed: bought leg sold at market after limit chase failed" }
                 tradeLogger.info {
                     "EXIT   ${spread.symbol}  ${spread.legsLabel}" +
-                        "  exp=${spread.soldLeg.contract.expiry}  reason=$closeReason  value=\$$currentSpreadValue" +
+                        "  exp=${spread.soldLeg.contract.expiry}  reason=$closeReason  value=\$$closePrice" +
                         "  (bought leg closed at market)"
                 }
             } else {
@@ -977,13 +1001,14 @@ class SpreadManagementService(
             return
         }
 
-        closer.close(closing, closeStatus, closeReason, currentSpreadValue, exitContext.first, exitContext.second)
-        logger.info { "[${spread.symbol}] Spread closed: $closeStatus at \$$currentSpreadValue" }
+        val closePrice = realizedCloseValue(spread, buyBackOrder.orderId, sellBackOrder.orderId) ?: currentSpreadValue
+        closer.close(closing, closeStatus, closeReason, closePrice, exitContext.first, exitContext.second)
+        logger.info { "[${spread.symbol}] Spread closed: $closeStatus at \$$closePrice (pre-order mid \$$currentSpreadValue)" }
         tradeLogger.info {
             "EXIT   ${spread.symbol}  ${spread.legsLabel}" +
-                "  exp=${spread.soldLeg.contract.expiry}  reason=$closeReason  value=\$$currentSpreadValue" +
+                "  exp=${spread.soldLeg.contract.expiry}  reason=$closeReason  value=\$$closePrice" +
                 "  credit=\$${spread.creditPerShare}  pnl=\$${spread.creditPerShare.subtract(
-                    currentSpreadValue,
+                    closePrice,
                 ).multiply(config.contractMultiplier).multiply(BigDecimal(spread.quantity))}"
         }
     }

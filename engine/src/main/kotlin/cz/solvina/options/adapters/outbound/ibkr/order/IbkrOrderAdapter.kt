@@ -17,6 +17,7 @@ import cz.solvina.options.domain.models.Money
 import cz.solvina.options.domain.models.OptionContract
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.stereotype.Component
+import java.math.BigDecimal
 import kotlin.time.Duration.Companion.seconds
 
 private val logger = KotlinLogging.logger {}
@@ -100,6 +101,8 @@ class IbkrOrderAdapter(
         val status = registry.awaitTerminal(orderId, 30.seconds)
         return LegOrder(orderId = orderId, status = status)
     }
+
+    override fun consumeFillPrice(orderId: Int): BigDecimal? = registry.consumeFillPrice(orderId)
 
     override suspend fun cancelOrder(orderId: Int) {
         logger.info { "Cancelling order $orderId" }
