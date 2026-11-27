@@ -80,6 +80,10 @@ scanner:
   exit-ladder-minutes: 4
   exit-timeout-minutes: 5
   exit-market-fallback-dte: 1
+  # 2026-11-27: stops first try ONE marketable combo at the natural debit for 60s, then the leg path
+  # (marketable legs -> market). TIME exits with no live quotes wait instead of going to market blind.
+  # Manual soft close uses the take-profit combo ladder.
+  exit-stop-combo-seconds: 60
   # 2026-08-02: 0.10 → 0.25. At 0.10 this gate rejected 18 of the 20 candidates that cleared every
   # scanner filter over 07-16→07-30 — on QCOM/ORCL/MU/AMT/TMUS, i.e. some of the most liquid option
   # books in the US market — and the engine placed zero orders in that window. Real 43-DTE equity

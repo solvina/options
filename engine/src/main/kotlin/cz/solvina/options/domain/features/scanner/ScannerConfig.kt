@@ -50,6 +50,8 @@ data class ScannerConfig(
     val exitLadderMinutes: Long = 4,
     val exitTimeoutMinutes: Long = 5,
     val exitMarketFallbackDte: Int = 1,
+    // Stops try one marketable combo (natural debit) for this long before the leg-by-leg path.
+    val exitStopComboSeconds: Long = 60,
     val maxLegBidAskSpreadPct: Double = 0.30,
     // Fresh-credit safety abort: a flat $0.10 is ~30% of a $0.35 credit but ~3% of a $3.00 one, so the
     // effective threshold is percentage-of-target, floored at $0.05 for very small target credits.

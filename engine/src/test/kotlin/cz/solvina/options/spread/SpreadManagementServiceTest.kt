@@ -1338,6 +1338,7 @@ class SpreadManagementServiceTest {
         marketDataPort: MarketDataPort,
         orderPort: OrderPort,
         comboPort: FakeComboPort,
+        clock: Clock = clockAtEntry,
     ): SpreadManagementService {
         every { marketDataPort.streamedOptionMid(any()) } returns null
         every { marketDataPort.streamedUnderlyingPrice(any()) } returns null
@@ -1371,7 +1372,7 @@ class SpreadManagementServiceTest {
                 },
             executionPort = mockk(relaxed = true),
             config = config.copy(exitComboEnabled = true),
-            clock = clockAtEntry,
+            clock = clock,
             quoteHealthService = mockk(relaxed = true),
             strategyRegistry = strategyRegistry,
             strategyParams = strategyParams,
@@ -1537,5 +1538,77 @@ class SpreadManagementServiceTest {
 
             coVerify(exactly = 1) { orderPort.placeMarketOrder(soldContract, LegAction.BUY, any()) }
             coVerify(exactly = 2) { orderPort.placeMarketOrder(boughtContract, LegAction.SELL, any()) }
+        }
+
+    @Test
+    fun `stop closes with one marketable combo at the natural debit`() =
+        runTest {
+            val spread = buildOpenSpread()
+            val spreadPort = mockk<BullPutSpreadPort>()
+            val marketDataPort = mockMarketData()
+            val orderPort = mockk<OrderPort>(relaxed = true)
+            coEvery { spreadPort.findOpen() } returns listOf(spread)
+            coEvery { spreadPort.findByStatus(SpreadStatus.CLOSING) } returns emptyList()
+            coEvery { spreadPort.findById(spread.id!!) } returns spread
+            // value 1.80 - 0.20 = 1.60 >= SL 1.50
+            coEvery { marketDataPort.getOptionMidLive(soldContract) } returns Money(BigDecimal("1.80"))
+            coEvery { marketDataPort.getOptionMidLive(boughtContract) } returns Money(BigDecimal("0.20"))
+            coEvery { marketDataPort.getUnderlyingPrice(any()) } returns Money(BigDecimal("500"))
+            val updated = slot<BullPutSpread>()
+            coEvery { spreadPort.update(capture(updated)) } answers { firstArg() }
+            val combo = FakeComboPort(fills = true, fillPrice = BigDecimal("0.28"))
+
+            comboService(spreadPort, marketDataPort, orderPort, combo).checkExits()
+
+            // test NBBO natural = soldAsk 0.32 - boughtBid 0.04 = 0.28
+            assertEquals(BigDecimal("0.28"), combo.prices.single().setScale(2))
+            assertEquals(SpreadStatus.CLOSED_STOP, updated.captured.status)
+            coVerify(exactly = 0) { orderPort.placeAndAwaitFill(any(), any(), any(), any()) }
+            coVerify(exactly = 0) { orderPort.placeMarketOrder(any(), any(), any()) }
+        }
+
+    @Test
+    fun `time exit without live quotes waits instead of sending blind market orders`() =
+        runTest {
+            val spread = buildOpenSpread()
+            val spreadPort = mockk<BullPutSpreadPort>()
+            val marketDataPort = mockMarketData()
+            val orderPort = mockk<OrderPort>(relaxed = true)
+            coEvery { spreadPort.findOpen() } returns listOf(spread)
+            coEvery { spreadPort.findByStatus(SpreadStatus.CLOSING) } returns emptyList()
+            coEvery { marketDataPort.getOptionMidLive(any()) } returns null
+            coEvery { marketDataPort.getUnderlyingPrice(any()) } returns Money(BigDecimal("500"))
+            val updates = mutableListOf<BullPutSpread>()
+            coEvery { spreadPort.update(capture(updates)) } answers { firstArg() }
+            val sevenDte = Clock.fixed(LocalDate.of(2025, 3, 14).atStartOfDay(ZoneOffset.UTC).toInstant(), ZoneOffset.UTC)
+            val combo = FakeComboPort(fills = true)
+
+            comboService(spreadPort, marketDataPort, orderPort, combo, clock = sevenDte).checkExits()
+
+            coVerify(exactly = 0) { orderPort.placeMarketOrder(any(), any(), any()) }
+            assertTrue(combo.prices.isEmpty())
+            assertTrue(updates.none { it.status != SpreadStatus.OPEN })
+        }
+
+    @Test
+    fun `soft close uses the combo ladder`() =
+        runTest {
+            val spread = buildOpenSpread()
+            val spreadPort = mockk<BullPutSpreadPort>()
+            val marketDataPort = mockMarketData()
+            val orderPort = mockk<OrderPort>(relaxed = true)
+            coEvery { spreadPort.findById(spread.id!!) } returns spread
+            coEvery { marketDataPort.getOptionMid(soldContract) } returns Money(BigDecimal("0.30"))
+            coEvery { marketDataPort.getOptionMid(boughtContract) } returns Money(BigDecimal("0.05"))
+            coEvery { marketDataPort.getUnderlyingPrice(any()) } returns Money(BigDecimal("500"))
+            val updated = slot<BullPutSpread>()
+            coEvery { spreadPort.update(capture(updated)) } answers { firstArg() }
+            val combo = FakeComboPort(fills = true, fillPrice = BigDecimal("0.24"))
+
+            comboService(spreadPort, marketDataPort, orderPort, combo).softClose(spread.id!!)
+
+            assertEquals(BigDecimal("0.23"), combo.prices.first().setScale(2))
+            assertEquals(SpreadStatus.CLOSED_MANUAL, updated.captured.status)
+            coVerify(exactly = 0) { orderPort.placeAndAwaitFill(any(), any(), any(), any()) }
         }
 }
