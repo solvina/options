@@ -1464,4 +1464,29 @@ class SpreadManagementServiceTest {
             // mid said 0.25; the fills say 0.32 - 0.04 = 0.28
             assertEquals(0, BigDecimal("0.28").compareTo(closed.closePricePerShare))
         }
+
+    @Test
+    fun `exit signal on a spread that is already flat at the broker places no order`() =
+        runTest {
+            val spreadPort = mockk<BullPutSpreadPort>()
+            val marketDataPort = mockMarketData()
+            val orderPort = mockk<OrderPort>(relaxed = true)
+            coEvery { spreadPort.findOpen() } returns listOf(buildOpenSpread())
+            coEvery { spreadPort.findByStatus(SpreadStatus.CLOSING) } returns emptyList()
+            coEvery { marketDataPort.getOptionMidLive(soldContract) } returns Money(BigDecimal("0.30"))
+            coEvery { marketDataPort.getOptionMidLive(boughtContract) } returns Money(BigDecimal("0.05"))
+            coEvery { marketDataPort.getUnderlyingPrice(any()) } returns Money(BigDecimal("500"))
+            val updates = mutableListOf<BullPutSpread>()
+            coEvery { spreadPort.update(capture(updates)) } answers { firstArg() }
+            val flatAccount =
+                object : cz.solvina.options.domain.features.account.PositionsPort {
+                    override suspend fun getPositions() = emptyList<cz.solvina.options.domain.features.account.AccountPosition>()
+                }
+
+            buildService(spreadPort, marketDataPort, orderPort, positionsPort = flatAccount).checkExits()
+
+            coVerify(exactly = 0) { orderPort.placeAndAwaitFill(any(), any(), any(), any()) }
+            coVerify(exactly = 0) { orderPort.placeMarketOrder(any(), any(), any()) }
+            assertTrue(updates.none { it.status != SpreadStatus.OPEN }, "no status change: ${updates.map { it.status }}")
+        }
 }

@@ -118,6 +118,20 @@ class SpreadManagementService(
         val spreadValue = soldMid.amount.subtract(boughtMid.amount)
         val exitContext = captureExitContext(spread)
 
+        // Soft close trades both legs unconditionally — never on a spread already flat at the broker
+        // (it would open the reverse spread), and with one leg flat close only the held one.
+        if (!useMarket) {
+            val held = legsStillHeld(spread)
+            if (held == Pair(false, false)) {
+                logger.warn { "[${spread.symbol}] Soft close refused: both legs are flat at the broker — no order placed" }
+                return ManualCloseResult.AlreadyClosed(spread)
+            }
+            if (held != null && held != Pair(true, true)) {
+                logger.warn { "[${spread.symbol}] Soft close with only one leg held ($held) — closing the held leg only" }
+                return ManualCloseResult.Closed(forceCloseSpread(spread, spreadValue, exitContext = exitContext))
+            }
+        }
+
         val closed =
             if (useMarket) {
                 forceCloseSpread(spread, spreadValue, exitContext = exitContext)
@@ -561,6 +575,32 @@ class SpreadManagementService(
         val (closeStatus, reason) = exitSignal
         val exitContext = captureExitContext(spread)
         spread.id?.let { slBreachCounts.remove(it) }
+
+        // Broker check before ANY close order (2026-11-27 review). The leg paths buy the short back and
+        // sell the long unconditionally — on a spread that is already flat at the broker (e.g. a close
+        // that filled while the engine was down) that OPENS the reverse spread. Both legs flat → trade
+        // nothing; reconciliation alerts the DB/broker mismatch. One leg flat → close only the held leg
+        // (forceCloseSpread skips flat legs). null = positions unreadable → unchanged behaviour.
+        when (val held = legsStillHeld(spread)) {
+            Pair(false, false) -> {
+                logger.warn {
+                    "[${spread.symbol}] Exit signal ($reason) but BOTH legs are flat at the broker — placing no order; " +
+                        "reconciliation will flag the DB/broker mismatch"
+                }
+                tradeLogger.info { "EXIT_SKIPPED ${spread.symbol}  ${spread.legsLabel}  reason=both_legs_flat_at_broker  signal=$reason" }
+                return
+            }
+            null, Pair(true, true) -> Unit
+            else -> {
+                logger.warn { "[${spread.symbol}] Exit signal ($reason) with only one leg held ($held) — closing the held leg only" }
+                val recordedValue = currentSpreadValue ?: spread.lastSpreadValue ?: BigDecimal.ZERO
+                forceCloseSpread(spread, recordedValue, closeStatus, reason, exitContext)
+                if (closeStatus == SpreadStatus.CLOSED_STOP) {
+                    executionPort.blockEntry(spread.symbol, Duration.ofHours(config.stopLossCooldownHours))
+                }
+                return
+            }
+        }
 
         // Exit routing by urgency:
         //  - TP / time exits are not urgent — chase a limit at the MID to capture the edge a market
