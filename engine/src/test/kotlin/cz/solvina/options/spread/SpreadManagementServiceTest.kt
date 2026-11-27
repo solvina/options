@@ -1489,4 +1489,53 @@ class SpreadManagementServiceTest {
             coVerify(exactly = 0) { orderPort.placeMarketOrder(any(), any(), any()) }
             assertTrue(updates.none { it.status != SpreadStatus.OPEN }, "no status change: ${updates.map { it.status }}")
         }
+
+    @Test
+    fun `force close trusts broker fills over a lagging position feed and never re-closes a filled leg`() =
+        runTest {
+            val spread = buildOpenSpread()
+            val spreadPort = mockk<BullPutSpreadPort>()
+            val marketDataPort = mockMarketData()
+            val orderPort = mockk<OrderPort>(relaxed = true)
+            coEvery { spreadPort.findById(spread.id!!) } returns spread
+            coEvery { marketDataPort.getOptionMid(any()) } returns Money(BigDecimal("0.20"))
+            coEvery { marketDataPort.getUnderlyingPrice(any()) } returns Money(BigDecimal("500"))
+            val updates = mutableListOf<BullPutSpread>()
+            coEvery { spreadPort.update(capture(updates)) } answers { firstArg() }
+            // Feed never catches up: both legs keep showing as held.
+            val laggingFeed = bothLegsHeld()
+            coEvery { orderPort.placeMarketOrder(soldContract, LegAction.BUY, any()) } returns LegOrder(81, OrderStatus.FILLED)
+            coEvery { orderPort.placeMarketOrder(boughtContract, LegAction.SELL, any()) } returns LegOrder(82, OrderStatus.FILLED)
+
+            val result = buildService(spreadPort, marketDataPort, orderPort, positionsPort = laggingFeed).forceClose(spread.id!!)
+
+            assertTrue(result is SpreadManagementService.ManualCloseResult.Closed)
+            assertEquals(SpreadStatus.CLOSED_MANUAL, updates.last().status, "both legs FILLED at the broker -> closed")
+            coVerify(exactly = 1) { orderPort.placeMarketOrder(soldContract, LegAction.BUY, any()) }
+            coVerify(exactly = 1) { orderPort.placeMarketOrder(boughtContract, LegAction.SELL, any()) }
+            coVerify(exactly = 0) { orderPort.cancelOrder(any()) }
+        }
+
+    @Test
+    fun `force close retry skips a leg whose order already filled even if the feed still shows it`() =
+        runTest {
+            val spread = buildOpenSpread().copy(status = SpreadStatus.CLOSING)
+            val spreadPort = mockk<BullPutSpreadPort>()
+            val marketDataPort = mockMarketData()
+            val orderPort = mockk<OrderPort>(relaxed = true)
+            coEvery { spreadPort.findById(spread.id!!) } returns spread
+            coEvery { marketDataPort.getOptionMid(any()) } returns Money(BigDecimal("0.20"))
+            coEvery { marketDataPort.getUnderlyingPrice(any()) } returns Money(BigDecimal("500"))
+            coEvery { spreadPort.update(any()) } answers { firstArg() }
+            coEvery { orderPort.placeMarketOrder(soldContract, LegAction.BUY, any()) } returns LegOrder(91, OrderStatus.FILLED)
+            // Long leg's market order does not fill on the first attempt.
+            coEvery { orderPort.placeMarketOrder(boughtContract, LegAction.SELL, any()) } returns LegOrder(92, OrderStatus.PENDING)
+            val service = buildService(spreadPort, marketDataPort, orderPort, positionsPort = bothLegsHeld())
+
+            service.forceClose(spread.id!!) // attempt 1: short filled, long pending -> stays CLOSING
+            service.forceClose(spread.id!!) // attempt 2: feed still shows the short as held
+
+            coVerify(exactly = 1) { orderPort.placeMarketOrder(soldContract, LegAction.BUY, any()) }
+            coVerify(exactly = 2) { orderPort.placeMarketOrder(boughtContract, LegAction.SELL, any()) }
+        }
 }

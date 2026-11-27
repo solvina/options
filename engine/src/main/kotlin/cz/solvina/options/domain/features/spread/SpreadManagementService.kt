@@ -5,6 +5,7 @@ import cz.solvina.options.domain.features.execution.TradeExecutionPort
 import cz.solvina.options.domain.features.market.MarketDataPort
 import cz.solvina.options.domain.features.market.MarketTickPort
 import cz.solvina.options.domain.features.order.LegAction
+import cz.solvina.options.domain.features.order.LegOrder
 import cz.solvina.options.domain.features.order.OrderExecutionPort
 import cz.solvina.options.domain.features.order.OrderPort
 import cz.solvina.options.domain.features.order.OrderStatus
@@ -50,6 +51,9 @@ import kotlin.time.Duration.Companion.milliseconds
 private val logger = KotlinLogging.logger {}
 private val tradeLogger = KotlinLogging.logger("TRADES")
 
+private const val SOLD_LEG = "SOLD"
+private const val BOUGHT_LEG = "BOUGHT"
+
 /** "450P/445P" (bull put) or "520C/525C" (bear call) — for TRADES-journal lines. */
 private val Spread.legsLabel: String
     get() =
@@ -81,6 +85,9 @@ class SpreadManagementService(
 ) {
     // Spreads with a combo close in flight — skipped by the monitor until the attempt resolves.
     private val activeComboCloses = ConcurrentHashMap<UUID, Job>()
+
+    // Per spread: legs whose force-close order the broker reported FILLED (see forceCloseSpread).
+    private val closeFilledLegs = ConcurrentHashMap<UUID, Set<String>>()
 
     // Consecutive SL-breach observations per spread (in-memory: a restart resets the count, which
     // only delays a stop by one extra monitor cycle). One garbage mid must never market-out a
@@ -152,75 +159,80 @@ class SpreadManagementService(
     ): Spread {
         logger.info { "[${spread.symbol}] Force-closing at market (reason=$closeReason)" }
 
-        // Issue #7: Track order IDs for cancellation if verification fails
-        var soldOrderId: Int? = null
-        var boughtOrderId: Int? = null
+        val spreadKey = spread.id
+        // Legs whose close order the BROKER reported FILLED in an earlier attempt. The position feed
+        // can lag a fill; a retry that trusted only the feed would fire a second market order on an
+        // already-closed leg and open the opposite position (2026-11-27 review).
+        val filledEarlier = spreadKey?.let { closeFilledLegs[it] }.orEmpty()
 
         // C5: only close legs that are still held in IBKR. On a retry after a partial close, the
-        // leg that already filled shows flat here and is skipped — so we never fire a second
+        // leg that already filled shows flat here and is skipped - so we never fire a second
         // order on it (which would open an unintended opposite position). null = positions can't
-        // be queried → close both, preserving the prior best-effort behaviour.
+        // be queried -> close both, preserving the prior best-effort behaviour.
         val held = legsStillHeld(spread)
-        val closeSold = held?.first ?: true
-        val closeBought = held?.second ?: true
+        val closeSold = (held?.first ?: true) && SOLD_LEG !in filledEarlier
+        val closeBought = (held?.second ?: true) && BOUGHT_LEG !in filledEarlier
 
+        var soldOrder: LegOrder? = null
+        var boughtOrder: LegOrder? = null
         if (closeSold) {
-            runCatching { orderPort.placeMarketOrder(spread.soldLeg.contract, LegAction.BUY, spread.quantity) }
-                .onSuccess { legOrder -> soldOrderId = legOrder.orderId }
-                .onFailure { e ->
-                    logger.warn { "[${spread.symbol}] Sold-leg market order timed out (order still submitted): ${e.message}" }
-                }
+            soldOrder =
+                runCatching { orderPort.placeMarketOrder(spread.soldLeg.contract, LegAction.BUY, spread.quantity) }
+                    .onFailure { e ->
+                        logger.warn { "[${spread.symbol}] Sold-leg market order timed out (order still submitted): ${e.message}" }
+                    }.getOrNull()
         } else {
-            logger.info { "[${spread.symbol}] Sold leg already flat — skipping buy-back (idempotent close)" }
+            logger.info { "[${spread.symbol}] Sold leg already flat/filled - skipping buy-back (idempotent close)" }
         }
-
         if (closeBought) {
-            runCatching { orderPort.placeMarketOrder(spread.boughtLeg.contract, LegAction.SELL, spread.quantity) }
-                .onSuccess { legOrder -> boughtOrderId = legOrder.orderId }
-                .onFailure { e ->
-                    logger.warn { "[${spread.symbol}] Bought-leg market order timed out (order still submitted): ${e.message}" }
-                }
+            boughtOrder =
+                runCatching { orderPort.placeMarketOrder(spread.boughtLeg.contract, LegAction.SELL, spread.quantity) }
+                    .onFailure { e ->
+                        logger.warn { "[${spread.symbol}] Bought-leg market order timed out (order still submitted): ${e.message}" }
+                    }.getOrNull()
         } else {
-            logger.info { "[${spread.symbol}] Bought leg already flat — skipping sell-back (idempotent close)" }
+            logger.info { "[${spread.symbol}] Bought leg already flat/filled - skipping sell-back (idempotent close)" }
         }
 
-        // Verify position: check that both legs are actually closed in IBKR before marking spread as CLOSED
-        val positionVerified = verifyPositionClosed(spread)
-        if (!positionVerified) {
-            // Issue #7: Verification failed — cancel the orders we just placed to prevent duplicates on retry
+        val soldFilled = soldOrder?.status == OrderStatus.FILLED
+        val boughtFilled = boughtOrder?.status == OrderStatus.FILLED
+        if (spreadKey != null && (soldFilled || boughtFilled)) {
+            val nowFilled =
+                buildSet {
+                    if (soldFilled) add(SOLD_LEG)
+                    if (boughtFilled) add(BOUGHT_LEG)
+                }
+            closeFilledLegs.merge(spreadKey, nowFilled) { a, b -> a + b }
+        }
+        // Each leg is done when the broker confirmed this attempt's (or an earlier attempt's) order
+        // FILLED, or when it was already flat and we sent nothing for it.
+        val soldDone = soldFilled || (!closeSold && (SOLD_LEG in filledEarlier || held?.first == false))
+        val boughtDone = boughtFilled || (!closeBought && (BOUGHT_LEG in filledEarlier || held?.second == false))
+
+        // Order-level FILLED is authoritative. The position feed only judges legs without a fill
+        // confirmation, and a failed check cancels only orders that did NOT fill - a retry must never
+        // re-close a leg that filled.
+        val verified = (soldDone && boughtDone) || verifyPositionClosed(spread)
+        if (!verified) {
             logger.warn {
-                "[${spread.symbol}] Position verification FAILED — legs still open in IBKR. " +
-                    "Cancelling orders placed in this attempt to prevent duplicates."
+                "[${spread.symbol}] Position verification FAILED - legs still open in IBKR. " +
+                    "Cancelling unfilled orders from this attempt to prevent duplicates."
             }
-
-            // Cancel both orders that were placed
-            if (soldOrderId != null && soldOrderId!! > 0) {
-                runCatching { orderPort.cancelOrder(soldOrderId!!) }
+            for ((label, order) in listOf("sold" to soldOrder, "bought" to boughtOrder)) {
+                if (order == null || order.orderId <= 0 || order.status == OrderStatus.FILLED) continue
+                runCatching { orderPort.cancelOrder(order.orderId) }
                     .onSuccess {
-                        logger.info { "[${spread.symbol}] Cancelled sold-leg order $soldOrderId due to verification timeout" }
+                        logger.info { "[${spread.symbol}] Cancelled $label-leg order ${order.orderId} due to verification timeout" }
                     }.onFailure { e ->
-                        logger.warn {
-                            "[${spread.symbol}] Failed to cancel sold-leg order $soldOrderId: ${e.message}"
-                        }
+                        logger.warn { "[${spread.symbol}] Failed to cancel $label-leg order ${order.orderId}: ${e.message}" }
                     }
             }
-
-            if (boughtOrderId != null && boughtOrderId!! > 0) {
-                runCatching { orderPort.cancelOrder(boughtOrderId!!) }
-                    .onSuccess {
-                        logger.info { "[${spread.symbol}] Cancelled bought-leg order $boughtOrderId due to verification timeout" }
-                    }.onFailure { e ->
-                        logger.warn {
-                            "[${spread.symbol}] Failed to cancel bought-leg order $boughtOrderId: ${e.message}"
-                        }
-                    }
-            }
-
             // Keep spread in CLOSING state; next retryClose will try again
             return spread
         }
+        spreadKey?.let { closeFilledLegs.remove(it) }
 
-        val closePrice = realizedCloseValue(spread, soldOrderId, boughtOrderId) ?: estimatedSpreadValue
+        val closePrice = realizedCloseValue(spread, soldOrder?.orderId, boughtOrder?.orderId) ?: estimatedSpreadValue
         val updated =
             closers.forSpread(spread).close(
                 spread = spread,
