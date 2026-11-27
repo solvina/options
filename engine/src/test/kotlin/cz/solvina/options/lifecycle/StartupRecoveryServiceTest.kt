@@ -143,4 +143,50 @@ class StartupRecoveryServiceTest {
 
             assertEquals(SpreadStatus.OPEN, updated.captured.status)
         }
+
+    @Test
+    fun `closing recovery cancels the spread's option orders but keeps stock orders on the same symbol`() =
+        runTest {
+            coEvery { spreadPort.findByStatus(SpreadStatus.CLOSING) } returns listOf(pending.copy(status = SpreadStatus.CLOSING))
+            coEvery { spreadPort.findByStatus(SpreadStatus.PENDING) } returns emptyList()
+            coEvery { openOrdersAdapter.getOpenOrders() } returns
+                listOf(
+                    OpenOrder(
+                        orderId = 201,
+                        symbol = "AMD",
+                        action = "BUY",
+                        orderType = "LMT",
+                        limitPrice = 1.0,
+                        status = "Submitted",
+                        secType = "OPT",
+                    ),
+                    OpenOrder(
+                        orderId = 202,
+                        symbol = "AMD",
+                        action = "SELL",
+                        orderType = "STP",
+                        limitPrice = null,
+                        status = "Submitted",
+                        secType = "STK",
+                    ),
+                    OpenOrder(
+                        orderId = 203,
+                        symbol = "AMD",
+                        action = "BUY",
+                        orderType = "LMT",
+                        limitPrice = 0.5,
+                        status = "Submitted",
+                        secType = "BAG",
+                    ),
+                )
+            val cancelled = mutableListOf<Int>()
+            coEvery { orderCancellationService.cancelOrdersAtomic(any(), any()) } answers {
+                cancelled += firstArg<List<Int>>()
+                emptyList()
+            }
+
+            service.recover()
+
+            assertEquals(setOf(201, 203), cancelled.toSet(), "only option/combo orders are cancelled")
+        }
 }

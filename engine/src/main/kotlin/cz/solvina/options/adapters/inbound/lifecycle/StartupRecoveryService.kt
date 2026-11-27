@@ -34,6 +34,9 @@ private val logger = KotlinLogging.logger {}
 /** How many times recovery polls the broker position feed before deciding a leg is not held. */
 private const val RECOVERY_POSITION_POLLS = 5
 
+/** Security types of orders that belong to an option spread (legs or the combo itself). */
+private val SPREAD_SEC_TYPES = setOf("OPT", "BAG")
+
 /** Delay between recovery position polls — lets a feed that is still warming up at startup populate. */
 private const val RECOVERY_POSITION_POLL_DELAY_MS = 500L
 
@@ -105,8 +108,17 @@ class StartupRecoveryService(
         //             opened due to stale SELL orders filling simultaneously).
         run {
             val closingSymbols = closingSpreads.map { it.symbol.value }.toSet()
-            val staleBuyOrders = openOrders.filter { it.symbol in closingSymbols && it.action.equals("BUY", ignoreCase = true) }
-            val staleSellOrders = openOrders.filter { it.symbol in closingSymbols && it.action.equals("SELL", ignoreCase = true) }
+            // Only OPTION / combo orders belong to a spread. A stock order on the same symbol (a flag
+            // or stock-strategy position's protective stop / target) must survive — cancelling it left
+            // the stock position unprotected (2026-11-27 review). Blank secType = unknown → treated as
+            // an option order, preserving the old behaviour for rows without contract details.
+            val spreadOrders =
+                openOrders.filter { it.symbol in closingSymbols && (it.secType.isBlank() || it.secType in SPREAD_SEC_TYPES) }
+            openOrders
+                .filter { it.symbol in closingSymbols && it !in spreadOrders }
+                .forEach { logger.info { "Recovery: keeping ${it.secType} order ${it.orderId} on ${it.symbol} (not a spread order)" } }
+            val staleBuyOrders = spreadOrders.filter { it.action.equals("BUY", ignoreCase = true) }
+            val staleSellOrders = spreadOrders.filter { it.action.equals("SELL", ignoreCase = true) }
             val staleOrders = staleBuyOrders + staleSellOrders
 
             if (staleOrders.isNotEmpty()) {
